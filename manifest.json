@@ -51,6 +51,6 @@
 	},
 	"action": {
 		"default_icon": "icon128.png",
-		"default_title": "Claude Usage Tracker - Click to view source"
+		"default_title": "Claude Usage Tracker - Source"
 	}
 }
