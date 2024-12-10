@@ -16,9 +16,9 @@ const STORAGE_KEY = "claudeUsageTracker_v3"
 const CONFIG_URL = 'https://raw.githubusercontent.com/lugia19/Claude-Toolbox/refs/heads/main/constants.json';
 
 browser.action.onClicked.addListener(() => {
-    browser.tabs.create({
-        url: "https://github.com/lugia19/Claude-Toolbox"
-    });
+	browser.tabs.create({
+		url: "https://github.com/lugia19/Claude-Usage-Extension"
+	});
 });
 
 // Load default config before doing anything else
