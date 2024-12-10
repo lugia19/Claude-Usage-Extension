@@ -1037,9 +1037,19 @@
 			isCollapsed = !isCollapsed;
 			content.style.display = isCollapsed ? 'none' : 'block';
 			arrow.style.transform = isCollapsed ? 'rotate(-90deg)' : '';
+
+			// Also hide lengthDisplay on mobile
+			if (isMobileView()) {
+				lengthDisplay.style.display = isCollapsed ? 'none' : 'block';
+			}
+
 			// Store the new state
 			await storageInterface.setCollapsedState(isCollapsed);
 		});
+
+		if (isMobileView() && isCollapsed) {
+			lengthDisplay.style.display = 'none';
+		}
 
 		// Dragging functionality
 		let isDragging = false;
