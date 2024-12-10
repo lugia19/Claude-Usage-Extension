@@ -13,7 +13,7 @@
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 let defaultConfig = null;
 const STORAGE_KEY = "claudeUsageTracker_v4"
-const CONFIG_URL = 'https://raw.githubusercontent.com/lugia19/Claude-Toolbox/refs/heads/main/constants.json';
+const CONFIG_URL = 'https://raw.githubusercontent.com/lugia19/Claude-Usage-Extension/refs/heads/main/constants.json';
 
 const DEBUG_MODE = false
 function debugLog(...args) {
