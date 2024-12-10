@@ -1,9 +1,9 @@
 Privacy Policy for Claude Usage Tracker
 
-Last Updated: [Current Date]
+Last Updated: 2024/12/10
 
 Data Collection and Storage
-- This extension tracks usage statistics for [site name]
+- This extension tracks usage statistics for claude.ai
 - We store only the following data:
   - Tokens used and messages sent during the last 5 hour period, and the associated reset time
   - A SHA-256 hash of your email address (for cross-device synchronization)
