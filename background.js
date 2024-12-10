@@ -12,8 +12,15 @@
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 let defaultConfig = null;
-const STORAGE_KEY = "claudeUsageTracker_v3"
+const STORAGE_KEY = "claudeUsageTracker_v4"
 const CONFIG_URL = 'https://raw.githubusercontent.com/lugia19/Claude-Toolbox/refs/heads/main/constants.json';
+
+const DEBUG_MODE = false
+function debugLog(...args) {
+	if (DEBUG_MODE) {
+		console.log(...args);
+	}
+}
 
 browser.action.onClicked.addListener(() => {
 	browser.tabs.create({
@@ -27,7 +34,7 @@ async function initializeConfig() {
 		const response = await fetch(browser.runtime.getURL('default-config.json'));
 		defaultConfig = await response.json();
 		configReady = true;
-		console.log("Default config loaded:", defaultConfig);
+		debugLog("Default config loaded:", defaultConfig);
 	} catch (error) {
 		console.error("Failed to load default config:", error);
 	}
@@ -59,7 +66,7 @@ async function getFreshConfig() {
 		}
 
 		const remoteConfig = await response.json();
-		console.log('Loaded remote config:', remoteConfig);
+		debugLog('Loaded remote config:', remoteConfig);
 		return mergeDeep(structuredClone(defaultConfig), remoteConfig);
 	} catch (error) {
 		console.warn('Error loading remote config:', error);
@@ -77,9 +84,9 @@ class TokenStorageManager {
 		this.userId = null;
 
 		browser.alarms.create('firebaseSync', { periodInMinutes: this.syncInterval });
-		console.log("Alarm created, syncing every", this.syncInterval, "minutes");
+		//debugLog("Alarm created, syncing every", this.syncInterval, "minutes");
 		browser.alarms.onAlarm.addListener((alarm) => {
-			console.log("Alarm triggered:", alarm);
+			//debugLog("Alarm triggered:", alarm);
 			if (alarm.name === 'firebaseSync' && this.userId) {
 				this.syncWithFirebase();
 			}
@@ -99,9 +106,11 @@ class TokenStorageManager {
 			console.error("Tried to write:", value);
 			console.error("Read back:", storedValue);
 			//throw new Error("Storage verification failed");
-		}*/
+		}
+		debugLog("Storage verified for key:", key);
+		*/
 
-		console.log("Storage verified for key:", key);
+
 		return true;
 	}
 
@@ -112,7 +121,7 @@ class TokenStorageManager {
 
 	setUserId(newId) {
 		if (newId) {
-			console.log("Setting new userID:", newId);
+			debugLog("Setting new userID:", newId);
 			this.userId = newId;
 		}
 	}
@@ -121,36 +130,36 @@ class TokenStorageManager {
 		if (!this.userId) return;	// Just in case something weird happens
 
 		if (this.isSyncingFirebase) {
-			console.log("Sync already in progress, skipping");
+			debugLog("Sync already in progress, skipping");
 			return;
 		}
 
 		this.isSyncingFirebase = true;
-		console.log("=== FIREBASE SYNC STARTING ===");
-		console.log("Using hashed ID:", this.userId);
+		debugLog("=== FIREBASE SYNC STARTING ===");
+		debugLog("Using hashed ID:", this.userId);
 
 		try {
 			// Get local data
 			const localModels = await this.#getValue(`${STORAGE_KEY}_models`) || {};
-			console.log("Local models:", localModels);
+			debugLog("Local models:", localModels);
 
 			// Get remote data
 			const url = `${defaultConfig.FIREBASE_BASE_URL}/users/${this.userId}/models.json`;
-			console.log("Fetching from:", url);
+			debugLog("Fetching from:", url);
 
 			const response = await fetch(url);
 			if (!response.ok) {
 				throw new Error(`HTTP error! status: ${response.status}`);
 			}
 			const firebaseModels = await response.json() || {};
-			console.log("Firebase models:", firebaseModels);
+			debugLog("Firebase models:", firebaseModels);
 
 			// Merge data
 			const mergedModels = this.mergeModelData(localModels, firebaseModels);
-			console.log("Merged result:", mergedModels);
+			debugLog("Merged result:", mergedModels);
 
 			// Write merged data back
-			console.log("Writing merged data back to Firebase...");
+			debugLog("Writing merged data back to Firebase...");
 			const writeResponse = await fetch(url, {
 				method: 'PUT',
 				body: JSON.stringify(mergedModels)
@@ -161,9 +170,9 @@ class TokenStorageManager {
 			}
 
 			// Update local storage
-			console.log("Updating local storage...");
+			debugLog("Updating local storage...");
 			await this.#setValue(`${STORAGE_KEY}_models`, mergedModels);
-			console.log("=== SYNC COMPLETED SUCCESSFULLY ===");
+			debugLog("=== SYNC COMPLETED SUCCESSFULLY ===");
 
 		} catch (error) {
 			console.error('=== SYNC FAILED ===');
@@ -175,7 +184,7 @@ class TokenStorageManager {
 	}
 
 	mergeModelData(localModels = {}, firebaseModels = {}) {
-		console.log("MERGING...")
+		debugLog("MERGING...")
 		const merged = {};
 		const allModelKeys = new Set([
 			...Object.keys(localModels),
@@ -195,7 +204,7 @@ class TokenStorageManager {
 			} else {
 				// If reset times match, take the highest counts as before
 				if (local.resetTimestamp === remote.resetTimestamp) {
-					console.log("TIMESTAMP MATCHES, TAKING HIGHEST COUNTS!")
+					debugLog("TIMESTAMP MATCHES, TAKING HIGHEST COUNTS!")
 					merged[model] = {
 						total: Math.max(local.total, remote.total),
 						messageCount: Math.max(local.messageCount, remote.messageCount),
@@ -208,7 +217,7 @@ class TokenStorageManager {
 
 					// If earlier timestamp is still valid (not in past)
 					if (earlier.resetTimestamp > currentTime) {
-						console.log("EARLIER TIMESTAMP STILL VALID, COMBINING COUNTS!")
+						debugLog("EARLIER TIMESTAMP STILL VALID, COMBINING COUNTS!")
 						merged[model] = {
 							total: earlier.total + later.total,
 							messageCount: earlier.messageCount + later.messageCount,
@@ -216,7 +225,7 @@ class TokenStorageManager {
 						};
 					} else {
 						// If earlier timestamp is expired, use later one
-						console.log("EARLIER TIMESTAMP EXPIRED, USING LATER ONE!")
+						debugLog("EARLIER TIMESTAMP EXPIRED, USING LATER ONE!")
 						merged[model] = later;
 					}
 				}
@@ -343,8 +352,8 @@ class TokenStorageManager {
 	}
 
 	async calculateMessagesLeft(model, conversationLength = 0) {
-		console.log("Calculating messages left for model:", model);
-		console.log("Conversation length:", conversationLength);
+		debugLog("Calculating messages left for model:", model);
+		debugLog("Conversation length:", conversationLength);
 		if (model === "default") return "Loading...";
 
 		const maxTokens = defaultConfig.MODEL_TOKEN_CAPS[model] || defaultConfig.MODEL_TOKEN_CAPS.default;
@@ -384,7 +393,7 @@ class TokenStorageManager {
 const tokenStorageManager = new TokenStorageManager();
 
 async function handleMessage(message) {
-	console.log("📥 Received message:", message);
+	debugLog("📥 Received message:", message);
 	const response = await (async () => {
 		switch (message.type) {
 			case 'getFileTokens':
@@ -415,7 +424,7 @@ async function handleMessage(message) {
 				return tokenStorageManager.setUserId(message.userId);
 		}
 	})();
-	console.log("📤 Sending response:", response);
+	debugLog("📤 Sending response:", response);
 	return response;
 }
 

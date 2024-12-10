@@ -16,8 +16,15 @@
 (function () {
 	'use strict';
 
+	const DEBUG_MODE = false
+	function debugLog(...args) {
+		if (DEBUG_MODE) {
+			console.log(...args);
+		}
+	}
+
 	if (window.claudeTrackerInstance) {
-		console.log('Instance already running, stopping');
+		debugLog('Instance already running, stopping');
 		return;
 	}
 	window.claudeTrackerInstance = true;
@@ -28,7 +35,7 @@
 	//#region Storage Interface
 	class TokenStorageInterface {
 		async setUserId(userId) {
-			console.log("Sending user ID...", userId);
+			debugLog("Sending user ID...", userId);
 			return await browser.runtime.sendMessage({
 				type: 'setUserId',
 				userId
@@ -193,21 +200,21 @@
 		//Ensure we're not inside a modal
 		const backButton = document.querySelector(config.SELECTORS.BACK_BUTTON);
 		if (backButton) {
-			console.log("Found back button, clicking it");
+			debugLog("Found back button, clicking it");
 			backButton.click();
 			await sleep(200);
 		}
 
 		// If sidebar exists and has been processed before, we're done
 		if (sidebar && sidebar.getAttribute('data-files-processed')) {
-			console.log("Sidebar was processed! Skipping opening it.")
+			debugLog("Sidebar was processed! Skipping opening it.")
 			return true;
 		}
 
 		// If we get here, we need to open/reload the sidebar
 		const sidebarButton = document.querySelector(config.SELECTORS.SIDEBAR_BUTTON);
 		if (!sidebarButton) {
-			console.log('Could not find sidebar button');
+			debugLog('Could not find sidebar button');
 			return false;
 		}
 
@@ -224,7 +231,7 @@
 				const isHidden = matrixMatch && style.transform.includes('428');
 
 				if (!isHidden && style.opacity !== '0') {
-					console.log("Sidebar is visible, wait 1 sec.")
+					debugLog("Sidebar is visible, wait 1 sec.")
 					sidebar.setAttribute('data-files-processed', 'true');
 					await sleep(1000);
 
@@ -243,7 +250,7 @@
 			await sleep(100);
 			attempts++;
 		}
-		console.log('Sidebar did not show/load properly');
+		debugLog('Sidebar did not show/load properly');
 		return false;
 	}
 
@@ -251,20 +258,20 @@
 		try {
 			const fileContainer = button.closest('div[data-testid]');
 			if (!fileContainer) {
-				console.log('Could not find project file container');
+				debugLog('Could not find project file container');
 				return 0;
 			}
 
 			const filename = fileContainer.getAttribute('data-testid');
-			console.log('Processing project file:', filename);
+			debugLog('Processing project file:', filename);
 
 			const stored = await storageInterface.getFileTokens(getConversationId(), filename, "project");
 			if (stored !== undefined) {
-				console.log(`Using cached tokens for project file: ${filename}`);
+				debugLog(`Using cached tokens for project file: ${filename}`);
 				return stored;
 			}
 
-			console.log(`Calculating tokens for project file: ${filename}`);
+			debugLog(`Calculating tokens for project file: ${filename}`);
 			button.click();
 
 			// Wait for modal with correct filename
@@ -277,7 +284,7 @@
 				if (modal) {
 					modalTitle = modal.querySelector('h2');
 					if (modalTitle && modalTitle.textContent === filename) {
-						console.log(`Found modal with title ${filename}`)
+						debugLog(`Found modal with title ${filename}`)
 						break;
 					}
 				}
@@ -286,7 +293,7 @@
 			}
 
 			if (!modal || !modalTitle || modalTitle.textContent !== filename) {
-				console.log('Could not find modal with matching filename');
+				debugLog('Could not find modal with matching filename');
 				return 0;
 			}
 
@@ -294,14 +301,14 @@
 
 			const content = modal.querySelector(config.SELECTORS.MODAL_CONTENT);
 			if (!content) {
-				console.log('Could not find modal content');
+				debugLog('Could not find modal content');
 				return 0;
 			}
 
 			const text = content.textContent || '';
-			console.log(`First 100 chars of content: "${text.substring(0, 100)}"`);
+			debugLog(`First 100 chars of content: "${text.substring(0, 100)}"`);
 			const tokens = calculateTokens(content.textContent || '');
-			console.log(`Project file ${filename} tokens:`, tokens);
+			debugLog(`Project file ${filename} tokens:`, tokens);
 
 			if (tokens > 0) {
 				await storageInterface.saveFileTokens(getConversationId(), filename, tokens, "project");
@@ -314,7 +321,7 @@
 				closeButton.click();
 			}
 
-			console.log("Eeeping.")
+			debugLog("Eeeping.")
 			await sleep(200);
 
 			return tokens;
@@ -327,7 +334,7 @@
 	async function getProjectTokens() {
 		const projectContainer = document.querySelector(config.SELECTORS.PROJECT_FILES_CONTAINER);
 		const projectFileButtons = projectContainer?.querySelectorAll(config.SELECTORS.PROJECT_FILES) || [];
-		console.log('Found project files in sidebar:', projectFileButtons);
+		debugLog('Found project files in sidebar:', projectFileButtons);
 
 		let totalTokens = 0;
 		for (const button of projectFileButtons) {
@@ -341,13 +348,13 @@
 	async function handleTextFile(button) {
 		const filename = button.querySelector('.break-words')?.textContent;
 		if (!filename) {
-			console.log('Could not find filename for text file');
+			debugLog('Could not find filename for text file');
 			return 0;
 		}
 
 		const stored = await storageInterface.getFileTokens(getConversationId(), filename, "content");
 		if (stored !== undefined) {
-			console.log(`Using cached tokens for text file: ${filename}`);
+			debugLog(`Using cached tokens for text file: ${filename}`);
 			return stored;
 		}
 
@@ -356,12 +363,12 @@
 
 		const content = document.querySelector(config.SELECTORS.FILE_CONTENT);
 		if (!content) {
-			console.log('Could not find file content');
+			debugLog('Could not find file content');
 			return 0;
 		}
 
 		const tokens = calculateTokens(content.textContent || '');
-		console.log(`Text file ${filename} tokens:`, tokens);
+		debugLog(`Text file ${filename} tokens:`, tokens);
 
 		if (tokens > 0) {
 			await storageInterface.saveFileTokens(getConversationId(), filename, tokens, "content");
@@ -379,13 +386,13 @@
 	async function handleImageFile(button) {
 		const filename = button.querySelector('.break-words')?.textContent;
 		if (!filename) {
-			console.log('Could not find filename for image');
+			debugLog('Could not find filename for image');
 			return 0;
 		}
 
 		const stored = await storageInterface.getFileTokens(getConversationId(), filename, "content");
 		if (stored !== undefined) {
-			console.log(`Using cached tokens for image: ${filename}`);
+			debugLog(`Using cached tokens for image: ${filename}`);
 			return stored;
 		}
 
@@ -394,7 +401,7 @@
 
 		const modalImage = document.querySelector('[role="dialog"] img[alt^="Preview of"]');
 		if (!modalImage) {
-			console.log('Could not find image in modal');
+			debugLog('Could not find image in modal');
 			return 0;
 		}
 
@@ -402,12 +409,12 @@
 		const height = parseInt(modalImage.getAttribute('height'));
 
 		if (!width || !height) {
-			console.log('Could not get image dimensions');
+			debugLog('Could not get image dimensions');
 			return 0;
 		}
 
 		const tokens = Math.min(1600, Math.ceil((width * height) / 750));
-		console.log(`Image ${filename} (${width}x${height}) tokens:`, tokens);
+		debugLog(`Image ${filename} (${width}x${height}) tokens:`, tokens);
 
 		if (tokens > 0) {
 			await storageInterface.saveFileTokens(getConversationId(), filename, tokens, "content");
@@ -425,13 +432,13 @@
 	async function handlePDFFile(button) {
 		const filename = button.querySelector('.break-words')?.textContent;
 		if (!filename) {
-			console.log('Could not find filename for PDF');
+			debugLog('Could not find filename for PDF');
 			return 0;
 		}
 
 		const stored = await storageInterface.getFileTokens(getConversationId(), filename, "content");
 		if (stored !== undefined) {
-			console.log(`Using cached tokens for PDF: ${filename}`);
+			debugLog(`Using cached tokens for PDF: ${filename}`);
 			return stored;
 		}
 
@@ -440,18 +447,18 @@
 
 		const pageText = document.querySelector('[role="dialog"] .text-text-300 p')?.textContent;
 		if (!pageText) {
-			console.log('Could not find page count text');
+			debugLog('Could not find page count text');
 			return 0;
 		}
 
 		const pageCount = parseInt(pageText);
 		if (isNaN(pageCount)) {
-			console.log('Could not parse page count from:', pageText);
+			debugLog('Could not parse page count from:', pageText);
 			return 0;
 		}
 
 		const tokens = pageCount * 2250;
-		console.log(`PDF ${filename} (${pageCount} pages) tokens:`, tokens);
+		debugLog(`PDF ${filename} (${pageCount} pages) tokens:`, tokens);
 
 		if (tokens > 0) {
 			await storageInterface.saveFileTokens(getConversationId(), filename, tokens, "content");
@@ -471,7 +478,7 @@
 
 		const sidebar = document.querySelector(config.SELECTORS.SIDEBAR_CONTENT);
 		if (!sidebar) {
-			console.log('Could not find sidebar');
+			debugLog('Could not find sidebar');
 			return 0;
 		}
 
@@ -491,7 +498,7 @@
 		});
 
 		if (!contentUl) {
-			console.log('Could not find content file list');
+			debugLog('Could not find content file list');
 			return 0;
 		}
 
@@ -521,7 +528,7 @@
 	}
 
 	async function handleArtifact(button, artifactName, versionCount) {
-		console.log("Handling artifact", artifactName);
+		debugLog("Handling artifact", artifactName);
 
 		// Check cache first
 		const stored = await storageInterface.getFileTokens(
@@ -530,7 +537,7 @@
 			'artifact'
 		);
 		if (stored !== undefined) {
-			console.log(`Using cached tokens for artifact: ${artifactName} (${versionCount} versions)`);
+			debugLog(`Using cached tokens for artifact: ${artifactName} (${versionCount} versions)`);
 			return stored;
 		}
 
@@ -540,10 +547,10 @@
 
 		const modalContainer = document.querySelector(config.SELECTORS.SIDEBAR_CONTENT);
 		if (!modalContainer) {
-			console.log('Could not find modal container');
+			debugLog('Could not find modal container');
 			return 0;
 		}
-		console.log("Ensuring code mode...")
+		debugLog("Ensuring code mode...")
 		// Ensure we're in code view if toggle exists
 		const toggle = modalContainer.querySelector('[role="group"]');
 		if (toggle) {
@@ -554,7 +561,7 @@
 			}
 		}
 
-		console.log("Going left...")
+		debugLog("Going left...")
 		// First navigate all the way left
 		while (true) {
 			const versionButton = modalContainer.querySelector(config.SELECTORS.ARTIFACT_VERSION_SELECT);
@@ -570,7 +577,7 @@
 
 		let totalTokens = 0;
 		let currentVersion = 1;
-		console.log("Going right...")
+		debugLog("Going right...")
 		// Now go through all versions from left to right
 		while (true) {
 			// Count tokens for current version
@@ -578,7 +585,7 @@
 			if (codeBlock) {
 				const versionTokens = calculateTokens(codeBlock.textContent || '');
 				totalTokens += versionTokens;
-				console.log(`${artifactName} - Version ${currentVersion}/${versionCount}: ${versionTokens} tokens`);
+				debugLog(`${artifactName} - Version ${currentVersion}/${versionCount}: ${versionTokens} tokens`);
 				currentVersion++;
 			}
 
@@ -593,7 +600,7 @@
 			await sleep(100);
 		}
 
-		console.log(`${artifactName} - Total tokens across all versions: ${totalTokens}`);
+		debugLog(`${artifactName} - Total tokens across all versions: ${totalTokens}`);
 
 		if (totalTokens > 0) {
 			await storageInterface.saveFileTokens(
@@ -621,7 +628,7 @@
 		while (true) {
 			const sidebar = document.querySelector(config.SELECTORS.SIDEBAR_CONTENT);
 			if (!sidebar) {
-				console.log('Could not find sidebar');
+				debugLog('Could not find sidebar');
 				break;
 			}
 
@@ -632,7 +639,7 @@
 			});
 
 			if (!artifactsUl) {
-				console.log('Could not find artifacts list');
+				debugLog('Could not find artifacts list');
 				break;
 			}
 
@@ -644,18 +651,18 @@
 
 				const name = button.querySelector('.break-words')?.textContent;
 				if (!name || processedNames.has(name)) continue;
-				console.log('Processing artifact:', name);
+				debugLog('Processing artifact:', name);
 
 				const description = button.querySelector('.text-text-400')?.textContent;
 				const versionMatch = description?.match(/(\d+) versions?$/);
 				const versionCount = versionMatch ? parseInt(versionMatch[1]) : 1;
-				console.log("Version count:", versionCount);
+				debugLog("Version count:", versionCount);
 
 				// Found a new artifact to process
 				processedNames.add(name);
 				foundNew = true;
 				let newTokens = await handleArtifact(button, name, versionCount);
-				console.log("Artifact tokens:", newTokens);
+				debugLog("Artifact tokens:", newTokens);
 				totalTokens += newTokens
 				break;
 			}
@@ -1097,7 +1104,7 @@
 
 	async function updateProgressBar(conversationLength, updateLength = true, shouldCollapse = false) {
 		// Update each model section
-		console.log("Updating progress bar...", conversationLength)
+		debugLog("Updating progress bar...", conversationLength)
 
 		const lengthDisplay = document.getElementById('conversation-token-count');
 		if (lengthDisplay && updateLength) {
@@ -1147,7 +1154,7 @@
 
 	//#region Token Count
 	async function getOutputMessage(maxWaitSeconds = 60) {
-		console.log("Waiting for AI response...");
+		debugLog("Waiting for AI response...");
 		const startTime = Date.now();
 		let consecutiveSuccesses = 0;
 
@@ -1168,14 +1175,14 @@
 
 				if (allFinished) {
 					consecutiveSuccesses++;
-					console.log(`All messages marked complete, success ${consecutiveSuccesses}/3`);
+					debugLog(`All messages marked complete, success ${consecutiveSuccesses}/3`);
 					if (consecutiveSuccesses >= 3) {
-						console.log("Three consecutive successes, returning last response");
+						debugLog("Three consecutive successes, returning last response");
 						return messages[messages.length - 1];
 					}
 				} else {
 					if (consecutiveSuccesses > 0) {
-						console.log(`Reset success counter from ${consecutiveSuccesses} to 0`);
+						debugLog(`Reset success counter from ${consecutiveSuccesses} to 0`);
 					}
 					consecutiveSuccesses = 0;
 				}
@@ -1183,7 +1190,7 @@
 			await sleep(100);
 		}
 
-		console.log("No complete response received within timeout");
+		debugLog("No complete response received within timeout");
 		return null;
 	}
 
@@ -1194,8 +1201,8 @@
 			return null;
 		}
 
-		console.log('Found user messages:', userMessages);
-		console.log('Found AI messages:', aiMessages);
+		debugLog('Found user messages:', userMessages);
+		debugLog('Found AI messages:', aiMessages);
 
 		let currentCount = 0;
 		let AI_output = null;
@@ -1204,8 +1211,8 @@
 		userMessages.forEach((msg, index) => {
 			const text = msg.textContent || '';
 			const tokens = calculateTokens(text);
-			console.log(`User message ${index}, length ${tokens}:`, msg);
-			//console.log(`Text: "${text}"`);
+			debugLog(`User message ${index}, length ${tokens}:`, msg);
+			//debugLog(`Text: "${text}"`);
 			currentCount += tokens;
 		});
 
@@ -1216,7 +1223,7 @@
 
 			if (aiMessages.length >= userMessages.length &&
 				lastParent && lastParent.getAttribute('data-is-streaming') === 'false') {
-				console.log("Found complete set of messages, last AI message is complete");
+				debugLog("Found complete set of messages, last AI message is complete");
 				AI_output = lastMessage;
 			}
 		}
@@ -1228,7 +1235,7 @@
 		aiMessages.forEach((msg, index) => {
 			// Skip if this is the final output we're saving for later
 			if (msg === AI_output) {
-				console.log(`Skipping AI message ${index} - will process later as final output`);
+				debugLog(`Skipping AI message ${index} - will process later as final output`);
 				return;
 			}
 
@@ -1236,21 +1243,21 @@
 			if (parent && parent.getAttribute('data-is-streaming') === 'false') {
 				const text = msg.textContent || '';
 				const tokens = calculateTokens(text); // No multiplication for intermediate responses
-				console.log(`AI message ${index}, length ${tokens}:`, msg);
+				debugLog(`AI message ${index}, length ${tokens}:`, msg);
 				currentCount += tokens;
 
 				const button = msg.querySelector('button.flex.justify-start.items-center.pt-2');
 				if (button && button.textContent.trim() === 'View analysis') {
-					console.log('Found the "View analysis" button in AI message', index);
+					debugLog('Found the "View analysis" button in AI message', index);
 					analysisToolUsed = true;
 				}
 			} else {
-				console.log(`Skipping AI message ${index} - still streaming`);
+				debugLog(`Skipping AI message ${index} - still streaming`);
 			}
 		});
 
 		if (analysisToolUsed && !await storageInterface.getCheckboxStates().analysis_enabled) {
-			console.log("Analysis tool used but checkbox disabled, adding analysis cost");
+			debugLog("Analysis tool used but checkbox disabled, adding analysis cost");
 			currentCount += config.FEATURE_CHECKBOXES.analysis_enabled.cost
 		}
 
@@ -1264,12 +1271,12 @@
 			}
 
 		} else {
-			console.log("Could not load sidebar, skipping files");
+			debugLog("Could not load sidebar, skipping files");
 		}
 
 
 		if (!AI_output) {
-			console.log("No complete AI output found, waiting...");
+			debugLog("No complete AI output found, waiting...");
 			AI_output = await getOutputMessage();
 		}
 
@@ -1277,13 +1284,13 @@
 		if (AI_output) {
 			const text = AI_output.textContent || '';
 			const tokens = calculateTokens(text) * config.OUTPUT_TOKEN_MULTIPLIER;
-			console.log("Processing final AI output:");
-			console.log(`Text: "${text}"`);
-			console.log(`Tokens (weighted by ${config.OUTPUT_TOKEN_MULTIPLIER}x): ${tokens}`);
+			debugLog("Processing final AI output:");
+			debugLog(`Text: "${text}"`);
+			debugLog(`Tokens (weighted by ${config.OUTPUT_TOKEN_MULTIPLIER}x): ${tokens}`);
 			currentCount += tokens;
 		}
 
-		console.log("Now that we've waited for the AI output, we can process artifacts.")
+		debugLog("Now that we've waited for the AI output, we can process artifacts.")
 
 		if (await ensureSidebarLoaded()) {
 			try {
@@ -1293,7 +1300,7 @@
 				// If we found artifacts but the checkbox isn't enabled, add the cost
 				if (artifactsTokenCount > 0) {
 					if (!await storageInterface.getCheckboxStates().artifacts_enabled) {
-						console.log("Found artifacts in use but checkbox disabled, adding artifacts cost");
+						debugLog("Found artifacts in use but checkbox disabled, adding artifacts cost");
 						currentCount += config.FEATURE_CHECKBOXES.artifacts_enabled.cost;
 					}
 				}
@@ -1306,7 +1313,7 @@
 		currentCount += await storageInterface.getExtraCost();
 
 		// Ensure sidebar is closed...
-		console.log("Closing sidebar...")
+		debugLog("Closing sidebar...")
 		const sidebar = document.querySelector(config.SELECTORS.SIDEBAR_CONTENT);
 		if (sidebar) {
 			const style = window.getComputedStyle(sidebar);
@@ -1316,7 +1323,7 @@
 			if (!isHidden && style.opacity !== '0') {
 				const closeButton = document.querySelector(config.SELECTORS.SIDEBAR_BUTTON);
 				if (closeButton) { // Check if button is visible
-					console.log("Closing...")
+					debugLog("Closing...")
 					closeButton.click();
 				}
 			}
@@ -1334,7 +1341,7 @@
 				await storageInterface.setUserId(userId);
 			}
 			if (isProcessingUIEvent) {
-				console.log('Event processing in progress, skipping UI poll update');
+				debugLog('Event processing in progress, skipping UI poll update');
 				return;
 			}
 			const newModel = getCurrentModel();
@@ -1344,7 +1351,7 @@
 			// Check checkbox states
 			const currentCheckboxState = await storageInterface.getCheckboxStates();
 			if (JSON.stringify(currentCheckboxState) !== JSON.stringify(lastCheckboxState)) {
-				console.log('Checkbox states changed, updating...');
+				debugLog('Checkbox states changed, updating...');
 				lastCheckboxState = { ...currentCheckboxState };
 				needsUpdate = true;
 			}
@@ -1352,13 +1359,13 @@
 			// Check conversation state
 			const conversationId = getConversationId();
 			if (conversationId == null) {
-				console.log("No conversation active, updating progressbar...")
+				debugLog("No conversation active, updating progressbar...")
 				await updateProgressBar(config.BASE_SYSTEM_PROMPT_LENGTH + await storageInterface.getExtraCost(), true, newModel !== currentlyDisplayedModel);
 			}
 			const messages = document.querySelectorAll(`${config.SELECTORS.USER_MESSAGE}, ${config.SELECTORS.AI_MESSAGE}`);
 
 			if ((conversationId !== currentConversationId && conversationId !== null) || messages.length !== currentMessageCount) {
-				console.log('Conversation changed, recounting tokens');
+				debugLog('Conversation changed, recounting tokens');
 				currentConversationId = conversationId;
 				currentMessageCount = messages.length;
 				needsUpdate = true;
@@ -1366,7 +1373,7 @@
 
 			// Check for model change
 			if (newModel !== currentlyDisplayedModel) {
-				console.log(`Model changed from ${currentlyDisplayedModel} to ${newModel}`);
+				debugLog(`Model changed from ${currentlyDisplayedModel} to ${newModel}`);
 				currentlyDisplayedModel = newModel;
 				// Update all sections - will collapse inactive ones
 				config.MODELS.forEach(modelName => {
@@ -1389,7 +1396,7 @@
 						.replace(/[,\.]/g, '')
 						.trim());
 					if (stored.total !== displayedTotal) {
-						console.log(`Detected change in total for ${model}: ${displayedTotal} -> ${stored.total}`);
+						debugLog(`Detected change in total for ${model}: ${displayedTotal} -> ${stored.total}`);
 						needsUpdate = true;
 					}
 				} else {
@@ -1402,7 +1409,7 @@
 
 			// Update UI if needed
 			if (needsUpdate) {
-				console.log("Updating bar from poll event...")
+				debugLog("Updating bar from poll event...")
 				let newTokenCount = await countTokens();
 				if (!newTokenCount)
 					return
@@ -1416,7 +1423,7 @@
 		isProcessingUIEvent = true;
 		try {
 			const delay = getConversationId() ? config.CONVO_DELAY_MS : config.UNITIALIZED_CONVO_DELAY_MS;
-			console.log(`Waiting ${delay}ms before counting tokens`);
+			debugLog(`Waiting ${delay}ms before counting tokens`);
 			await sleep(delay);
 
 			const currentModel = getCurrentModel();
@@ -1432,12 +1439,12 @@
 
 			if (currentModel !== "default") {
 				const { totalTokenCount, messageCount } = await await storageInterface.addTokensToModel(currentModel, newCount);
-				console.log(`Current conversation tokens: ${newCount}`);
-				console.log(`Total accumulated tokens: ${totalTokenCount}`);
-				console.log(`Messages used: ${messageCount}`);
-				console.log(`Added to model: ${currentModel}!`);
+				debugLog(`Current conversation tokens: ${newCount}`);
+				debugLog(`Total accumulated tokens: ${totalTokenCount}`);
+				debugLog(`Messages used: ${messageCount}`);
+				debugLog(`Added to model: ${currentModel}!`);
 			} else {
-				console.log("Timed out waiting for model to change from 'default'");
+				debugLog("Timed out waiting for model to change from 'default'");
 			}
 
 			await updateProgressBar(newCount, false);
@@ -1447,7 +1454,7 @@
 	}
 
 	function setupEvents() {
-		console.log("Setting up tracking...")
+		debugLog("Setting up tracking...")
 		document.addEventListener('click', async (e) => {
 			const regenerateButton = e.target.closest(`button:has(path[d="${config.SELECTORS.REGENERATE_BUTTON_PATH}"])`);
 			const saveButton = e.target.closest(config.SELECTORS.SAVE_BUTTON);
@@ -1456,14 +1463,14 @@
 			if (saveButton) {
 				const renameChatDialog = saveButton.closest('div[role="dialog"]')?.querySelector('h2');
 				if (renameChatDialog?.textContent === 'Rename chat') {
-					console.log('Save button clicked in rename dialog, ignoring');
+					debugLog('Save button clicked in rename dialog, ignoring');
 					return;
 				}
 			}
 
 			if (regenerateButton || saveButton || sendButton) {
-				console.log('Clicked:', e.target);
-				console.log('Event details:', e);
+				debugLog('Clicked:', e.target);
+				debugLog('Event details:', e);
 				await updateTokenTotal();
 				return;
 			}
@@ -1477,14 +1484,14 @@
 			if (editArea) {
 				const renameChatDialog = editArea.closest('div[role="dialog"]')?.querySelector('h2');
 				if (renameChatDialog?.textContent === 'Rename chat') {
-					console.log('Enter pressed in rename dialog, ignoring');
+					debugLog('Enter pressed in rename dialog, ignoring');
 					return;
 				}
 			}
 
 			if ((mainInput || editArea) && e.key === 'Enter' && !e.shiftKey) {
-				console.log('Enter pressed in:', e.target);
-				console.log('Event details:', e);
+				debugLog('Enter pressed in:', e.target);
+				debugLog('Event details:', e);
 				await updateTokenTotal();
 				return;
 			}
@@ -1495,9 +1502,9 @@
 		const MAX_RETRIES = 15;
 		const RETRY_DELAY = 200;
 		// Load and assign configuration to global variables
-		console.log("Calling browser message...")
+		debugLog("Calling browser message...")
 		config = await browser.runtime.sendMessage({ type: 'getConfig' });
-		console.log(config)
+		debugLog(config)
 		config.MODELS = Object.keys(config.MODEL_TOKEN_CAPS).filter(key => key !== 'default');
 
 		// Check for duplicate running with retry logic
@@ -1508,7 +1515,7 @@
 			userMenuButton = document.querySelector(config.SELECTORS.USER_MENU_BUTTON);
 
 			if (!userMenuButton) {
-				console.log(`User menu button not found, attempt ${attempts + 1}/${MAX_RETRIES}`);
+				debugLog(`User menu button not found, attempt ${attempts + 1}/${MAX_RETRIES}`);
 				await sleep(RETRY_DELAY);
 				attempts++;
 			}
@@ -1520,11 +1527,11 @@
 		}
 
 		if (userMenuButton.getAttribute('data-script-loaded')) {
-			console.log('Script already running, stopping duplicate');
+			debugLog('Script already running, stopping duplicate');
 			return;
 		}
 		userMenuButton.setAttribute('data-script-loaded', true);
-		console.log('We\'re unique, initializing Chat Token Counter...');
+		debugLog('We\'re unique, initializing Chat Token Counter...');
 
 		storageInterface = new TokenStorageInterface();
 		let userId = await getUserId();
@@ -1539,7 +1546,7 @@
 		await createUI();
 		await updateProgressBar(0);
 		pollUIUpdates();
-		console.log('Initialization complete. Ready to track tokens.');
+		debugLog('Initialization complete. Ready to track tokens.');
 	}
 
 	(async () => {
