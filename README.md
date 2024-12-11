@@ -10,4 +10,4 @@ The extension will correctly handle calculating token usage (via [gpt-tokenizer]
 
 It additionally will use a SHA-256 hash of your e-mail on claude.ai to synchronize your usage amounts across devices via firebase.
 
-![usage_tracker_extension](https://github.com/user-attachments/assets/59949d8b-b759-4a92-8bd1-0a990f967dc7)
+![UI Screenshot](https://github.com/lugia19/Claude-Usage-Extension/blob/main/ui_screenshot.png?raw=true)
