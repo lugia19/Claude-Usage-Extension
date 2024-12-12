@@ -5,7 +5,7 @@
 	"UNITIALIZED_CONVO_DELAY_MS": 5000,
 	"OUTPUT_TOKEN_MULTIPLIER": 10,
 	"MODEL_TOKEN_CAPS": {
-		"Opus": 600000,
+		"Opus": 250000,
 		"Sonnet": 1600000,
 		"Haiku": 3000000,
 		"default": 1
