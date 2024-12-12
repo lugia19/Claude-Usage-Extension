@@ -7,7 +7,7 @@
 	"MODEL_TOKEN_CAPS": {
 		"Opus": 600000,
 		"Sonnet": 1600000,
-		"Haiku": 4000000,
+		"Haiku": 3000000,
 		"default": 1
 	},
 	"WARNING_THRESHOLD": 0.9,
