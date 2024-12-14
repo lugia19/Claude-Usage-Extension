@@ -16,7 +16,7 @@
 (function () {
 	'use strict';
 
-	const DEBUG_MODE = false
+	const DEBUG_MODE = true
 	function debugLog(...args) {
 		if (DEBUG_MODE) {
 			console.log(...args);
@@ -43,6 +43,7 @@
 		}
 
 		async getFileTokens(conversationId, filename, fileType) {
+			return undefined;
 			return await browser.runtime.sendMessage({
 				type: 'getFileTokens',
 				conversationId,
@@ -254,6 +255,24 @@
 		return false;
 	}
 
+	async function closeSidebar() {
+		debugLog("Closing sidebar...")
+		const sidebar = document.querySelector(config.SELECTORS.SIDEBAR_CONTENT);
+		if (sidebar) {
+			const style = window.getComputedStyle(sidebar);
+			// If sidebar is visible (not transformed away)
+			const matrixMatch = style.transform.match(/matrix\(([\d.-]+,\s*){5}[\d.-]+\)/);
+			const isHidden = matrixMatch && style.transform.includes('428');
+			if (!isHidden && style.opacity !== '0') {
+				const closeButton = document.querySelector(config.SELECTORS.SIDEBAR_BUTTON);
+				if (closeButton) { // Check if button is visible
+					debugLog("Closing...")
+					closeButton.click();
+				}
+			}
+		}
+	}
+
 	async function handleProjectFile(button) {
 		try {
 			const fileContainer = button.closest('div[data-testid]');
@@ -275,6 +294,7 @@
 			button.click();
 
 			// Wait for modal with correct filename
+			// TODO: Handle CSV file here
 			let attempts = 0;
 			let modal = null;
 			let modalTitle = null;
@@ -345,8 +365,14 @@
 		return totalTokens;
 	}
 
-	async function handleTextFile(button) {
-		const filename = button.querySelector('.break-words')?.textContent;
+	async function handleTextFile(button, skipClick = false, overrideFilename = null) {
+		let filename;
+		if (overrideFilename) {
+			filename = overrideFilename;
+		} else {
+			filename = button.querySelector('.break-words')?.textContent;
+		}
+
 		if (!filename) {
 			debugLog('Could not find filename for text file');
 			return 0;
@@ -358,8 +384,10 @@
 			return stored;
 		}
 
-		button.click();
-		await sleep(200);
+		if (!skipClick) {
+			button.click();
+			await sleep(200);
+		}
 
 		const content = document.querySelector(config.SELECTORS.FILE_CONTENT);
 		if (!content) {
@@ -445,6 +473,12 @@
 		button.click();
 		await sleep(200);
 
+		const dialog = document.querySelector('[role="dialog"]');
+		if (!dialog) {
+			debugLog('Could not find dialog - processing as text file.');
+			return handleTextFile(button, true, filename);
+		}
+
 		const pageText = document.querySelector('[role="dialog"] .text-text-300 p')?.textContent;
 		if (!pageText) {
 			debugLog('Could not find page count text');
@@ -471,6 +505,38 @@
 		}
 
 		return tokens;
+	}
+
+	async function handleCSVFile(button) {
+		const filename = button.querySelector('.break-words')?.textContent;
+		if (!filename) {
+			debugLog('Could not find filename for CSV');
+			return 0;
+		}
+
+		const stored = await storageInterface.getFileTokens(getConversationId(), filename, "content");
+		if (stored !== undefined) {
+			debugLog(`Using cached tokens for CSV: ${filename}`);
+			return stored;
+		}
+
+		button.click();
+		await sleep(200);
+
+		const dialog = document.querySelector('[role="dialog"]');
+		if (!dialog) {
+			debugLog('Could not find dialog - processing as text file.');
+			return handleTextFile(button, true, filename);
+		} else {
+			debugLog("Found dialog for CSV file - this means it is only going to be visible to the analysis tool. No cost.");
+			await storageInterface.saveFileTokens(getConversationId(), filename, 0, "content");
+			const closeButton = document.querySelector(`[role="dialog"] ${config.SELECTORS.MODAL_CLOSE}`);
+			if (closeButton) {
+				closeButton.click();
+				await sleep(200);
+			}
+			return 0;
+		}
 	}
 
 	async function getContentTokens() {
@@ -508,14 +574,22 @@
 
 			const isImage = !!button.querySelector('img');
 			const isPDF = !!button.querySelector(config.SELECTORS.PDF_ICON);
+			const isCSV = !!button.querySelector(config.SELECTORS.CSV_ICON);
+
 
 			let tokens = 0;
 			try {
 				if (isImage) {
+					debugLog('Processing image file...');
 					tokens = await handleImageFile(button);
 				} else if (isPDF) {
+					debugLog('Processing PDF file...');
 					tokens = await handlePDFFile(button);
+				} else if (isCSV) {
+					debugLog('Processing CSV file...');
+					tokens = await handleCSVFile(button);
 				} else {
+					debugLog('Processing text file...');
 					tokens = await handleTextFile(button);
 				}
 			} catch (error) {
@@ -1278,6 +1352,8 @@
 				currentCount += await getProjectTokens();
 			} catch (error) {
 				console.error('Error processing files:', error);
+			} finally {
+				closeSidebar();	//We don't want the sidebar to stay open while the AI output is loading.
 			}
 
 		} else {
@@ -1323,21 +1399,9 @@
 		currentCount += await storageInterface.getExtraCost();
 
 		// Ensure sidebar is closed...
-		debugLog("Closing sidebar...")
-		const sidebar = document.querySelector(config.SELECTORS.SIDEBAR_CONTENT);
-		if (sidebar) {
-			const style = window.getComputedStyle(sidebar);
-			// If sidebar is visible (not transformed away)
-			const matrixMatch = style.transform.match(/matrix\(([\d.-]+,\s*){5}[\d.-]+\)/);
-			const isHidden = matrixMatch && style.transform.includes('428');
-			if (!isHidden && style.opacity !== '0') {
-				const closeButton = document.querySelector(config.SELECTORS.SIDEBAR_BUTTON);
-				if (closeButton) { // Check if button is visible
-					debugLog("Closing...")
-					closeButton.click();
-				}
-			}
-		}
+		debugLog("Closing sidebar after processing all files...")
+		await sleep(100);
+		closeSidebar();
 
 		return currentCount;
 	}
