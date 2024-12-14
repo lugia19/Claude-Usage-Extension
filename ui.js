@@ -16,7 +16,7 @@
 (function () {
 	'use strict';
 
-	const DEBUG_MODE = true
+	const DEBUG_MODE = false
 	function debugLog(...args) {
 		if (DEBUG_MODE) {
 			console.log(...args);
@@ -43,7 +43,7 @@
 		}
 
 		async getFileTokens(conversationId, filename, fileType) {
-			return undefined;
+			if (DEBUG_MODE) return undefined;	// Disable cache in debug mode
 			return await browser.runtime.sendMessage({
 				type: 'getFileTokens',
 				conversationId,
@@ -191,6 +191,23 @@
 
 		// Check if height > width (portrait orientation)
 		return window.innerHeight > window.innerWidth;
+	}
+
+	async function findElement(parentElement, querySelector, maxWaitTime = 300) {
+		let elapsed = 0;
+
+		while (elapsed <= maxWaitTime) {
+			debugLog(elapsed + "ms elapsed, finding element:", querySelector);
+			debugLog("Finding element:", querySelector);
+			const element = parentElement.querySelector(querySelector);
+			if (element) {
+				return element;
+			}
+			await sleep(100);
+			elapsed += 100;
+		}
+
+		return undefined;
 	}
 	//#endregion
 
@@ -358,7 +375,15 @@
 
 		let totalTokens = 0;
 		for (const button of projectFileButtons) {
-			const tokens = await handleProjectFile(button);
+			const fileContainer = button.closest('div[data-testid]');
+			if (!fileContainer) {
+				debugLog('Could not find project file container');
+				return 0;
+			}
+
+			const filename = fileContainer.getAttribute('data-testid');
+			debugLog('Processing project file:', filename);
+			const tokens = await handleTextFile(button, false, filename)
 			totalTokens += tokens;
 		}
 
@@ -385,11 +410,11 @@
 		}
 
 		if (!skipClick) {
+			debugLog("Clicking...")
 			button.click();
-			await sleep(200);
 		}
 
-		const content = document.querySelector(config.SELECTORS.FILE_CONTENT);
+		const content = await findElement(document, config.SELECTORS.FILE_CONTENT, 800)
 		if (!content) {
 			debugLog('Could not find file content');
 			return 0;
