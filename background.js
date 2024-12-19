@@ -1,46 +1,32 @@
-//I have to include this because screw you, chrome decided to be buggy.
+import './lib/browser-polyfill.min.js';
+import './lib/o200k_base.js';
 
-// webextension-polyfill v.0.12.0 (https://github.com/mozilla/webextension-polyfill)
-(function (a, b) { if ("function" == typeof define && define.amd) define("webextension-polyfill", ["module"], b); else if ("undefined" != typeof exports) b(module); else { var c = { exports: {} }; b(c), a.browser = c.exports } })("undefined" == typeof globalThis ? "undefined" == typeof self ? this : self : globalThis, function (a) { "use strict"; if (!(globalThis.chrome && globalThis.chrome.runtime && globalThis.chrome.runtime.id)) throw new Error("This script should only be loaded in a browser extension."); if (!(globalThis.browser && globalThis.browser.runtime && globalThis.browser.runtime.id)) { a.exports = (a => { const b = { alarms: { clear: { minArgs: 0, maxArgs: 1 }, clearAll: { minArgs: 0, maxArgs: 0 }, get: { minArgs: 0, maxArgs: 1 }, getAll: { minArgs: 0, maxArgs: 0 } }, bookmarks: { create: { minArgs: 1, maxArgs: 1 }, get: { minArgs: 1, maxArgs: 1 }, getChildren: { minArgs: 1, maxArgs: 1 }, getRecent: { minArgs: 1, maxArgs: 1 }, getSubTree: { minArgs: 1, maxArgs: 1 }, getTree: { minArgs: 0, maxArgs: 0 }, move: { minArgs: 2, maxArgs: 2 }, remove: { minArgs: 1, maxArgs: 1 }, removeTree: { minArgs: 1, maxArgs: 1 }, search: { minArgs: 1, maxArgs: 1 }, update: { minArgs: 2, maxArgs: 2 } }, browserAction: { disable: { minArgs: 0, maxArgs: 1, fallbackToNoCallback: !0 }, enable: { minArgs: 0, maxArgs: 1, fallbackToNoCallback: !0 }, getBadgeBackgroundColor: { minArgs: 1, maxArgs: 1 }, getBadgeText: { minArgs: 1, maxArgs: 1 }, getPopup: { minArgs: 1, maxArgs: 1 }, getTitle: { minArgs: 1, maxArgs: 1 }, openPopup: { minArgs: 0, maxArgs: 0 }, setBadgeBackgroundColor: { minArgs: 1, maxArgs: 1, fallbackToNoCallback: !0 }, setBadgeText: { minArgs: 1, maxArgs: 1, fallbackToNoCallback: !0 }, setIcon: { minArgs: 1, maxArgs: 1 }, setPopup: { minArgs: 1, maxArgs: 1, fallbackToNoCallback: !0 }, setTitle: { minArgs: 1, maxArgs: 1, fallbackToNoCallback: !0 } }, browsingData: { remove: { minArgs: 2, maxArgs: 2 }, removeCache: { minArgs: 1, maxArgs: 1 }, removeCookies: { minArgs: 1, maxArgs: 1 }, removeDownloads: { minArgs: 1, maxArgs: 1 }, removeFormData: { minArgs: 1, maxArgs: 1 }, removeHistory: { minArgs: 1, maxArgs: 1 }, removeLocalStorage: { minArgs: 1, maxArgs: 1 }, removePasswords: { minArgs: 1, maxArgs: 1 }, removePluginData: { minArgs: 1, maxArgs: 1 }, settings: { minArgs: 0, maxArgs: 0 } }, commands: { getAll: { minArgs: 0, maxArgs: 0 } }, contextMenus: { remove: { minArgs: 1, maxArgs: 1 }, removeAll: { minArgs: 0, maxArgs: 0 }, update: { minArgs: 2, maxArgs: 2 } }, cookies: { get: { minArgs: 1, maxArgs: 1 }, getAll: { minArgs: 1, maxArgs: 1 }, getAllCookieStores: { minArgs: 0, maxArgs: 0 }, remove: { minArgs: 1, maxArgs: 1 }, set: { minArgs: 1, maxArgs: 1 } }, devtools: { inspectedWindow: { eval: { minArgs: 1, maxArgs: 2, singleCallbackArg: !1 } }, panels: { create: { minArgs: 3, maxArgs: 3, singleCallbackArg: !0 }, elements: { createSidebarPane: { minArgs: 1, maxArgs: 1 } } } }, downloads: { cancel: { minArgs: 1, maxArgs: 1 }, download: { minArgs: 1, maxArgs: 1 }, erase: { minArgs: 1, maxArgs: 1 }, getFileIcon: { minArgs: 1, maxArgs: 2 }, open: { minArgs: 1, maxArgs: 1, fallbackToNoCallback: !0 }, pause: { minArgs: 1, maxArgs: 1 }, removeFile: { minArgs: 1, maxArgs: 1 }, resume: { minArgs: 1, maxArgs: 1 }, search: { minArgs: 1, maxArgs: 1 }, show: { minArgs: 1, maxArgs: 1, fallbackToNoCallback: !0 } }, extension: { isAllowedFileSchemeAccess: { minArgs: 0, maxArgs: 0 }, isAllowedIncognitoAccess: { minArgs: 0, maxArgs: 0 } }, history: { addUrl: { minArgs: 1, maxArgs: 1 }, deleteAll: { minArgs: 0, maxArgs: 0 }, deleteRange: { minArgs: 1, maxArgs: 1 }, deleteUrl: { minArgs: 1, maxArgs: 1 }, getVisits: { minArgs: 1, maxArgs: 1 }, search: { minArgs: 1, maxArgs: 1 } }, i18n: { detectLanguage: { minArgs: 1, maxArgs: 1 }, getAcceptLanguages: { minArgs: 0, maxArgs: 0 } }, identity: { launchWebAuthFlow: { minArgs: 1, maxArgs: 1 } }, idle: { queryState: { minArgs: 1, maxArgs: 1 } }, management: { get: { minArgs: 1, maxArgs: 1 }, getAll: { minArgs: 0, maxArgs: 0 }, getSelf: { minArgs: 0, maxArgs: 0 }, setEnabled: { minArgs: 2, maxArgs: 2 }, uninstallSelf: { minArgs: 0, maxArgs: 1 } }, notifications: { clear: { minArgs: 1, maxArgs: 1 }, create: { minArgs: 1, maxArgs: 2 }, getAll: { minArgs: 0, maxArgs: 0 }, getPermissionLevel: { minArgs: 0, maxArgs: 0 }, update: { minArgs: 2, maxArgs: 2 } }, pageAction: { getPopup: { minArgs: 1, maxArgs: 1 }, getTitle: { minArgs: 1, maxArgs: 1 }, hide: { minArgs: 1, maxArgs: 1, fallbackToNoCallback: !0 }, setIcon: { minArgs: 1, maxArgs: 1 }, setPopup: { minArgs: 1, maxArgs: 1, fallbackToNoCallback: !0 }, setTitle: { minArgs: 1, maxArgs: 1, fallbackToNoCallback: !0 }, show: { minArgs: 1, maxArgs: 1, fallbackToNoCallback: !0 } }, permissions: { contains: { minArgs: 1, maxArgs: 1 }, getAll: { minArgs: 0, maxArgs: 0 }, remove: { minArgs: 1, maxArgs: 1 }, request: { minArgs: 1, maxArgs: 1 } }, runtime: { getBackgroundPage: { minArgs: 0, maxArgs: 0 }, getPlatformInfo: { minArgs: 0, maxArgs: 0 }, openOptionsPage: { minArgs: 0, maxArgs: 0 }, requestUpdateCheck: { minArgs: 0, maxArgs: 0 }, sendMessage: { minArgs: 1, maxArgs: 3 }, sendNativeMessage: { minArgs: 2, maxArgs: 2 }, setUninstallURL: { minArgs: 1, maxArgs: 1 } }, sessions: { getDevices: { minArgs: 0, maxArgs: 1 }, getRecentlyClosed: { minArgs: 0, maxArgs: 1 }, restore: { minArgs: 0, maxArgs: 1 } }, storage: { local: { clear: { minArgs: 0, maxArgs: 0 }, get: { minArgs: 0, maxArgs: 1 }, getBytesInUse: { minArgs: 0, maxArgs: 1 }, remove: { minArgs: 1, maxArgs: 1 }, set: { minArgs: 1, maxArgs: 1 } }, managed: { get: { minArgs: 0, maxArgs: 1 }, getBytesInUse: { minArgs: 0, maxArgs: 1 } }, sync: { clear: { minArgs: 0, maxArgs: 0 }, get: { minArgs: 0, maxArgs: 1 }, getBytesInUse: { minArgs: 0, maxArgs: 1 }, remove: { minArgs: 1, maxArgs: 1 }, set: { minArgs: 1, maxArgs: 1 } } }, tabs: { captureVisibleTab: { minArgs: 0, maxArgs: 2 }, create: { minArgs: 1, maxArgs: 1 }, detectLanguage: { minArgs: 0, maxArgs: 1 }, discard: { minArgs: 0, maxArgs: 1 }, duplicate: { minArgs: 1, maxArgs: 1 }, executeScript: { minArgs: 1, maxArgs: 2 }, get: { minArgs: 1, maxArgs: 1 }, getCurrent: { minArgs: 0, maxArgs: 0 }, getZoom: { minArgs: 0, maxArgs: 1 }, getZoomSettings: { minArgs: 0, maxArgs: 1 }, goBack: { minArgs: 0, maxArgs: 1 }, goForward: { minArgs: 0, maxArgs: 1 }, highlight: { minArgs: 1, maxArgs: 1 }, insertCSS: { minArgs: 1, maxArgs: 2 }, move: { minArgs: 2, maxArgs: 2 }, query: { minArgs: 1, maxArgs: 1 }, reload: { minArgs: 0, maxArgs: 2 }, remove: { minArgs: 1, maxArgs: 1 }, removeCSS: { minArgs: 1, maxArgs: 2 }, sendMessage: { minArgs: 2, maxArgs: 3 }, setZoom: { minArgs: 1, maxArgs: 2 }, setZoomSettings: { minArgs: 1, maxArgs: 2 }, update: { minArgs: 1, maxArgs: 2 } }, topSites: { get: { minArgs: 0, maxArgs: 0 } }, webNavigation: { getAllFrames: { minArgs: 1, maxArgs: 1 }, getFrame: { minArgs: 1, maxArgs: 1 } }, webRequest: { handlerBehaviorChanged: { minArgs: 0, maxArgs: 0 } }, windows: { create: { minArgs: 0, maxArgs: 1 }, get: { minArgs: 1, maxArgs: 2 }, getAll: { minArgs: 0, maxArgs: 1 }, getCurrent: { minArgs: 0, maxArgs: 1 }, getLastFocused: { minArgs: 0, maxArgs: 1 }, remove: { minArgs: 1, maxArgs: 1 }, update: { minArgs: 2, maxArgs: 2 } } }; if (0 === Object.keys(b).length) throw new Error("api-metadata.json has not been included in browser-polyfill"); class c extends WeakMap { constructor(a, b = void 0) { super(b), this.createItem = a } get(a) { return this.has(a) || this.set(a, this.createItem(a)), super.get(a) } } const d = a => a && "object" == typeof a && "function" == typeof a.then, e = (b, c) => (...d) => { a.runtime.lastError ? b.reject(new Error(a.runtime.lastError.message)) : c.singleCallbackArg || 1 >= d.length && !1 !== c.singleCallbackArg ? b.resolve(d[0]) : b.resolve(d) }, f = a => 1 == a ? "argument" : "arguments", g = (a, b) => function (c, ...d) { if (d.length < b.minArgs) throw new Error(`Expected at least ${b.minArgs} ${f(b.minArgs)} for ${a}(), got ${d.length}`); if (d.length > b.maxArgs) throw new Error(`Expected at most ${b.maxArgs} ${f(b.maxArgs)} for ${a}(), got ${d.length}`); return new Promise((f, g) => { if (b.fallbackToNoCallback) try { c[a](...d, e({ resolve: f, reject: g }, b)) } catch (e) { console.warn(`${a} API method doesn't seem to support the callback parameter, ` + "falling back to call it without a callback: ", e), c[a](...d), b.fallbackToNoCallback = !1, b.noCallback = !0, f() } else b.noCallback ? (c[a](...d), f()) : c[a](...d, e({ resolve: f, reject: g }, b)) }) }, h = (a, b, c) => new Proxy(b, { apply(b, d, e) { return c.call(d, a, ...e) } }); let i = Function.call.bind(Object.prototype.hasOwnProperty); const j = (a, b = {}, c = {}) => { let d = Object.create(null), e = Object.create(a); return new Proxy(e, { has(b, c) { return c in a || c in d }, get(e, f) { if (f in d) return d[f]; if (!(f in a)) return; let k = a[f]; if ("function" == typeof k) { if ("function" == typeof b[f]) k = h(a, a[f], b[f]); else if (i(c, f)) { let b = g(f, c[f]); k = h(a, a[f], b) } else k = k.bind(a); } else if ("object" == typeof k && null !== k && (i(b, f) || i(c, f))) k = j(k, b[f], c[f]); else if (i(c, "*")) k = j(k, b[f], c["*"]); else return Object.defineProperty(d, f, { configurable: !0, enumerable: !0, get() { return a[f] }, set(b) { a[f] = b } }), k; return d[f] = k, k }, set(b, c, e) { return c in d ? d[c] = e : a[c] = e, !0 }, defineProperty(a, b, c) { return Reflect.defineProperty(d, b, c) }, deleteProperty(a, b) { return Reflect.deleteProperty(d, b) } }) }, k = a => ({ addListener(b, c, ...d) { b.addListener(a.get(c), ...d) }, hasListener(b, c) { return b.hasListener(a.get(c)) }, removeListener(b, c) { b.removeListener(a.get(c)) } }), l = new c(a => "function" == typeof a ? function (b) { const c = j(b, {}, { getContent: { minArgs: 0, maxArgs: 0 } }); a(c) } : a), m = new c(a => "function" == typeof a ? function (b, c, e) { let f, g, h = !1, i = new Promise(a => { f = function (b) { h = !0, a(b) } }); try { g = a(b, c, f) } catch (a) { g = Promise.reject(a) } const j = !0 !== g && d(g); if (!0 !== g && !j && !h) return !1; const k = a => { a.then(a => { e(a) }, a => { let b; b = a && (a instanceof Error || "string" == typeof a.message) ? a.message : "An unexpected error occurred", e({ __mozWebExtensionPolyfillReject__: !0, message: b }) }).catch(a => { console.error("Failed to send onMessage rejected reply", a) }) }; return j ? k(g) : k(i), !0 } : a), n = ({ reject: b, resolve: c }, d) => { a.runtime.lastError ? a.runtime.lastError.message === "The message port closed before a response was received." ? c() : b(new Error(a.runtime.lastError.message)) : d && d.__mozWebExtensionPolyfillReject__ ? b(new Error(d.message)) : c(d) }, o = (a, b, c, ...d) => { if (d.length < b.minArgs) throw new Error(`Expected at least ${b.minArgs} ${f(b.minArgs)} for ${a}(), got ${d.length}`); if (d.length > b.maxArgs) throw new Error(`Expected at most ${b.maxArgs} ${f(b.maxArgs)} for ${a}(), got ${d.length}`); return new Promise((a, b) => { const e = n.bind(null, { resolve: a, reject: b }); d.push(e), c.sendMessage(...d) }) }, p = { devtools: { network: { onRequestFinished: k(l) } }, runtime: { onMessage: k(m), onMessageExternal: k(m), sendMessage: o.bind(null, "sendMessage", { minArgs: 1, maxArgs: 3 }) }, tabs: { sendMessage: o.bind(null, "sendMessage", { minArgs: 2, maxArgs: 3 }) } }, q = { clear: { minArgs: 1, maxArgs: 1 }, get: { minArgs: 1, maxArgs: 1 }, set: { minArgs: 1, maxArgs: 1 } }; return b.privacy = { network: { "*": q }, services: { "*": q }, websites: { "*": q } }, j(a, p, b) })(chrome) } else a.exports = globalThis.browser });
-//# sourceMappingURL=browser-polyfill.min.js.map
+const tokenizer = GPTTokenizer_o200k_base;
 
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-
-
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-let defaultConfig = null;
-const STORAGE_KEY = "claudeUsageTracker_v4"
-const CONFIG_URL = 'https://raw.githubusercontent.com/lugia19/Claude-Usage-Extension/refs/heads/main/constants.json';
-
-const DEBUG_MODE = false
-function debugLog(...args) {
-	if (DEBUG_MODE) {
-		console.log(...args);
-	}
+function getTextTokens(text) {
+	return Math.round(tokenizer.countTokens(text) * 1.2);
 }
-
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+//Open the source code on click.
 browser.action.onClicked.addListener(() => {
 	browser.tabs.create({
 		url: "https://github.com/lugia19/Claude-Usage-Extension"
 	});
 });
 
-// Load default config before doing anything else
-async function initializeConfig() {
-	try {
-		const response = await fetch(browser.runtime.getURL('default-config.json'));
-		defaultConfig = await response.json();
-		configReady = true;
-		debugLog("Default config loaded:", defaultConfig);
-	} catch (error) {
-		console.error("Failed to load default config:", error);
+const STORAGE_KEY = "claudeUsageTracker_v5"
+const CONFIG_URL = 'https://raw.githubusercontent.com/lugia19/Claude-Usage-Extension/refs/heads/main/constants.json';
+const DEBUG_MODE = false
+
+
+//Helper logging method
+function debugLog(...args) {
+	if (DEBUG_MODE) {
+		console.log(...args);
 	}
 }
 
-// Helper for deep merging
+// Helper for merging stuff
 function mergeDeep(target, source) {
 	for (const key in source) {
 		if (source[key] instanceof Object && key in target) {
@@ -66,8 +52,10 @@ async function getFreshConfig() {
 		}
 
 		const remoteConfig = await response.json();
-		debugLog('Loaded remote config:', remoteConfig);
-		return mergeDeep(structuredClone(defaultConfig), remoteConfig);
+		//debugLog('Loaded remote config:', remoteConfig);
+		const mergedConfig = mergeDeep(defaultConfig, remoteConfig);
+		mergedConfig.MODELS = Object.keys(mergedConfig.MODEL_TOKEN_CAPS).filter(key => key !== 'default');
+		return mergedConfig;
 	} catch (error) {
 		console.warn('Error loading remote config:', error);
 		return defaultConfig;
@@ -75,42 +63,93 @@ async function getFreshConfig() {
 }
 
 
+let globalConfig = null;
+let defaultConfig = null;
+// Setup alarm and initial config
+async function initializeConfigRefresh() {
+	// Get initial config
+	globalConfig = await getFreshConfig();
 
+	// Create alarm to refresh every 10 minutes
+	browser.alarms.create('refreshConfig', {
+		periodInMinutes: 10
+	});
+}
+
+// Handle alarm
+browser.alarms.onAlarm.addListener(async (alarm) => {
+	if (alarm.name === 'refreshConfig') {
+		globalConfig = await getFreshConfig();
+	}
+});
+
+initializeConfigRefresh();
+
+
+// Token storage manager
 class TokenStorageManager {
 	constructor() {
 		this.syncInterval = 1; // 1m
 		this.isSyncingFirebase = false;
 		this.storageLock = false;
-		this.userId = null;
+		this.orgIds = undefined;
+		const nextAlarm = new Date();
+		nextAlarm.setHours(nextAlarm.getHours() + 1, 1, 0, 0);
+
+		browser.alarms.create('checkExpiredData', {
+			when: nextAlarm.getTime(),
+			periodInMinutes: 60
+		});
 
 		browser.alarms.create('firebaseSync', { periodInMinutes: this.syncInterval });
 		//debugLog("Alarm created, syncing every", this.syncInterval, "minutes");
-		browser.alarms.onAlarm.addListener((alarm) => {
+		browser.alarms.onAlarm.addListener(async (alarm) => {
 			//debugLog("Alarm triggered:", alarm);
-			if (alarm.name === 'firebaseSync' && this.userId) {
-				this.syncWithFirebase();
+			if (alarm.name === 'firebaseSync') {
+				if (!this.orgIds) {
+					await this.loadOrgIds();
+				}
+				await this.syncWithFirebase();
+				await updateAllTabs();
+			}
+
+			if (alarm.name === 'checkExpiredData') {
+				if (!this.orgIds) {
+					await this.loadOrgIds();
+				}
+				for (const orgId of this.orgIds) {
+					await this.#checkAndCleanExpiredData(orgId);
+				}
+				await updateAllTabs();
 			}
 		});
 	}
 
+	async loadOrgIds() {
+		try {
+			const result = await browser.storage.local.get('orgIds');
+			this.orgIds = new Set(result.orgIds || []);
+		} catch (error) {
+			this.orgIds = new Set(); // Return empty Set if there's an error
+		}
+		return;
+	}
+
+	async addOrgId(orgId) {
+		if (!this.orgIds) {
+			await this.loadOrgIds();
+		}
+		this.orgIds.add(orgId);
+		await browser.storage.local.set({ 'orgIds': Array.from(this.orgIds) });
+	}
 
 	// Helper methods for browser.storage
+	#getStorageKey(orgId, type) {
+		return `${STORAGE_KEY}_${orgId}_${type}`;
+	}
+
 	async #setValue(key, value) {
 		await browser.storage.local.set({ [key]: value });
-		// Read back and verify
-		/*const readBack = await browser.storage.local.get(key);
-		const storedValue = readBack[key];
-
-		if (JSON.stringify(storedValue) !== JSON.stringify(value)) {
-			console.error("Storage verification failed for key:", key);
-			console.error("Tried to write:", value);
-			console.error("Read back:", storedValue);
-			//throw new Error("Storage verification failed");
-		}
-		debugLog("Storage verified for key:", key);
-		*/
-
-
 		return true;
 	}
 
@@ -119,16 +158,7 @@ class TokenStorageManager {
 		return result[key] ?? defaultValue;
 	}
 
-	setUserId(newId) {
-		if (newId) {
-			debugLog("Setting new userID:", newId);
-			this.userId = newId;
-		}
-	}
-
 	async syncWithFirebase() {
-		if (!this.userId) return;	// Just in case something weird happens
-
 		if (this.isSyncingFirebase) {
 			debugLog("Sync already in progress, skipping");
 			return;
@@ -136,44 +166,42 @@ class TokenStorageManager {
 
 		this.isSyncingFirebase = true;
 		debugLog("=== FIREBASE SYNC STARTING ===");
-		debugLog("Using hashed ID:", this.userId);
 
 		try {
-			// Get local data
-			const localModels = await this.#getValue(`${STORAGE_KEY}_models`) || {};
-			debugLog("Local models:", localModels);
+			for (const orgId of this.orgIds) {
+				// Get local data
+				const localModels = await this.#getValue(this.#getStorageKey(orgId, 'models')) || {};
+				debugLog("Local models:", localModels);
 
-			// Get remote data
-			const url = `${defaultConfig.FIREBASE_BASE_URL}/users/${this.userId}/models.json`;
-			debugLog("Fetching from:", url);
+				// Get remote data
+				const url = `${defaultConfig.FIREBASE_BASE_URL}/users/${orgId}/models.json`;
+				debugLog("Fetching from:", url);
 
-			const response = await fetch(url);
-			if (!response.ok) {
-				throw new Error(`HTTP error! status: ${response.status}`);
+				const response = await fetch(url);
+				if (!response.ok) {
+					throw new Error(`HTTP error! status: ${response.status}`);
+				}
+				const firebaseModels = await response.json() || {};
+				debugLog("Firebase models:", firebaseModels);
+
+				const mergedModels = this.#mergeModelData(localModels, firebaseModels);
+				debugLog("Merged result:", mergedModels);
+
+				// Write merged data back
+				debugLog("Writing merged data back to Firebase...");
+				const writeResponse = await fetch(url, {
+					method: 'PUT',
+					body: JSON.stringify(mergedModels)
+				});
+				if (!writeResponse.ok) {
+					throw new Error(`Write failed! status: ${writeResponse.status}`);
+				}
+
+				// Update local storage
+				debugLog("Updating local storage...");
+				await this.#setValue(this.#getStorageKey(orgId, 'models'), mergedModels);
+				debugLog("=== SYNC COMPLETED SUCCESSFULLY ===");
 			}
-			const firebaseModels = await response.json() || {};
-			debugLog("Firebase models:", firebaseModels);
-
-			// Merge data
-			const mergedModels = this.mergeModelData(localModels, firebaseModels);
-			debugLog("Merged result:", mergedModels);
-
-			// Write merged data back
-			debugLog("Writing merged data back to Firebase...");
-			const writeResponse = await fetch(url, {
-				method: 'PUT',
-				body: JSON.stringify(mergedModels)
-			});
-
-			if (!writeResponse.ok) {
-				throw new Error(`Write failed! status: ${writeResponse.status}`);
-			}
-
-			// Update local storage
-			debugLog("Updating local storage...");
-			await this.#setValue(`${STORAGE_KEY}_models`, mergedModels);
-			debugLog("=== SYNC COMPLETED SUCCESSFULLY ===");
-
 		} catch (error) {
 			console.error('=== SYNC FAILED ===');
 			console.error('Error details:', error);
@@ -183,7 +211,8 @@ class TokenStorageManager {
 		}
 	}
 
-	mergeModelData(localModels = {}, firebaseModels = {}) {
+	//Just a helper method to merge the data
+	#mergeModelData(localModels = {}, firebaseModels = {}) {
 		debugLog("MERGING...")
 		const merged = {};
 		const allModelKeys = new Set([
@@ -235,29 +264,6 @@ class TokenStorageManager {
 		return merged;
 	}
 
-
-	async getCheckboxStates() {
-		const storedStates = await this.#getValue(`${STORAGE_KEY}_checkbox_states`, {});
-		// Create an object with all checkbox options set to false
-		const defaultStates = Object.keys(defaultConfig.FEATURE_CHECKBOXES).reduce((acc, key) => {
-			acc[key] = false;
-			return acc;
-		}, {});
-		// Merge with any stored states
-		return { ...defaultStates, ...storedStates };
-	}
-
-	async setCheckboxState(key, checked) {
-		const states = await this.getCheckboxStates();
-		states[key] = checked;
-		await this.#setValue(`${STORAGE_KEY}_checkbox_states`, states);
-	}
-
-	async getExtraCost() {
-		const states = await this.getCheckboxStates();
-		return Object.entries(defaultConfig.FEATURE_CHECKBOXES).reduce((total, [key, option]) => total + (states[key] ? option.cost : 0), 0);
-	}
-
 	async getCollapsedState() {
 		return await this.#getValue(`${STORAGE_KEY}_collapsed`, false);
 	}
@@ -266,8 +272,9 @@ class TokenStorageManager {
 		await this.#setValue(`${STORAGE_KEY}_collapsed`, isCollapsed);
 	}
 
-	async #checkAndCleanExpiredData() {
-		const allModelData = await this.#getValue(`${STORAGE_KEY}_models`);
+	//This needs to iterate over orgIDs as well, since we will store data per user
+	async #checkAndCleanExpiredData(orgId) {
+		const allModelData = await this.#getValue(this.#getStorageKey(orgId, 'models'));
 		if (!allModelData) return;
 
 		const currentTime = new Date();
@@ -282,46 +289,46 @@ class TokenStorageManager {
 		}
 
 		if (hasChanges) {
-			await this.#setValue(`${STORAGE_KEY}_models`, allModelData);
+			await this.#setValue(this.#getStorageKey(orgId, 'models'), allModelData);
 		}
 	}
 
-	async getModelData(model) {
-		await this.#checkAndCleanExpiredData();
-		const allModelData = await this.#getValue(`${STORAGE_KEY}_models`);
+	async getModelData(orgId, model) {
+		await this.#checkAndCleanExpiredData(orgId);
+		const allModelData = await this.#getValue(this.#getStorageKey(orgId, 'models'));
 		return allModelData?.[model];
 	}
 
-	async addTokensToModel(model, newTokens) {
+	async addTokensToModel(orgId, model, newTokens) {
 		// Wait if sync is in progress
-		while (this.isSyncingFirebase) {
-			await sleep(100);
-		}
-
-		while (this.storageLock) {
-			await new Promise(resolve => setTimeout(resolve, 50));
+		while (this.isSyncingFirebase || this.storageLock) {
+			await sleep(50);
 		}
 
 		try {
 			this.storageLock = true;
-			let allModelData = await this.#getValue(`${STORAGE_KEY}_models`, {});
+			let allModelData = await this.#getValue(this.#getStorageKey(orgId, 'models'), {});
 			const stored = allModelData[model];
+			const now = new Date();
 
-			const currentMessageCount = (stored?.messageCount || 0) + 1;
-			const totalTokenCount = stored ? stored.total + newTokens : newTokens;
+			// If stored data exists and its reset time has passed, treat as new period
+			if (stored && stored.resetTimestamp < now.getTime()) {
+				allModelData[model] = {
+					total: newTokens,
+					messageCount: 1,
+					resetTimestamp: this.#getResetFromNow(now).getTime()
+				};
+			} else {
+				// Otherwise add to existing or create new
+				allModelData[model] = {
+					total: (stored?.total || 0) + newTokens,
+					messageCount: (stored?.messageCount || 0) + 1,
+					resetTimestamp: stored?.resetTimestamp || this.#getResetFromNow(now).getTime()
+				};
+			}
 
-			allModelData[model] = {
-				total: totalTokenCount,
-				messageCount: currentMessageCount,
-				resetTimestamp: stored?.resetTimestamp || this.#getResetFromNow(new Date()).getTime()
-			};
-
-			await this.#setValue(`${STORAGE_KEY}_models`, allModelData);
-
-			return {
-				totalTokenCount,
-				messageCount: currentMessageCount
-			};
+			await this.#setValue(this.#getStorageKey(orgId, 'models'), allModelData);
+			return allModelData[model];
 		} finally {
 			this.storageLock = false;
 		}
@@ -334,102 +341,415 @@ class TokenStorageManager {
 		resetTime.setHours(hourStart.getHours() + 5);
 		return resetTime;
 	}
+}
 
-	async getFormattedTimeRemaining(model) {
-		const stored = await this.getModelData(model);
-		if (!stored) return 'Reset in: Not set';
-
-		const now = new Date();
-		const resetTime = new Date(stored.resetTimestamp);
-		const diff = resetTime - now;
-
-		if (diff <= 0) return 'Reset pending...';
-
-		const hours = Math.floor(diff / (1000 * 60 * 60));
-		const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-
-		return hours > 0 ? `Reset in: ${hours}h ${minutes}m` : `Reset in: ${minutes}m`;
+// Claude API interface
+class ClaudeAPI {
+	constructor() {
+		this.baseUrl = 'https://claude.ai/api';
 	}
 
-	async calculateMessagesLeft(model, conversationLength = 0) {
-		debugLog("Calculating messages left for model:", model);
-		debugLog("Conversation length:", conversationLength);
-		if (model === "default") return "Loading...";
+	// Core request method with auth
+	async request(endpoint, options = {}) {
+		const cookie = await browser.cookies.get({
+			url: "https://claude.ai",
+			name: "sessionKey"
+		});
 
-		const maxTokens = defaultConfig.MODEL_TOKEN_CAPS[model] || defaultConfig.MODEL_TOKEN_CAPS.default;
-		const stored = await this.getModelData(model);
-		const modelTotal = stored?.total || 0;
-		const remainingTokens = maxTokens - modelTotal;
+		const headers = {
+			'Cookie': `sessionKey=${cookie.value}`,
+			'Content-Type': 'application/json',
+			...options.headers
+		};
 
-		if (conversationLength === 0) {
-			return "Loading...";
+		const response = await fetch(`${this.baseUrl}${endpoint}`, {
+			...options,
+			headers
+		});
+		return response.json();
+	}
+
+	// API methods
+	async getProjectData(orgId, projectId) {
+		return this.request(`/organizations/${orgId}/projects/${projectId}`);
+	}
+
+	async getProjectDocs(orgId, projectId) {
+		return this.request(`/organizations/${orgId}/projects/${projectId}/docs`);
+	}
+
+	async getProjectTokens(orgId, projectId) {
+		let total_tokens = 0;
+		const projectData = await this.getProjectData(orgId, projectId);
+
+		if (projectData.prompt_template) {
+			total_tokens += getTextTokens(projectData.prompt_template);
 		}
 
-		return Math.max(0, remainingTokens / conversationLength).toFixed(1);
+		if (projectData.docs_count > 0) {
+			const docsData = await this.getProjectDocs(orgId, projectId);
+			for (const doc of docsData) {
+				debugLog("Doc:", doc.uuid);
+				total_tokens += getTextTokens(doc.content);
+				debugLog("Doc tokens:", getTextTokens(doc.content));
+			}
+		}
+
+		debugLog(`Total tokens for project ${projectId}: ${total_tokens}`);
+		return total_tokens;
 	}
 
-	// File storage methods
-	#getFileKey(conversationId) {
-		return `${STORAGE_KEY}_files_${conversationId}`;
+	async getConversation(orgId, conversationId, full_tree = false) {
+		return this.request(
+			`/organizations/${orgId}/chat_conversations/${conversationId}?tree=${full_tree}&rendering_mode=messages&render_all_tools=true`
+		);
 	}
 
-	async getFileTokens(conversationId, filename, fileType) {
-		const allFileData = await this.#getValue(this.#getFileKey(conversationId), {});
-		const fileKey = `${fileType}_${filename}`;
-		return allFileData[fileKey];
+	async getConversationTokens(orgId, conversationId) {
+		const conversationData = await this.getConversation(orgId, conversationId);
+		// Count messages by sender
+		let humanMessages = 0;
+		let assistantMessages = 0;
+		const lastMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
+
+		for (const message of conversationData.chat_messages) {
+			if (message.sender === "human") humanMessages++;
+			if (message.sender === "assistant") assistantMessages++;
+		}
+
+		// Sanity check
+		if (humanMessages === 0 || assistantMessages === 0 || humanMessages !== assistantMessages ||
+			!lastMessage || lastMessage.sender !== "assistant") {
+			debugLog(`Message count mismatch or wrong last sender - Human: ${humanMessages}, Assistant: ${assistantMessages}, Last: ${lastMessage.sender}`);
+			return undefined;
+		}
+
+		let totalTokens = 0;
+
+		// Add settings costs
+		for (const [setting, enabled] of Object.entries(conversationData.settings)) {
+			debugLog("Setting:", setting, enabled);
+			if (enabled && globalConfig.FEATURE_COSTS[setting]) {
+				totalTokens += globalConfig.FEATURE_COSTS[setting];
+			}
+		}
+
+		// Process each message
+		for (const message of conversationData.chat_messages) {
+			let messageTokens = 0;
+
+			debugLog("Message:", message.uuid);
+			// Process content array
+			for (const content of message.content) {
+				debugLog("Content:", content.text);
+				if (content.type === "text" && content.text) {
+					messageTokens += getTextTokens(content.text);
+				}
+			}
+
+			// Attachment tokens
+			for (const attachment of message.attachments) {
+				debugLog("Attachment:", attachment.file_name, attachment.id);
+				if (attachment.extracted_content) {
+					messageTokens += getTextTokens(attachment.extracted_content);
+					debugLog("Extracted tokens:", getTextTokens(attachment.extracted_content));
+				}
+			}
+
+			// Files tokens
+			for (const file of message.files_v2) {
+				debugLog("File_v2:", file.file_name, file.file_uuid)
+				if (file.file_kind === "image") {
+					const width = file.preview_asset.image_width
+					const height = file.preview_asset.image_width
+					messageTokens += Math.min(1600, Math.ceil((width * height) / 750));
+				} else if (file.file_kind === "document") {
+					messageTokens += 2250 * file.document_asset.page_count;
+				}
+			}
+
+			if (message === lastMessage) {
+				messageTokens *= globalConfig.OUTPUT_TOKEN_MULTIPLIER;
+			}
+
+			totalTokens += messageTokens;
+		}
+
+		// If part of a project, get project data
+		if (conversationData.project_uuid) {
+			totalTokens += await this.getProjectTokens(orgId, conversationData.project_uuid);
+		}
+		debugLog(`Total tokens for conversation ${conversationId}: ${totalTokens}`);
+		return totalTokens;
 	}
 
-	async saveFileTokens(conversationId, filename, tokens, fileType) {
-		if (tokens <= 0) return;
+	async getProfileTokens() {
+		const profileData = await this.request('/account_profile');
+		let totalTokens = 0;
+		if (profileData.conversation_preferences) {
+			totalTokens = getTextTokens(profileData.conversation_preferences) + 800
+		}
 
-		const allFileData = await this.#getValue(this.#getFileKey(conversationId), {});
-		const fileKey = `${fileType}_${filename}`;
+		debugLog(`Profile tokens: ${totalTokens}`);
+		return totalTokens;
+	}
 
-		allFileData[fileKey] = tokens;
-		await this.#setValue(this.#getFileKey(conversationId), allFileData);
+	async getActiveOrgId(tab) {
+		const cookie = await browser.cookies.get({
+			url: "https://claude.ai",
+			name: "lastActiveOrg",
+			storeId: tab.cookieStoreId
+		});
+		return cookie?.value;
+	}
+}
+
+//Simple util class - need to persist the state in storage
+class StoredMap {
+	constructor(storageKey) {
+		this.storageKey = storageKey;
+		this.map = new Map();
+		this.initialized = null;
+	}
+
+	async ensureInitialized() {
+		if (!this.initialized) {
+			this.initialized = browser.storage.local.get(this.storageKey).then(stored => {
+				this.map = new Map(stored[this.storageKey] || []);
+			});
+		}
+		return this.initialized;
+	}
+
+	async set(key, value) {
+		await this.ensureInitialized();
+		this.map.set(key, value);
+		await browser.storage.local.set({
+			[this.storageKey]: Array.from(this.map)
+		});
+	}
+
+	async get(key) {
+		await this.ensureInitialized();
+		return this.map.get(key);
+	}
+
+	async has(key) {
+		await this.ensureInitialized();
+		return this.map.has(key);
+	}
+
+	async delete(key) {
+		await this.ensureInitialized();
+		this.map.delete(key);
+		await browser.storage.local.set({
+			[this.storageKey]: Array.from(this.map)
+		});
 	}
 }
 
 const tokenStorageManager = new TokenStorageManager();
+const api = new ClaudeAPI();
+const pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
+const conversationLengthCache = new Map();
+let processingQueue = Promise.resolve();
 
-async function handleMessage(message) {
+// Load default config before doing anything else
+async function initializeConfig() {
+	try {
+		const response = await fetch(browser.runtime.getURL('constants.json'));
+		defaultConfig = await response.json();
+		defaultConfig.MODELS = Object.keys(defaultConfig.MODEL_TOKEN_CAPS).filter(key => key !== 'default');
+		//debugLog("Default config loaded:", defaultConfig);
+	} catch (error) {
+		console.error("Failed to load default config:", error);
+	}
+}
+
+
+// Listen for message sending
+browser.webRequest.onBeforeRequest.addListener(
+	async (details) => {
+		if (details.method === "POST" &&
+			(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
+			// Extract IDs from URL - we can refine these regexes
+			const urlParts = details.url.split('/');
+			const orgId = urlParts[urlParts.indexOf('organizations') + 1];
+			await tokenStorageManager.addOrgId(orgId);
+			const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1];
+
+			const key = `${orgId}:${conversationId}`;
+			debugLog(`Message sent - Key: ${key}`);
+			// Store pending response with both orgId and tabId
+			await pendingResponses.set(key, {
+				orgId: orgId,
+				conversationId: conversationId,
+				tabId: details.tabId
+			});
+		}
+	},
+	{ urls: ["*://claude.ai/*"] }
+);
+
+// Listen for responses
+browser.webRequest.onCompleted.addListener(
+	async (details) => {
+		if (details.method === "GET" &&
+			details.url.includes("/chat_conversations/") &&
+			details.url.includes("tree=True") &&
+			details.url.includes("render_all_tools=true")) {
+			processingQueue = processingQueue.then(async () => {
+				const urlParts = details.url.split('/');
+				const orgId = urlParts[urlParts.indexOf('organizations') + 1];
+				await tokenStorageManager.addOrgId(orgId);
+				const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
+
+				const key = `${orgId}:${conversationId}`;
+				const result = await processResponse(orgId, conversationId, await pendingResponses.has(key), details.tabId);
+
+				if (result && await pendingResponses.has(key)) {
+					await pendingResponses.delete(key);
+				}
+			});
+		}
+	},
+	{ urls: ["*://claude.ai/*"] }
+);
+
+//Updates each tab with its own data
+async function updateAllTabs(currentLength = undefined, lengthTabId = undefined) {
+	const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
+	for (const tab of tabs) {
+		const orgId = await api.getActiveOrgId(tab);
+		const tabData = {
+			modelData: {}
+		};
+
+		for (const model of globalConfig.MODELS) {
+			const modelData = await tokenStorageManager.getModelData(orgId, model);
+			if (modelData) {
+				tabData.modelData[model] = modelData;
+			}
+		}
+
+		if (currentLength && lengthTabId && tab.id === lengthTabId) {
+			tabData.conversationLength = currentLength;
+		}
+
+		browser.tabs.sendMessage(tab.id, {
+			type: 'updateUsage',
+			data: tabData
+		});
+	}
+}
+
+async function processResponse(orgId, conversationId, isNewMessage, tabId) {
+	const conversationTokens = await api.getConversationTokens(orgId, conversationId);
+	if (conversationTokens === undefined) {
+		return false;
+	}
+
+	const profileTokens = await api.getProfileTokens();
+	const messageCost = conversationTokens + profileTokens + globalConfig.BASE_SYSTEM_PROMPT_LENGTH
+	debugLog("Current per message cost:", messageCost);
+	conversationLengthCache.set(`${orgId}:${conversationId}`, messageCost);
+
+	if (isNewMessage) {
+		// Get model from based on conversation settings or tab
+		const conversationData = await api.getConversation(orgId, conversationId);
+		let model;
+		if (conversationData.model) {
+			const modelString = conversationData.model.toLowerCase();
+			const modelTypes = Object.keys(globalConfig.MODEL_TOKEN_CAPS).filter(key => key !== 'default');
+			for (const modelType of modelTypes) {
+				if (modelString.includes(modelType.toLowerCase())) {
+					model = modelType;
+					debugLog("Model from conversation:", model);
+					break;
+				}
+			}
+		}
+		// If no model found in response, ask the tab
+		if (!model) {
+			model = await browser.tabs.sendMessage(tabId, { type: 'getActiveModel' });
+			debugLog("Model from tab:", model);
+			if (!model) model = "Sonnet"
+		}
+		debugLog(`=============Adding tokens for model: ${model}, Total tokens: ${messageCost}============`);
+		await tokenStorageManager.addTokensToModel(orgId, model, messageCost);
+	}
+
+	// Prep base data that goes to all tabs
+	const baseData = {
+		modelData: {}
+	};
+
+	// Get data for all models
+	for (const model of globalConfig.MODELS) {
+		const modelData = await tokenStorageManager.getModelData(orgId, model);
+		if (modelData) {
+			baseData.modelData[model] = modelData;
+		}
+	}
+
+	await updateAllTabs(messageCost, tabId);
+
+	return true;
+}
+
+
+
+// Content -> Background messaging
+async function handleMessage(message, sender) {
 	debugLog("📥 Received message:", message);
+	const orgId = await api.getActiveOrgId(sender.tab);
 	const response = await (async () => {
 		switch (message.type) {
-			case 'getFileTokens':
-				return await tokenStorageManager.getFileTokens(message.conversationId, message.filename, message.fileType);
-			case 'saveFileTokens':
-				return await tokenStorageManager.saveFileTokens(message.conversationId, message.filename, message.tokens, message.fileType);
-			case 'getCheckboxStates':
-				return await tokenStorageManager.getCheckboxStates();
-			case 'setCheckboxState':
-				return await tokenStorageManager.setCheckboxState(message.key, message.checked);
 			case 'getCollapsedState':
 				return await tokenStorageManager.getCollapsedState();
 			case 'setCollapsedState':
 				return await tokenStorageManager.setCollapsedState(message.isCollapsed);
-			case 'calculateMessagesLeft':
-				return await tokenStorageManager.calculateMessagesLeft(message.model, message.conversationLength);
-			case 'getModelData':
-				return await tokenStorageManager.getModelData(message.model);
-			case 'getFormattedTimeRemaining':
-				return await tokenStorageManager.getFormattedTimeRemaining(message.model);
-			case 'getExtraCost':
-				return await tokenStorageManager.getExtraCost();
-			case 'addTokensToModel':
-				return await tokenStorageManager.addTokensToModel(message.model, message.newTokens);
 			case 'getConfig':
 				return await getFreshConfig();
-			case 'setUserId':
-				return tokenStorageManager.setUserId(message.userId);
+			case 'requestData':
+				const baseData = { modelData: {} };
+				const { conversationId } = message ?? undefined;
+				// Get data for all models
+				for (const model of globalConfig.MODELS) {
+					const modelData = await tokenStorageManager.getModelData(orgId, model);
+					if (modelData) {
+						baseData.modelData[model] = modelData;
+					}
+				}
+				if (conversationId) {
+					debugLog("Requested length for conversation:", conversationId);
+					const key = `${orgId}:${conversationId}`;
+
+					//Fetch it only if missing...
+					if (!conversationLengthCache.has(key)) {
+						debugLog("Conversation length not found, fetching...");
+						const conversationTokens = await api.getConversationTokens(orgId, conversationId);
+						if (conversationTokens != undefined) {
+							const profileTokens = await api.getProfileTokens();
+							const messageCost = conversationTokens + profileTokens + globalConfig.BASE_SYSTEM_PROMPT_LENGTH;
+							conversationLengthCache.set(key, messageCost);
+						}
+					}
+
+					if (conversationLengthCache.has(key)) baseData.conversationLength = conversationLengthCache.get(key)
+				}
+				return baseData;
+			case 'initOrg':
+				await tokenStorageManager.addOrgId(orgId);
+				return true;
 		}
 	})();
 	debugLog("📤 Sending response:", response);
 	return response;
 }
 
-
-browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-	handleMessage(message).then(sendResponse);
-	return true;
+browser.runtime.onMessage.addListener((message, sender) => {
+	debugLog("Background received message:", message);
+	return handleMessage(message, sender);
 });
+
