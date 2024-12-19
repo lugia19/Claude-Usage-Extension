@@ -13,7 +13,8 @@
 		"scripts": [
 			"background.js"
 		],
-		"service_worker": "background.js"
+		"service_worker": "background.js",
+		"type": "module"
 	},
 	"content_scripts": [
 		{
@@ -29,19 +30,24 @@
 	],
 	"permissions": [
 		"storage",
-		"alarms"
+		"alarms",
+		"webRequest",
+		"cookies",
+		"tabs"
 	],
 	"host_permissions": [
-		"https://claude.ai/*",
+		"*://claude.ai/*",
 		"https://raw.githubusercontent.com/*"
 	],
 	"web_accessible_resources": [
 		{
 			"resources": [
-				"default-config.json"
+				"default-config.json",
+				"lib/browser-polyfill.min.js",
+				"lib/o200k_base.js"
 			],
 			"matches": [
-				"https://claude.ai/*"
+				"<all_urls>"
 			]
 		}
 	],
