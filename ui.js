@@ -19,11 +19,11 @@
 	//#region Storage Interface
 	class TokenStorageInterface {
 		async getCollapsedState() {
-			return await browser.runtime.sendMessage({ type: 'getCollapsedState' });
+			return await sendBackgroundMessage({ type: 'getCollapsedState' });
 		}
 
 		async setCollapsedState(isCollapsed) {
-			return await browser.runtime.sendMessage({
+			return await sendBackgroundMessage({
 				type: 'setCollapsedState',
 				isCollapsed
 			});
@@ -46,6 +46,15 @@
 	function getConversationId() {
 		const match = window.location.pathname.match(/\/chat\/([^/?]+)/);
 		return match ? match[1] : null;
+	}
+
+	async function sendBackgroundMessage(message) {
+		const enrichedMessage = {
+			...message,
+			//sessionKey: document.cookie.split('; ').find(row => row.startsWith('sessionKey='))?.split('=')[1], //It's HTTPOnly...
+			orgId: document.cookie.split('; ').find(row => row.startsWith('lastActiveOrg='))?.split('=')[1]
+		};
+		return browser.runtime.sendMessage(enrichedMessage);
 	}
 
 	async function waitForElement(target, selector, maxTime = 1000) {
@@ -566,6 +575,14 @@
 		if (message.type === 'getActiveModel') {
 			return await getCurrentModel();
 		}
+
+		if (message.action === "getOrgID") {
+			const orgId = document.cookie
+				.split('; ')
+				.find(row => row.startsWith('lastActiveOrg='))
+				?.split('=')[1];
+			return Promise.resolve({ orgId });
+		}
 	});
 	//#endregion
 
@@ -578,7 +595,7 @@
 			// Check for model or conversation change
 			if (currentConversation !== newConversation && !isHomePage) {
 				debugLog(`Conversation changed from ${currentConversation} to ${newConversation}`);
-				await updateProgressBar(await browser.runtime.sendMessage({ type: 'requestData', conversationId: newConversation }));
+				await updateProgressBar(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
 				currentConversation = newConversation;
 			}
 
@@ -615,30 +632,47 @@
 	async function initialize() {
 		const MAX_RETRIES = 15;
 		const RETRY_DELAY = 200;
+		const LOGIN_CHECK_DELAY = 10000;
+
 		// Load and assign configuration to global variables
 		debugLog("Calling browser message...")
-		config = await browser.runtime.sendMessage({ type: 'getConfig' });
+		config = await sendBackgroundMessage({ type: 'getConfig' });
 		debugLog("Config received...")
 		debugLog(config)
 
-		// Check for duplicate running with retry logic
-		let userMenuButton = null;
-		let attempts = 0;
+		while (true) {
+			// Check for duplicate running with retry logic
+			let userMenuButton = null;
+			let attempts = 0;
 
-		while (!userMenuButton && attempts < MAX_RETRIES) {
-			userMenuButton = document.querySelector(config.SELECTORS.USER_MENU_BUTTON);
-
-			if (!userMenuButton) {
-				debugLog(`User menu button not found, attempt ${attempts + 1}/${MAX_RETRIES}`);
-				await sleep(RETRY_DELAY);
-				attempts++;
+			while (!userMenuButton && attempts < MAX_RETRIES) {
+				userMenuButton = document.querySelector(config.SELECTORS.USER_MENU_BUTTON);
+				if (!userMenuButton) {
+					debugLog(`User menu button not found, attempt ${attempts + 1}/${MAX_RETRIES}`);
+					await sleep(RETRY_DELAY);
+					attempts++;
+				}
 			}
+
+			if (userMenuButton) {
+				// Found the button, continue with initialization
+				break;
+			}
+
+			// Check if we're on either login screen
+			const initialLoginScreen = document.querySelector('button[data-testid="login-with-google"]');
+			const verificationLoginScreen = document.querySelector('input[data-testid="code"]');
+
+			if (!initialLoginScreen && !verificationLoginScreen) {
+				console.error('Neither user menu button nor any login screen found');
+				return;
+			}
+
+			debugLog('Login screen detected, waiting before retry...');
+			await sleep(LOGIN_CHECK_DELAY);
 		}
 
-		if (!userMenuButton) {
-			console.error('User menu button not found after all attempts');
-			return;
-		}
+
 
 		if (userMenuButton.getAttribute('data-script-loaded')) {
 			debugLog('Script already running, stopping duplicate');
@@ -654,8 +688,8 @@
 		await initUI();
 		pollForModelChange();
 
-		await updateProgressBar(await browser.runtime.sendMessage({ type: 'requestData' }));
-		await browser.runtime.sendMessage({ type: 'initOrg' })
+		await updateProgressBar(await sendBackgroundMessage({ type: 'requestData' }));
+		await sendBackgroundMessage({ type: 'initOrg' });
 		debugLog('Initialization complete. Ready to track tokens.');
 	}
 

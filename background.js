@@ -345,19 +345,28 @@ class TokenStorageManager {
 
 // Claude API interface
 class ClaudeAPI {
-	constructor() {
+	constructor(sessionKey) {
 		this.baseUrl = 'https://claude.ai/api';
+		this.sessionKey = sessionKey;
+	}
+
+	//I love jank...
+	async ensureSessionKey() {
+		if (!this.sessionKey) {
+			const cookie = await browser.cookies.get({
+				url: "https://claude.ai",
+				name: "sessionKey"
+			});
+			this.sessionKey = cookie?.value;
+		}
+		return this.sessionKey;
 	}
 
 	// Core request method with auth
 	async request(endpoint, options = {}) {
-		const cookie = await browser.cookies.get({
-			url: "https://claude.ai",
-			name: "sessionKey"
-		});
-
+		await this.ensureSessionKey();
 		const headers = {
-			'Cookie': `sessionKey=${cookie.value}`,
+			'Cookie': `sessionKey=${this.sessionKey}`,
 			'Content-Type': 'application/json',
 			...options.headers
 		};
@@ -499,14 +508,17 @@ class ClaudeAPI {
 		debugLog(`Profile tokens: ${totalTokens}`);
 		return totalTokens;
 	}
+}
 
-	async getActiveOrgId(tab) {
-		const cookie = await browser.cookies.get({
-			url: "https://claude.ai",
-			name: "lastActiveOrg",
-			storeId: tab.cookieStoreId
+async function getActiveOrgId(tab) {
+	try {
+		const response = await browser.tabs.sendMessage(tab.id, {
+			action: "getOrgID"
 		});
-		return cookie?.value;
+		return response?.orgId;
+	} catch (error) {
+		console.error("Error getting org ID:", error);
+		return null;
 	}
 }
 
@@ -555,7 +567,6 @@ class StoredMap {
 }
 
 const tokenStorageManager = new TokenStorageManager();
-const api = new ClaudeAPI();
 const pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
 const conversationLengthCache = new Map();
 let processingQueue = Promise.resolve();
@@ -611,7 +622,7 @@ browser.webRequest.onCompleted.addListener(
 				const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
 
 				const key = `${orgId}:${conversationId}`;
-				const result = await processResponse(orgId, conversationId, await pendingResponses.has(key), details.tabId);
+				const result = await processResponse(orgId, conversationId, await pendingResponses.has(key), details);
 
 				if (result && await pendingResponses.has(key)) {
 					await pendingResponses.delete(key);
@@ -619,14 +630,16 @@ browser.webRequest.onCompleted.addListener(
 			});
 		}
 	},
-	{ urls: ["*://claude.ai/*"] }
+	{ urls: ["*://claude.ai/*"] },
+	["responseHeaders"]
 );
 
 //Updates each tab with its own data
 async function updateAllTabs(currentLength = undefined, lengthTabId = undefined) {
+	console.log("Updating all tabs...");
 	const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 	for (const tab of tabs) {
-		const orgId = await api.getActiveOrgId(tab);
+		const orgId = await getActiveOrgId(tab);
 		const tabData = {
 			modelData: {}
 		};
@@ -649,11 +662,22 @@ async function updateAllTabs(currentLength = undefined, lengthTabId = undefined)
 	}
 }
 
-async function processResponse(orgId, conversationId, isNewMessage, tabId) {
+async function processResponse(orgId, conversationId, isNewMessage, details) {
+	const tabId = details.tabId;
+	const sessionKey = details.responseHeaders
+		.find(header => header.name.toLowerCase() === 'cookie')
+		?.value.split('; ')
+		.find(cookie => cookie.startsWith('sessionKey='))
+		?.split('=')[1];
+
+	const api = new ClaudeAPI(sessionKey);
+
 	const conversationTokens = await api.getConversationTokens(orgId, conversationId);
 	if (conversationTokens === undefined) {
 		return false;
 	}
+
+
 
 	const profileTokens = await api.getProfileTokens();
 	const messageCost = conversationTokens + profileTokens + globalConfig.BASE_SYSTEM_PROMPT_LENGTH
@@ -708,7 +732,10 @@ async function processResponse(orgId, conversationId, isNewMessage, tabId) {
 // Content -> Background messaging
 async function handleMessage(message, sender) {
 	debugLog("📥 Received message:", message);
-	const orgId = await api.getActiveOrgId(sender.tab);
+	//const { sessionKey, orgId } = message;
+	const { sessionKey, orgId } = message;
+	const api = new ClaudeAPI();
+
 	const response = await (async () => {
 		switch (message.type) {
 			case 'getCollapsedState':
