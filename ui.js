@@ -639,10 +639,10 @@
 		config = await sendBackgroundMessage({ type: 'getConfig' });
 		debugLog("Config received...")
 		debugLog(config)
-
+		let userMenuButton = null;
 		while (true) {
 			// Check for duplicate running with retry logic
-			let userMenuButton = null;
+
 			let attempts = 0;
 
 			while (!userMenuButton && attempts < MAX_RETRIES) {
