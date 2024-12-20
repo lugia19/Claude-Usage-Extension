@@ -420,7 +420,7 @@ class ClaudeAPI {
 		// Sanity check
 		if (humanMessages === 0 || assistantMessages === 0 || humanMessages !== assistantMessages ||
 			!lastMessage || lastMessage.sender !== "assistant") {
-			debugLog(`Message count mismatch or wrong last sender - Human: ${humanMessages}, Assistant: ${assistantMessages}, Last: ${lastMessage.sender}`);
+			debugLog(`Message count mismatch or wrong last sender - Human: ${humanMessages}, Assistant: ${assistantMessages}, Last message sender: ${lastMessage?.sender}`);
 			return undefined;
 		}
 
@@ -441,9 +441,15 @@ class ClaudeAPI {
 			debugLog("Message:", message.uuid);
 			// Process content array
 			for (const content of message.content) {
-				debugLog("Content:", content.text);
-				if (content.type === "text" && content.text) {
+				if (content.text) {
+					debugLog("Content:", content.text);
 					messageTokens += getTextTokens(content.text);
+				}
+				if (content.input?.code) {
+					messageTokens += getTextTokens(content.input.code)
+				}
+				if (content.content?.text) {
+					messageTokens += getTextTokens(content.content.text)
 				}
 			}
 
