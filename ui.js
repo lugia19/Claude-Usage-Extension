@@ -71,6 +71,18 @@
 	}
 
 	async function getCurrentModel() {
+		const overrideSelector = await waitForElement(document, config.SELECTORS.MODEL_OVERRIDE, 1000);
+		if (overrideSelector) {
+			const overrideModel = overrideSelector.options[overrideSelector.selectedIndex].text
+			let overrideModelName = overrideModel.toLowerCase();
+			const modelTypes = Object.keys(config.MODEL_TOKEN_CAPS).filter(key => key !== 'default');
+
+			for (const modelType of modelTypes) {
+				if (overrideModelName.includes(modelType.toLowerCase())) {
+					return modelType;
+				}
+			}
+		}
 		const modelSelector = await waitForElement(document, config.SELECTORS.MODEL_PICKER, 3000);
 		debugLog("Model selector", modelSelector)
 		if (!modelSelector) return 'default';
