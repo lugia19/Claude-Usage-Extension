@@ -28,6 +28,17 @@
 				isCollapsed
 			});
 		}
+
+		async getPreviousVersion() {
+			return await sendBackgroundMessage({ type: 'getPreviousVersion' });
+		}
+
+		async setCurrentVersion(version) {
+			return await sendBackgroundMessage({
+				type: 'setCurrentVersion',
+				version
+			});
+		}
 	}
 	let storageInterface;
 	//#endregion
@@ -283,6 +294,82 @@
 		};
 	}
 
+	async function checkVersionNotification() {
+		const previousVersion = await storageInterface.getPreviousVersion();
+		const currentVersion = browser.runtime.getManifest().version;
+		// Skip if versions match
+		if (previousVersion === currentVersion) return null;
+
+		// Store current version
+		await storageInterface.setCurrentVersion(currentVersion);
+
+		return {
+			previousVersion,
+			currentVersion
+		};
+	}
+
+	function createVersionNotificationCard(versionInfo) {
+		const notificationCard = document.createElement('div');
+		notificationCard.style.cssText = `
+			position: absolute;
+			bottom: calc(100% + 10px);
+			left: 0;
+			right: 0;
+			background: #2D2D2D;
+			border: 1px solid #3B3B3B;
+			border-radius: 8px;
+			padding: 12px;
+			color: white;
+			font-size: 12px;
+			text-align: center;
+			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+		`;
+
+		const message = document.createElement('div');
+		message.style.marginBottom = '10px';
+		message.textContent = versionInfo.previousVersion ?
+			`Updated from v${versionInfo.previousVersion} to v${versionInfo.currentVersion}!` :
+			`Welcome to the usage tracker! You're on v${versionInfo.currentVersion}`;
+
+		const kofiButton = document.createElement('a');
+		kofiButton.href = 'https://ko-fi.com/R6R14IUBY';
+		kofiButton.target = '_blank';
+		kofiButton.style.cssText = `
+			display: block;
+			text-align: center;
+			margin-top: 10px;
+		`;
+
+		const kofiImg = document.createElement('img');
+		kofiImg.src = browser.runtime.getURL('kofi-button.png');
+		kofiImg.height = 36;
+		kofiImg.style.border = '0';
+		kofiImg.alt = 'Buy Me a Coffee at ko-fi.com';
+
+		kofiButton.appendChild(kofiImg);
+
+		const closeButton = document.createElement('button');
+		closeButton.style.cssText = `
+			position: absolute;
+			top: 8px;
+			right: 8px;
+			background: none;
+			border: none;
+			color: #3b82f6;
+			cursor: pointer;
+			font-size: 14px;
+		`;
+		closeButton.textContent = '×';
+		closeButton.onclick = () => notificationCard.remove();
+
+		notificationCard.appendChild(message);
+		notificationCard.appendChild(kofiButton);
+		notificationCard.appendChild(closeButton);
+
+		return notificationCard;
+	}
+
 	async function initUI() {
 		const container = document.createElement('div');
 		container.style.cssText = `
@@ -456,6 +543,14 @@
 		document.addEventListener('touchmove', handleDragMove, { passive: false });
 		document.addEventListener('touchend', handleDragEnd);
 		document.addEventListener('touchcancel', handleDragEnd);
+
+		const versionInfo = await checkVersionNotification();
+		debugLog("Version info", versionInfo)
+		if (versionInfo) {
+			const notificationCard = createVersionNotificationCard(versionInfo);
+			container.appendChild(notificationCard);
+		}
+
 
 		uiReady = true;
 		// Process any updates that arrived before UI was ready

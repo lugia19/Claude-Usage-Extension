@@ -10,7 +10,7 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 //Open the source code on click.
 browser.action.onClicked.addListener(() => {
 	browser.tabs.create({
-		url: "https://github.com/lugia19/Claude-Usage-Extension"
+		url: "https://ko-fi.com/lugia19"
 	});
 });
 
@@ -636,7 +636,6 @@ browser.webRequest.onCompleted.addListener(
 
 //Updates each tab with its own data
 async function updateAllTabs(currentLength = undefined, lengthTabId = undefined) {
-	console.log("Updating all tabs...");
 	const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 	for (const tab of tabs) {
 		const orgId = await getActiveOrgId(tab);
@@ -775,6 +774,10 @@ async function handleMessage(message, sender) {
 			case 'initOrg':
 				await tokenStorageManager.addOrgId(orgId);
 				return true;
+			case 'getPreviousVersion':
+				return await browser.storage.local.get('previousVersion').then(data => data.previousVersion);
+			case 'setCurrentVersion':
+				return await browser.storage.local.set({ previousVersion: message.version });
 		}
 	})();
 	debugLog("📤 Sending response:", response);
