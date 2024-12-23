@@ -1,11 +1,11 @@
 Privacy Policy for Claude Usage Tracker
 
-Last Updated: 2024/12/19
+Last Updated: 2024/12/21
 
 Data Collection and Storage
 - This extension tracks usage statistics for claude.ai
 - We store only the following data:
-  - Tokens used and messages sent during the last 5 hour period, and the associated reset time
+  - Amount of tokens used and number of messages sent during the last 5 hour period, and the associated reset time
   - Your organization ID (for cross-device synchronization)
 
 Data Usage
