@@ -5,7 +5,7 @@ const tokenizer = GPTTokenizer_o200k_base;
 
 
 const STORAGE_KEY = "claudeUsageTracker_v5"
-const DEBUG_MODE = false
+const DEBUG_MODE = true
 
 //#region Utility functions
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -27,8 +27,102 @@ function mergeDeep(target, source) {
 	return target;
 }
 
-function getTextTokens(text) {
-	return Math.round(tokenizer.countTokens(text) * 1.2);
+//browser.storage.local.set({ 'apiKey': "[REDACTED]" });
+
+async function getTextTokens(text, estimateOnly) {
+	let api_key = (await browser.storage.local.get('apiKey'))?.apiKey
+	if (api_key && !estimateOnly) {
+		let tempTokens = await countTokensViaAPI([text], [], null)
+		if (tempTokens == 0) {
+			tempTokens = Math.round(tokenizer.countTokens(text) * 1.2);
+		}
+		return tempTokens
+	} else {
+		return Math.round(tokenizer.countTokens(text) * 1.2);
+	}
+}
+
+async function countTokensViaAPI(userMessages = [], assistantMessages = [], file = null) {
+	const api_key = (await browser.storage.local.get('apiKey'))?.apiKey
+	console.log(api_key)
+	if (!api_key) {
+		return 0;
+	}
+	try {
+		console.log("CALLING API!")
+		console.log(userMessages)
+		console.log(assistantMessages)
+		console.log(file)
+		const messages = [];
+
+		if (file && userMessages.length === 0) {
+			userMessages.push("1");
+		}
+
+		let fileData = null;
+		if (file) {
+			const fileInfo = await file.uploaderAPI.getUploadedFileAsBase64(file.url);
+			const base64Data = fileInfo?.data;
+			const mediaType = fileInfo?.media_type;
+			if (!base64Data) return 0
+			fileData = {
+				type: mediaType.startsWith('image/') ? 'image' : 'document',
+				source: {
+					type: 'base64',
+					media_type: mediaType,
+					data: base64Data
+				}
+			};
+		}
+
+		const maxLength = Math.max(userMessages.length, assistantMessages.length);
+		for (let i = 0; i < maxLength; i++) {
+			if (i < userMessages.length) {
+				const content = i === 0 && fileData ? [
+					fileData,
+					{
+						type: "text",
+						text: userMessages[i]
+					}
+				] : userMessages[i];
+
+				messages.push({
+					role: "user",
+					content: content
+				});
+			}
+
+			if (i < assistantMessages.length) {
+				messages.push({
+					role: "assistant",
+					content: assistantMessages[i]
+				});
+			}
+		}
+
+		const response = await fetch('https://api.anthropic.com/v1/messages/count_tokens', {
+			method: 'POST',
+			headers: {
+				'anthropic-version': '2023-06-01',
+				'content-type': 'application/json',
+				'x-api-key': api_key,
+				'Access-Control-Allow-Origin': '*',
+				"anthropic-dangerous-direct-browser-access": "true"
+			},
+			body: JSON.stringify({
+				messages,
+				model: "claude-3-5-sonnet-latest"
+			})
+		});
+
+		const data = await response.json();
+		console.log("API response:", data);
+		return data.input_tokens;
+
+	} catch (error) {
+		console.error("Error counting tokens via API:", error);
+		return 0
+	}
 }
 //#endregion
 
@@ -45,7 +139,6 @@ class Config {
 		Config.instance = this;
 		this.config = null;
 		this.defaultConfig = null;
-		this.initialize();
 	}
 
 	async initialize() {
@@ -96,6 +189,7 @@ class TokenStorageManager {
 		this.storageLock = false;
 		this.orgIds = undefined;
 		this.subscriptionTiers = new StoredMap("subscriptionTiers")
+		this.filesTokenCache = new StoredMap("fileTokens")
 		const nextAlarm = new Date();
 		nextAlarm.setHours(nextAlarm.getHours() + 1, 1, 0, 0);
 
@@ -109,9 +203,6 @@ class TokenStorageManager {
 		browser.alarms.onAlarm.addListener(async (alarm) => {
 			//debugLog("Alarm triggered:", alarm);
 			if (alarm.name === 'firebaseSync') {
-				if (!this.orgIds) {
-					await this.loadOrgIds();
-				}
 				await this.syncWithFirebase();
 				await updateAllTabs();
 			}
@@ -139,9 +230,6 @@ class TokenStorageManager {
 	}
 
 	async addOrgId(orgId) {
-		if (!this.orgIds) {
-			await this.loadOrgIds();
-		}
 		this.orgIds.add(orgId);
 		await browser.storage.local.set({ 'orgIds': Array.from(this.orgIds) });
 	}
@@ -355,6 +443,46 @@ class TokenStorageManager {
 		resetTime.setHours(hourStart.getHours() + 5);
 		return resetTime;
 	}
+
+	async getUploadedFileTokens(orgId, file, estimateOnly = false, uploaderClaudeAI_API = null) {
+		if (await this.filesTokenCache.has(`${orgId}:${file.file_uuid}`)) {
+			console.log("Using cached amount")
+			return await this.filesTokenCache.get(`${orgId}:${file.file_uuid}`);
+		} else {
+			if ((await browser.storage.local.get('apiKey'))?.apiKey && !estimateOnly) {
+				try {
+					console.log("Using api...")
+					let filename = ""
+					let fileurl = ""
+					filename = file.file_name
+					if (file.file_kind === "image") {
+						fileurl = file.preview_asset.url
+					} else if (file.file_kind === "document") {
+						fileurl = file.document_asset.url
+					}
+
+					let fileTokens = await countTokensViaAPI([], [], { "url": fileurl, "filename": filename, "uploaderAPI": uploaderClaudeAI_API })
+					if (fileTokens === 0) {
+						return this.getUploadedFileTokens(orgId, file, true)
+					}
+					await this.filesTokenCache.set(`${orgId}:${file.file_uuid}`, fileTokens)
+					return fileTokens
+				} catch (error) {
+					console.error("Error fetching file tokens:", error)
+				}
+			} else {
+				console.log("Falling back to estimate...")
+				if (file.file_kind === "image") {
+					const width = file.preview_asset.image_width
+					const height = file.preview_asset.image_width
+					return Math.min(1600, Math.ceil((width * height) / 750));
+				} else if (file.file_kind === "document") {
+					return 2250 * file.document_asset.page_count;
+				}
+			}
+		}
+		return 0;
+	}
 }
 
 // Claude API interface
@@ -393,6 +521,45 @@ class ClaudeAPI {
 	}
 
 	// API methods
+	async getUploadedFileAsBase64(url) {
+		try {
+			console.log(`Starting file download from: https://claude.ai${url}`);
+			await this.ensureSessionKey();
+
+			const response = await fetch(`https://claude.ai${url}`, {
+				headers: {
+					'Cookie': `sessionKey=${this.sessionKey}`
+				}
+			});
+
+			if (!response.ok) {
+				console.error('Fetch failed:', response.status, response.statusText);
+				return null;
+			}
+
+			console.log("Getting blob...");
+			const blob = await response.blob();
+			console.log('Blob received, size:', blob.size, 'type:', blob.type);
+
+			return new Promise((resolve) => {
+				const reader = new FileReader();
+				reader.onloadend = () => {
+					const base64Data = reader.result.split(',')[1];
+					console.log('Base64 length:', base64Data.length);
+					resolve({
+						data: base64Data,
+						media_type: blob.type
+					});
+				};
+				reader.readAsDataURL(blob);
+			});
+
+		} catch (e) {
+			console.error('Download error:', e);
+			return null;
+		}
+	}
+
 	async getSyncText(orgId, syncURI, syncType) {
 		if (!syncURI) return "";
 		if (syncType != "gdrive") return ""
@@ -407,7 +574,6 @@ class ClaudeAPI {
 		const projectData = await this.request(`/organizations/${orgId}/projects/${projectId}`);
 
 		if (projectData.prompt_template) {
-			//total_tokens += getTextTokens(projectData.prompt_template);
 			project_text += projectData.prompt_template;
 		}
 
@@ -415,7 +581,7 @@ class ClaudeAPI {
 		for (const doc of docsData) {
 			debugLog("Doc:", doc.uuid);
 			project_text += doc.content;
-			debugLog("Doc tokens:", getTextTokens(doc.content));
+			debugLog("Doc tokens:", await getTextTokens(doc.content, true));
 		}
 
 		const syncData = await this.request(`/organizations/${orgId}/projects/${projectId}/syncs`);
@@ -423,9 +589,10 @@ class ClaudeAPI {
 			debugLog("Sync:", sync.uuid);
 			const syncText = await this.getSyncText(orgId, sync.config?.uri, sync.type);
 			project_text += syncText;
-			debugLog("Sync tokens:", getTextTokens(syncText));
+			debugLog("Sync tokens:", await getTextTokens(syncText, true));
 		}
-		let total_tokens = getTextTokens(project_text);
+
+		let total_tokens = await getTextTokens(project_text);
 		debugLog(`Total tokens for project ${projectId}: ${total_tokens}`);
 		return total_tokens;
 	}
@@ -439,24 +606,23 @@ class ClaudeAPI {
 	async getConversationTokens(orgId, conversationId) {
 		const conversationData = await this.getConversation(orgId, conversationId);
 		// Count messages by sender
-		let humanMessages = 0;
-		let assistantMessages = 0;
+		let humanMessagesCount = 0;
+		let assistantMessagesCount = 0;
 		const lastMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
 
 		for (const message of conversationData.chat_messages) {
-			if (message.sender === "human") humanMessages++;
-			if (message.sender === "assistant") assistantMessages++;
+			if (message.sender === "human") humanMessagesCount++;
+			if (message.sender === "assistant") assistantMessagesCount++;
 		}
 
 		// Sanity check
-		if (humanMessages === 0 || assistantMessages === 0 || humanMessages !== assistantMessages ||
+		if (humanMessagesCount === 0 || assistantMessagesCount === 0 || humanMessagesCount !== assistantMessagesCount ||
 			!lastMessage || lastMessage.sender !== "assistant") {
-			debugLog(`Message count mismatch or wrong last sender - Human: ${humanMessages}, Assistant: ${assistantMessages}, Last message sender: ${lastMessage?.sender}`);
+			debugLog(`Message count mismatch or wrong last sender - Human: ${humanMessagesCount}, Assistant: ${assistantMessagesCount}, Last message sender: ${lastMessage?.sender}`);
 			return undefined;
 		}
 
 		let totalTokens = 0;
-
 		// Add settings costs
 		for (const [setting, enabled] of Object.entries(conversationData.settings)) {
 			debugLog("Setting:", setting, enabled);
@@ -465,22 +631,30 @@ class ClaudeAPI {
 			}
 		}
 
+		let humanMessages = [];
+		let assistantMessages = [];
+
 		// Process each message
 		for (const message of conversationData.chat_messages) {
-			let messageTokens = 0;
+			// Files_v2 tokens (handle separately)
+			for (const file of message.files_v2) {
+				debugLog("File_v2:", file.file_name, file.file_uuid)
+				totalTokens += await tokenStorageManager.getUploadedFileTokens(orgId, file, false, this)
+			}
+
+			let messageContent = [];
 
 			debugLog("Message:", message.uuid);
 			// Process content array
 			for (const content of message.content) {
 				if (content.text) {
-					debugLog("Content:", content.text);
-					messageTokens += getTextTokens(content.text);
+					messageContent.push(content.text);
 				}
 				if (content.input?.code) {
-					messageTokens += getTextTokens(content.input.code)
+					messageContent.push(content.input.code);
 				}
 				if (content.content?.text) {
-					messageTokens += getTextTokens(content.content.text)
+					messageContent.push(content.content.text);
 				}
 			}
 
@@ -488,34 +662,38 @@ class ClaudeAPI {
 			for (const attachment of message.attachments) {
 				debugLog("Attachment:", attachment.file_name, attachment.id);
 				if (attachment.extracted_content) {
-					messageTokens += getTextTokens(attachment.extracted_content);
-					debugLog("Extracted tokens:", getTextTokens(attachment.extracted_content));
+					messageContent.push(attachment.extracted_content);
 				}
 			}
 
-			// Files_v2 tokens
-			for (const file of message.files_v2) {
-				debugLog("File_v2:", file.file_name, file.file_uuid)
-				if (file.file_kind === "image") {
-					const width = file.preview_asset.image_width
-					const height = file.preview_asset.image_width
-					messageTokens += Math.min(1600, Math.ceil((width * height) / 750));
-				} else if (file.file_kind === "document") {
-					messageTokens += 2250 * file.document_asset.page_count;
-				}
-			}
 
 			// Sync tokens
 			for (const sync of message.sync_sources) {
 				debugLog("Sync source:", sync.uuid)
-				messageTokens += getTextTokens(await this.getSyncText(orgId, sync.config?.uri, sync.type))
+				messageContent.push(await this.getSyncText(orgId, sync.config?.uri, sync.type));
 			}
 
 			if (message === lastMessage) {
-				messageTokens *= configManager.config.OUTPUT_TOKEN_MULTIPLIER;
+				totalTokens += await getTextTokens(messageContent.join(' ')) * (configManager.config.OUTPUT_TOKEN_MULTIPLIER - 1);
 			}
 
-			totalTokens += messageTokens;
+			if (message.sender === "human") {
+				humanMessages.push(messageContent.join(' '));
+			} else {
+				assistantMessages.push(messageContent.join(' '));
+			}
+		}
+
+		let api_key = (await browser.storage.local.get('apiKey'))?.apiKey
+		if (api_key) {
+			const tempTokens = await countTokensViaAPI(humanMessages, assistantMessages);
+			if (tempTokens === 0) {
+				totalTokens += await getTextTokens(humanMessages.join(' ')) + await getTextTokens(assistantMessages.join(' '));
+			} else {
+				totalTokens += tempTokens
+			}
+		} else {
+			totalTokens += await getTextTokens(humanMessages.join(' ')) + await getTextTokens(assistantMessages.join(' '));
 		}
 
 		// If part of a project, get project data
@@ -530,7 +708,7 @@ class ClaudeAPI {
 		const profileData = await this.request('/account_profile');
 		let totalTokens = 0;
 		if (profileData.conversation_preferences) {
-			totalTokens = getTextTokens(profileData.conversation_preferences) + 800
+			totalTokens = await getTextTokens(profileData.conversation_preferences) + 800
 		}
 
 		debugLog(`Profile tokens: ${totalTokens}`);
@@ -875,10 +1053,16 @@ function addWebRequestListeners() {
 
 
 const configManager = new Config();
-const tokenStorageManager = new TokenStorageManager();
 const pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
 const conversationLengthCache = new Map();
+let tokenStorageManager = null;
 let processingQueue = Promise.resolve();
 
-addWebRequestListeners();
-addExtensionListeners();
+configManager.initialize().then(() => {
+	tokenStorageManager = new TokenStorageManager();
+	tokenStorageManager.loadOrgIds().then(() => {
+		addWebRequestListeners();
+		addExtensionListeners();
+	})
+
+})
