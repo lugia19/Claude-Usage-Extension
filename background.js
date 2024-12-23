@@ -54,7 +54,7 @@ async function getFreshConfig() {
 		const remoteConfig = await response.json();
 		//debugLog('Loaded remote config:', remoteConfig);
 		const mergedConfig = mergeDeep(defaultConfig, remoteConfig);
-		mergedConfig.MODELS = Object.keys(mergedConfig.MODEL_TOKEN_CAPS).filter(key => key !== 'default');
+		mergedConfig.MODELS = Object.keys(mergedConfig.MODEL_CAPS.pro).filter(key => key !== 'default');
 		return mergedConfig;
 	} catch (error) {
 		console.warn('Error loading remote config:', error);
@@ -93,6 +93,7 @@ class TokenStorageManager {
 		this.isSyncingFirebase = false;
 		this.storageLock = false;
 		this.orgIds = undefined;
+		this.subscriptionTiers = new StoredMap("subscriptionTiers")
 		const nextAlarm = new Date();
 		nextAlarm.setHours(nextAlarm.getHours() + 1, 1, 0, 0);
 
@@ -262,6 +263,17 @@ class TokenStorageManager {
 		});
 
 		return merged;
+	}
+
+	async getCaps(orgId) {
+		let subscriptionTier = await this.subscriptionTiers.get(orgId)
+		if (!subscriptionTier) {
+			subscriptionTier = await new ClaudeAPI().getSubscriptionTier(orgId)
+			//await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 1000)	//5 seconds (for testing only)
+			await this.subscriptionTiers.set(orgId, subscriptionTier, 1 * 60 * 60 * 1000)	//1 hour
+		}
+		debugLog("Returning caps:", globalConfig.MODEL_CAPS[subscriptionTier])
+		return globalConfig.MODEL_CAPS[subscriptionTier]
 	}
 
 	async getCollapsedState() {
@@ -508,11 +520,26 @@ class ClaudeAPI {
 		debugLog(`Profile tokens: ${totalTokens}`);
 		return totalTokens;
 	}
+
+	async getSubscriptionTier(orgId) {
+		const statsigData = await this.request(`/bootstrap/${orgId}/statsig`);
+
+		if (statsigData.user?.custom?.isRaven) {
+			return "team"
+		}
+		if (statsigData.user?.custom?.isPro) {
+			return "pro"
+		}
+		return "free"
+	}
 }
 
 async function getActiveOrgId(tab) {
+	if (typeof tab !== "number") {
+		tab = tab.id
+	}
 	try {
-		const response = await browser.tabs.sendMessage(tab.id, {
+		const response = await browser.tabs.sendMessage(tab, {
 			action: "getOrgID"
 		});
 		return response?.orgId;
@@ -522,7 +549,7 @@ async function getActiveOrgId(tab) {
 	}
 }
 
-//Simple util class - need to persist the state in storage
+//Simple util class - need to persist the state in storage with caching duration
 class StoredMap {
 	constructor(storageKey) {
 		this.storageKey = storageKey;
@@ -539,9 +566,13 @@ class StoredMap {
 		return this.initialized;
 	}
 
-	async set(key, value) {
+	async set(key, value, lifetime = null) {
 		await this.ensureInitialized();
-		this.map.set(key, value);
+		const storedValue = lifetime ? {
+			value,
+			expires: Date.now() + lifetime
+		} : value;
+		this.map.set(key, storedValue);
 		await browser.storage.local.set({
 			[this.storageKey]: Array.from(this.map)
 		});
@@ -549,12 +580,38 @@ class StoredMap {
 
 	async get(key) {
 		await this.ensureInitialized();
-		return this.map.get(key);
+		const storedValue = this.map.get(key);
+
+		if (!storedValue) return undefined;
+
+		// If it's not a timed value, return directly
+		if (!storedValue.expires) return storedValue;
+
+		// Check expiration
+		if (Date.now() > storedValue.expires) {
+			await this.delete(key);
+			return undefined;
+		}
+
+		return storedValue.value;
 	}
 
 	async has(key) {
 		await this.ensureInitialized();
-		return this.map.has(key);
+		const storedValue = this.map.get(key);
+
+		if (!storedValue) return false;
+
+		// If it's not a timed value, return directly
+		if (!storedValue.expires) return true;
+
+		// Check expiration
+		if (Date.now() > storedValue.expires) {
+			await this.delete(key);
+			return false;
+		}
+
+		return true;
 	}
 
 	async delete(key) {
@@ -576,7 +633,7 @@ async function initializeConfig() {
 	try {
 		const response = await fetch(browser.runtime.getURL('constants.json'));
 		defaultConfig = await response.json();
-		defaultConfig.MODELS = Object.keys(defaultConfig.MODEL_TOKEN_CAPS).filter(key => key !== 'default');
+		defaultConfig.MODELS = Object.keys(defaultConfig.MODEL_CAPS.pro).filter(key => key !== 'default');
 		//debugLog("Default config loaded:", defaultConfig);
 	} catch (error) {
 		console.error("Failed to load default config:", error);
@@ -603,6 +660,13 @@ browser.webRequest.onBeforeRequest.addListener(
 				conversationId: conversationId,
 				tabId: details.tabId
 			});
+		}
+
+		if (details.method === "GET" && details.url.includes("/settings/billing")) {
+			debugLog("Hit the billing page, let's make sure we get the updated subscription tier in case it was changed...")
+			const orgId = await getActiveOrgId(details.tabId);
+			let subscriptionTier = await new ClaudeAPI().getSubscriptionTier(orgId)
+			await tokenStorageManager.subscriptionTiers.set(orgId, subscriptionTier, 6 * 60 * 60 * 1000)
 		}
 	},
 	{ urls: ["*://claude.ai/*"] }
@@ -689,7 +753,7 @@ async function processResponse(orgId, conversationId, isNewMessage, details) {
 		let model;
 		if (conversationData.model) {
 			const modelString = conversationData.model.toLowerCase();
-			const modelTypes = Object.keys(globalConfig.MODEL_TOKEN_CAPS).filter(key => key !== 'default');
+			const modelTypes = Object.keys(globalConfig.MODEL_CAPS.pro).filter(key => key !== 'default');
 			for (const modelType of modelTypes) {
 				if (modelString.includes(modelType.toLowerCase())) {
 					model = modelType;
@@ -732,7 +796,7 @@ async function processResponse(orgId, conversationId, isNewMessage, details) {
 async function handleMessage(message, sender) {
 	debugLog("📥 Received message:", message);
 	//const { sessionKey, orgId } = message;
-	const { sessionKey, orgId } = message;
+	const { orgId } = message;
 	const api = new ClaudeAPI();
 
 	const response = await (async () => {
@@ -778,6 +842,8 @@ async function handleMessage(message, sender) {
 				return await browser.storage.local.get('previousVersion').then(data => data.previousVersion);
 			case 'setCurrentVersion':
 				return await browser.storage.local.set({ previousVersion: message.version });
+			case 'getCaps':
+				return await tokenStorageManager.getCaps(orgId);
 		}
 	})();
 	debugLog("📤 Sending response:", response);

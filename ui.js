@@ -39,6 +39,10 @@
 				version
 			});
 		}
+
+		async getCaps() {
+			return await sendBackgroundMessage({ type: 'getCaps' });
+		}
 	}
 	let storageInterface;
 	//#endregion
@@ -86,7 +90,7 @@
 		if (overrideSelector) {
 			const overrideModel = overrideSelector.options[overrideSelector.selectedIndex].text
 			let overrideModelName = overrideModel.toLowerCase();
-			const modelTypes = Object.keys(config.MODEL_TOKEN_CAPS).filter(key => key !== 'default');
+			const modelTypes = Object.keys(config.MODEL_CAPS.pro).filter(key => key !== 'default');
 
 			for (const modelType of modelTypes) {
 				if (overrideModelName.includes(modelType.toLowerCase())) {
@@ -103,7 +107,7 @@
 		if (!fullModelName || fullModelName === 'default') return 'default';
 
 		fullModelName = fullModelName.toLowerCase();
-		const modelTypes = Object.keys(config.MODEL_TOKEN_CAPS).filter(key => key !== 'default');
+		const modelTypes = Object.keys(config.MODEL_CAPS.pro).filter(key => key !== 'default');
 
 		for (const modelType of modelTypes) {
 			if (fullModelName.includes(modelType.toLowerCase())) {
@@ -262,7 +266,9 @@
 			arrow.style.transform = isCollapsed ? 'rotate(-90deg)' : '';
 		});
 
+		let isEnabled = false;
 		function setActive(active, isHomePage) {
+			if (!isEnabled) return;	//Overridden to be disabled, don't change it.
 			activeIndicator.style.opacity = active ? '1' : '0';
 			container.style.opacity = active ? '1' : '0.7';
 			if (!isHomePage || isMobileView()) {
@@ -284,13 +290,19 @@
 			}
 		}
 
+		function setEnabled(enabled) {
+			isEnabled = enabled;
+			container.style.display = enabled ? 'block' : 'none';
+		}
+
 		return {
 			container,
 			progressBar,
 			resetTimeDisplay,
 			tooltip,
 			messageCounter,
-			setActive
+			setActive,
+			setEnabled
 		};
 	}
 
@@ -611,8 +623,8 @@
 			currentlyDisplayedModel = await getCurrentModel();
 
 			// Get the token cap for current model, or use default if not found
-			const maxTokens = config.MODEL_TOKEN_CAPS[currentlyDisplayedModel] ||
-				config.MODEL_TOKEN_CAPS.default;
+			const modelCaps = await storageInterface.getCaps()
+			const maxTokens = modelCaps[currentlyDisplayedModel] || modelCaps.default
 
 			// Get the total tokens used so far
 			const currentModelData = modelData[currentlyDisplayedModel];
@@ -639,11 +651,14 @@
 
 		// Update each model section
 		debugLog("Updating model sections...")
-		config.MODELS.forEach(modelName => {
+		config.MODELS.forEach(async modelName => {
 			const modelInfo = modelData[modelName] || {};
 			const modelTotal = modelInfo.total || 0;
 			const messageCount = modelInfo.messageCount || 0;
-			const maxTokens = config.MODEL_TOKEN_CAPS[modelName] || config.MODEL_TOKEN_CAPS.default;
+
+			const modelCaps = await storageInterface.getCaps()
+			const maxTokens = modelCaps[modelName]
+
 			const percentage = (modelTotal / maxTokens) * 100;
 			const section = modelSections[modelName];
 			if (!section) {
@@ -659,6 +674,7 @@
 				formatTimeRemaining(new Date(modelInfo.resetTimestamp)) :
 				'Reset in: Not set';
 			section.resetTimeDisplay.textContent = resetTime;
+			section.setEnabled(modelCaps[modelName] != 0);
 		});
 	}
 

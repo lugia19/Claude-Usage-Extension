@@ -9,6 +9,26 @@
 		"Haiku": 3000000,
 		"default": 1
 	},
+	"MODEL_CAPS": {
+		"free": {
+			"Opus": 0,
+			"Sonnet": 500000,
+			"Haiku": 1000000,
+			"default": 1
+		},
+		"pro": {
+			"Opus": 250000,
+			"Sonnet": 1600000,
+			"Haiku": 3000000,
+			"default": 1
+		},
+		"team": {
+			"Opus": 375000,
+			"Sonnet": 2400000,
+			"Haiku": 4500000,
+			"default": 1
+		}
+	},
 	"WARNING_THRESHOLD": 0.9,
 	"SELECTORS": {
 		"MAIN_INPUT": "div[aria-label=\"Write your prompt to Claude\"]",
