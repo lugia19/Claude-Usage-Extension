@@ -391,31 +391,39 @@ class ClaudeAPI {
 	}
 
 	// API methods
-	async getProjectData(orgId, projectId) {
-		return this.request(`/organizations/${orgId}/projects/${projectId}`);
-	}
-
-	async getProjectDocs(orgId, projectId) {
-		return this.request(`/organizations/${orgId}/projects/${projectId}/docs`);
+	async getSyncText(orgId, syncURI, syncType) {
+		if (!syncURI) return "";
+		if (syncType != "gdrive") return ""
+		let syncText = (await this.request(`/organizations/${orgId}/sync/mcp/drive/document/${syncURI}`))?.text
+		debugLog("Sync text:", syncText);
+		return syncText || "";
 	}
 
 	async getProjectTokens(orgId, projectId) {
-		let total_tokens = 0;
-		const projectData = await this.getProjectData(orgId, projectId);
+		//These are all text. No point in employing caching as it'll only take up one request anyway.
+		let project_text = "";
+		const projectData = await this.request(`/organizations/${orgId}/projects/${projectId}`);
 
 		if (projectData.prompt_template) {
-			total_tokens += getTextTokens(projectData.prompt_template);
+			//total_tokens += getTextTokens(projectData.prompt_template);
+			project_text += projectData.prompt_template;
 		}
 
-		if (projectData.docs_count > 0) {
-			const docsData = await this.getProjectDocs(orgId, projectId);
-			for (const doc of docsData) {
-				debugLog("Doc:", doc.uuid);
-				total_tokens += getTextTokens(doc.content);
-				debugLog("Doc tokens:", getTextTokens(doc.content));
-			}
+		const docsData = await this.request(`/organizations/${orgId}/projects/${projectId}/docs`);
+		for (const doc of docsData) {
+			debugLog("Doc:", doc.uuid);
+			project_text += doc.content;
+			debugLog("Doc tokens:", getTextTokens(doc.content));
 		}
 
+		const syncData = await this.request(`/organizations/${orgId}/projects/${projectId}/syncs`);
+		for (const sync of syncData) {
+			debugLog("Sync:", sync.uuid);
+			const syncText = await this.getSyncText(orgId, sync.config?.uri, sync.type);
+			project_text += syncText;
+			debugLog("Sync tokens:", getTextTokens(syncText));
+		}
+		let total_tokens = getTextTokens(project_text);
 		debugLog(`Total tokens for project ${projectId}: ${total_tokens}`);
 		return total_tokens;
 	}
@@ -483,7 +491,7 @@ class ClaudeAPI {
 				}
 			}
 
-			// Files tokens
+			// Files_v2 tokens
 			for (const file of message.files_v2) {
 				debugLog("File_v2:", file.file_name, file.file_uuid)
 				if (file.file_kind === "image") {
@@ -493,6 +501,12 @@ class ClaudeAPI {
 				} else if (file.file_kind === "document") {
 					messageTokens += 2250 * file.document_asset.page_count;
 				}
+			}
+
+			// Sync tokens
+			for (const sync of message.sync_sources) {
+				debugLog("Sync source:", sync.uuid)
+				messageTokens += getTextTokens(await this.getSyncText(orgId, sync.config?.uri, sync.type))
 			}
 
 			if (message === lastMessage) {

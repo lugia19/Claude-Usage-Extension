@@ -130,15 +130,15 @@
 	//#endregion
 
 	//#region UI elements
-	function createModelSection(modelName, isActive) {
+	function createModelSection(modelName) {
 		const container = document.createElement('div');
 		container.style.cssText = `
 			margin-bottom: 12px;
 			border-bottom: 1px solid #3B3B3B;
 			padding-bottom: 8px;
-			opacity: ${isActive ? '1' : '0.7'};
+			opacity: '1';
 			transition: opacity 0.2s;
-			${isMobileView() && !isActive ? 'display: none;' : ''}
+			}
 		`;
 
 		container.style.cssText += `
@@ -173,7 +173,7 @@
             height: 8px;
             border-radius: 50%;
             background: #3b82f6;
-            opacity: ${isActive ? '1' : '0'};
+            opacity:'1';
             transition: opacity 0.2s;
         `;
 
@@ -254,7 +254,7 @@
 		container.appendChild(content);
 
 		// Add collapsed state tracking
-		let isCollapsed = !isActive; // Start collapsed if not active
+		let isCollapsed = true //Start collapsed
 		content.style.display = isCollapsed ? 'none' : 'block';
 		arrow.style.transform = isCollapsed ? 'rotate(-90deg)' : '';
 
@@ -266,8 +266,9 @@
 			arrow.style.transform = isCollapsed ? 'rotate(-90deg)' : '';
 		});
 
-		let isEnabled = false;
+		let isEnabled = true;
 		function setActive(active, isHomePage) {
+			console.log("setActive called with active", active, "isHomePage", isHomePage)
 			if (!isEnabled) return;	//Overridden to be disabled, don't change it.
 			activeIndicator.style.opacity = active ? '1' : '0';
 			container.style.opacity = active ? '1' : '0.7';
@@ -292,7 +293,7 @@
 
 		function setEnabled(enabled) {
 			isEnabled = enabled;
-			container.style.display = enabled ? 'block' : 'none';
+			if (!enabled) container.style.display = enabled ? 'block' : 'none';
 		}
 
 		return {
@@ -460,8 +461,7 @@
 
 		// Create sections for each model
 		config.MODELS.forEach(model => {
-			const isActive = model === currentlyDisplayedModel;
-			const section = createModelSection(model, isActive);
+			const section = createModelSection(model);
 			modelSections[model] = section;
 			content.appendChild(section.container);
 		});
