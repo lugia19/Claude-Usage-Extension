@@ -12,7 +12,7 @@ This extension is meant to help you gauge how much usage of claude you have left
 
 ### Features
 The extension will correctly handle calculating token usage (via [gpt-tokenizer](https://github.com/niieani/gpt-tokenizer)) from:
-- Files uploaded to the chat
+- Files uploaded to the chat (Or synced via google drive)
 - Project (knowledge files and instructions)
 - Personal preferences
 - Message history
@@ -20,7 +20,6 @@ The extension will correctly handle calculating token usage (via [gpt-tokenizer]
 - The AI's output (This is weighted as being 10x the usage of input tokens, a rough estimate)
 
 ### Limitations
-- It cannot currently handle files from integrations (e.g., Google Drive)
 - The GPT Tokenizer is a rough approximation
 
 ### Privacy
