@@ -3,30 +3,19 @@ import './lib/o200k_base.js';
 
 const tokenizer = GPTTokenizer_o200k_base;
 
-function getTextTokens(text) {
-	return Math.round(tokenizer.countTokens(text) * 1.2);
-}
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-//Open the source code on click.
-browser.action.onClicked.addListener(() => {
-	browser.tabs.create({
-		url: "https://ko-fi.com/lugia19"
-	});
-});
 
 const STORAGE_KEY = "claudeUsageTracker_v5"
-const CONFIG_URL = 'https://raw.githubusercontent.com/lugia19/Claude-Usage-Extension/refs/heads/main/constants.json';
 const DEBUG_MODE = false
 
+//#region Utility functions
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-//Helper logging method
 function debugLog(...args) {
 	if (DEBUG_MODE) {
 		console.log(...args);
 	}
 }
 
-// Helper for merging stuff
 function mergeDeep(target, source) {
 	for (const key in source) {
 		if (source[key] instanceof Object && key in target) {
@@ -38,53 +27,66 @@ function mergeDeep(target, source) {
 	return target;
 }
 
-// Function to get fresh config
-async function getFreshConfig() {
-	if (!defaultConfig) {
-		await initializeConfig();
-	}
+function getTextTokens(text) {
+	return Math.round(tokenizer.countTokens(text) * 1.2);
+}
+//#endregion
 
-	try {
-		const response = await fetch(CONFIG_URL);
-		if (!response.ok) {
-			console.warn('Failed to load remote config, using defaults');
-			return defaultConfig;
+//#region Manager classes
+class Config {
+	static instance = null;
+	static CONFIG_URL = 'https://raw.githubusercontent.com/lugia19/Claude-Usage-Extension/refs/heads/main/constants.json';
+	static REFRESH_INTERVAL = 10; // minutes
+
+	constructor() {
+		if (Config.instance) {
+			return Config.instance;
 		}
+		Config.instance = this;
+		this.config = null;
+		this.defaultConfig = null;
+		this.initialize();
+	}
 
-		const remoteConfig = await response.json();
-		//debugLog('Loaded remote config:', remoteConfig);
-		const mergedConfig = mergeDeep(defaultConfig, remoteConfig);
-		mergedConfig.MODELS = Object.keys(mergedConfig.MODEL_CAPS.pro).filter(key => key !== 'default');
-		return mergedConfig;
-	} catch (error) {
-		console.warn('Error loading remote config:', error);
-		return defaultConfig;
+	async initialize() {
+		const localConfig = await (await fetch(browser.runtime.getURL('constants.json'))).json();
+		localConfig.MODELS = Object.keys(localConfig.MODEL_CAPS.pro).filter(key => key !== 'default');
+		this.defaultConfig = localConfig;
+		this.config = await this.getFreshConfig();
+		this.setupRefresh();
+	}
+
+	async getFreshConfig() {
+		try {
+			const response = await fetch(Config.CONFIG_URL);
+			if (!response.ok) {
+				console.warn('Using default config');
+				return this.defaultConfig;
+			}
+
+			const remoteConfig = await response.json();
+			const mergedConfig = mergeDeep(this.defaultConfig, remoteConfig);
+			mergedConfig.MODELS = Object.keys(mergedConfig.MODEL_CAPS.pro)
+				.filter(key => key !== 'default');
+			return mergedConfig;
+		} catch (error) {
+			console.warn('Error loading remote config:', error);
+			return this.defaultConfig;
+		}
+	}
+
+	setupRefresh() {
+		browser.alarms.create('refreshConfig', {
+			periodInMinutes: Config.REFRESH_INTERVAL
+		});
+
+		browser.alarms.onAlarm.addListener(async (alarm) => {
+			if (alarm.name === 'refreshConfig') {
+				this.config = await this.getFreshConfig();
+			}
+		});
 	}
 }
-
-
-let globalConfig = null;
-let defaultConfig = null;
-// Setup alarm and initial config
-async function initializeConfigRefresh() {
-	// Get initial config
-	globalConfig = await getFreshConfig();
-
-	// Create alarm to refresh every 10 minutes
-	browser.alarms.create('refreshConfig', {
-		periodInMinutes: 10
-	});
-}
-
-// Handle alarm
-browser.alarms.onAlarm.addListener(async (alarm) => {
-	if (alarm.name === 'refreshConfig') {
-		globalConfig = await getFreshConfig();
-	}
-});
-
-initializeConfigRefresh();
-
 
 // Token storage manager
 class TokenStorageManager {
@@ -175,7 +177,7 @@ class TokenStorageManager {
 				debugLog("Local models:", localModels);
 
 				// Get remote data
-				const url = `${defaultConfig.FIREBASE_BASE_URL}/users/${orgId}/models.json`;
+				const url = `${configManager.config.FIREBASE_BASE_URL}/users/${orgId}/models.json`;
 				debugLog("Fetching from:", url);
 
 				const response = await fetch(url);
@@ -272,8 +274,8 @@ class TokenStorageManager {
 			//await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 1000)	//5 seconds (for testing only)
 			await this.subscriptionTiers.set(orgId, subscriptionTier, 1 * 60 * 60 * 1000)	//1 hour
 		}
-		debugLog("Returning caps:", globalConfig.MODEL_CAPS[subscriptionTier])
-		return globalConfig.MODEL_CAPS[subscriptionTier]
+		debugLog("Returning caps:", configManager.config.MODEL_CAPS[subscriptionTier])
+		return configManager.config.MODEL_CAPS[subscriptionTier]
 	}
 
 	async getCollapsedState() {
@@ -458,8 +460,8 @@ class ClaudeAPI {
 		// Add settings costs
 		for (const [setting, enabled] of Object.entries(conversationData.settings)) {
 			debugLog("Setting:", setting, enabled);
-			if (enabled && globalConfig.FEATURE_COSTS[setting]) {
-				totalTokens += globalConfig.FEATURE_COSTS[setting];
+			if (enabled && configManager.config.FEATURE_COSTS[setting]) {
+				totalTokens += configManager.config.FEATURE_COSTS[setting];
 			}
 		}
 
@@ -510,7 +512,7 @@ class ClaudeAPI {
 			}
 
 			if (message === lastMessage) {
-				messageTokens *= globalConfig.OUTPUT_TOKEN_MULTIPLIER;
+				messageTokens *= configManager.config.OUTPUT_TOKEN_MULTIPLIER;
 			}
 
 			totalTokens += messageTokens;
@@ -637,80 +639,10 @@ class StoredMap {
 	}
 }
 
-const tokenStorageManager = new TokenStorageManager();
-const pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
-const conversationLengthCache = new Map();
-let processingQueue = Promise.resolve();
-
-// Load default config before doing anything else
-async function initializeConfig() {
-	try {
-		const response = await fetch(browser.runtime.getURL('constants.json'));
-		defaultConfig = await response.json();
-		defaultConfig.MODELS = Object.keys(defaultConfig.MODEL_CAPS.pro).filter(key => key !== 'default');
-		//debugLog("Default config loaded:", defaultConfig);
-	} catch (error) {
-		console.error("Failed to load default config:", error);
-	}
-}
+//#endregion
 
 
-// Listen for message sending
-browser.webRequest.onBeforeRequest.addListener(
-	async (details) => {
-		if (details.method === "POST" &&
-			(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
-			// Extract IDs from URL - we can refine these regexes
-			const urlParts = details.url.split('/');
-			const orgId = urlParts[urlParts.indexOf('organizations') + 1];
-			await tokenStorageManager.addOrgId(orgId);
-			const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1];
-
-			const key = `${orgId}:${conversationId}`;
-			debugLog(`Message sent - Key: ${key}`);
-			// Store pending response with both orgId and tabId
-			await pendingResponses.set(key, {
-				orgId: orgId,
-				conversationId: conversationId,
-				tabId: details.tabId
-			});
-		}
-
-		if (details.method === "GET" && details.url.includes("/settings/billing")) {
-			debugLog("Hit the billing page, let's make sure we get the updated subscription tier in case it was changed...")
-			const orgId = await getActiveOrgId(details.tabId);
-			let subscriptionTier = await new ClaudeAPI().getSubscriptionTier(orgId)
-			await tokenStorageManager.subscriptionTiers.set(orgId, subscriptionTier, 6 * 60 * 60 * 1000)
-		}
-	},
-	{ urls: ["*://claude.ai/*"] }
-);
-
-// Listen for responses
-browser.webRequest.onCompleted.addListener(
-	async (details) => {
-		if (details.method === "GET" &&
-			details.url.includes("/chat_conversations/") &&
-			details.url.includes("tree=True") &&
-			details.url.includes("render_all_tools=true")) {
-			processingQueue = processingQueue.then(async () => {
-				const urlParts = details.url.split('/');
-				const orgId = urlParts[urlParts.indexOf('organizations') + 1];
-				await tokenStorageManager.addOrgId(orgId);
-				const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
-
-				const key = `${orgId}:${conversationId}`;
-				const result = await processResponse(orgId, conversationId, await pendingResponses.has(key), details);
-
-				if (result && await pendingResponses.has(key)) {
-					await pendingResponses.delete(key);
-				}
-			});
-		}
-	},
-	{ urls: ["*://claude.ai/*"] },
-	["responseHeaders"]
-);
+//#region Messaging
 
 //Updates each tab with its own data
 async function updateAllTabs(currentLength = undefined, lengthTabId = undefined) {
@@ -721,7 +653,7 @@ async function updateAllTabs(currentLength = undefined, lengthTabId = undefined)
 			modelData: {}
 		};
 
-		for (const model of globalConfig.MODELS) {
+		for (const model of configManager.config.MODELS) {
 			const modelData = await tokenStorageManager.getModelData(orgId, model);
 			if (modelData) {
 				tabData.modelData[model] = modelData;
@@ -739,6 +671,81 @@ async function updateAllTabs(currentLength = undefined, lengthTabId = undefined)
 	}
 }
 
+// Content -> Background messaging
+async function handleMessageFromContent(message, sender) {
+	debugLog("📥 Received message:", message);
+	//const { sessionKey, orgId } = message;
+	const { orgId } = message;
+	const api = new ClaudeAPI();
+
+	const response = await (async () => {
+		switch (message.type) {
+			case 'getCollapsedState':
+				return await tokenStorageManager.getCollapsedState();
+			case 'setCollapsedState':
+				return await tokenStorageManager.setCollapsedState(message.isCollapsed);
+			case 'getConfig':
+				return await configManager.config;
+			case 'requestData':
+				const baseData = { modelData: {} };
+				const { conversationId } = message ?? undefined;
+				// Get data for all models
+				for (const model of configManager.config.MODELS) {
+					const modelData = await tokenStorageManager.getModelData(orgId, model);
+					if (modelData) {
+						baseData.modelData[model] = modelData;
+					}
+				}
+				if (conversationId) {
+					debugLog("Requested length for conversation:", conversationId);
+					const key = `${orgId}:${conversationId}`;
+
+					//Fetch it only if missing...
+					if (!conversationLengthCache.has(key)) {
+						debugLog("Conversation length not found, fetching...");
+						const conversationTokens = await api.getConversationTokens(orgId, conversationId);
+						if (conversationTokens != undefined) {
+							const profileTokens = await api.getProfileTokens();
+							const messageCost = conversationTokens + profileTokens + configManager.config.BASE_SYSTEM_PROMPT_LENGTH;
+							conversationLengthCache.set(key, messageCost);
+						}
+					}
+
+					if (conversationLengthCache.has(key)) baseData.conversationLength = conversationLengthCache.get(key)
+				}
+				return baseData;
+			case 'initOrg':
+				await tokenStorageManager.addOrgId(orgId);
+				return true;
+			case 'getPreviousVersion':
+				return await browser.storage.local.get('previousVersion').then(data => data.previousVersion);
+			case 'setCurrentVersion':
+				return await browser.storage.local.set({ previousVersion: message.version });
+			case 'getCaps':
+				return await tokenStorageManager.getCaps(orgId);
+		}
+	})();
+	debugLog("📤 Sending response:", response);
+	return response;
+}
+
+function addExtensionListeners() {
+	browser.runtime.onMessage.addListener((message, sender) => {
+		debugLog("Background received message:", message);
+		return handleMessageFromContent(message, sender);
+	});
+
+	browser.action.onClicked.addListener(() => {
+		browser.tabs.create({
+			url: "https://ko-fi.com/lugia19"
+		});
+	});
+}
+//#endregion
+
+
+
+//#region Network handling
 async function processResponse(orgId, conversationId, isNewMessage, details) {
 	const tabId = details.tabId;
 	const sessionKey = details.responseHeaders
@@ -757,7 +764,7 @@ async function processResponse(orgId, conversationId, isNewMessage, details) {
 
 
 	const profileTokens = await api.getProfileTokens();
-	const messageCost = conversationTokens + profileTokens + globalConfig.BASE_SYSTEM_PROMPT_LENGTH
+	const messageCost = conversationTokens + profileTokens + configManager.config.BASE_SYSTEM_PROMPT_LENGTH
 	debugLog("Current per message cost:", messageCost);
 	conversationLengthCache.set(`${orgId}:${conversationId}`, messageCost);
 
@@ -767,7 +774,7 @@ async function processResponse(orgId, conversationId, isNewMessage, details) {
 		let model;
 		if (conversationData.model) {
 			const modelString = conversationData.model.toLowerCase();
-			const modelTypes = Object.keys(globalConfig.MODEL_CAPS.pro).filter(key => key !== 'default');
+			const modelTypes = Object.keys(configManager.config.MODEL_CAPS.pro).filter(key => key !== 'default');
 			for (const modelType of modelTypes) {
 				if (modelString.includes(modelType.toLowerCase())) {
 					model = modelType;
@@ -792,7 +799,7 @@ async function processResponse(orgId, conversationId, isNewMessage, details) {
 	};
 
 	// Get data for all models
-	for (const model of globalConfig.MODELS) {
+	for (const model of configManager.config.MODELS) {
 		const modelData = await tokenStorageManager.getModelData(orgId, model);
 		if (modelData) {
 			baseData.modelData[model] = modelData;
@@ -805,67 +812,73 @@ async function processResponse(orgId, conversationId, isNewMessage, details) {
 }
 
 
-
-// Content -> Background messaging
-async function handleMessage(message, sender) {
-	debugLog("📥 Received message:", message);
-	//const { sessionKey, orgId } = message;
-	const { orgId } = message;
-	const api = new ClaudeAPI();
-
-	const response = await (async () => {
-		switch (message.type) {
-			case 'getCollapsedState':
-				return await tokenStorageManager.getCollapsedState();
-			case 'setCollapsedState':
-				return await tokenStorageManager.setCollapsedState(message.isCollapsed);
-			case 'getConfig':
-				return await getFreshConfig();
-			case 'requestData':
-				const baseData = { modelData: {} };
-				const { conversationId } = message ?? undefined;
-				// Get data for all models
-				for (const model of globalConfig.MODELS) {
-					const modelData = await tokenStorageManager.getModelData(orgId, model);
-					if (modelData) {
-						baseData.modelData[model] = modelData;
-					}
-				}
-				if (conversationId) {
-					debugLog("Requested length for conversation:", conversationId);
-					const key = `${orgId}:${conversationId}`;
-
-					//Fetch it only if missing...
-					if (!conversationLengthCache.has(key)) {
-						debugLog("Conversation length not found, fetching...");
-						const conversationTokens = await api.getConversationTokens(orgId, conversationId);
-						if (conversationTokens != undefined) {
-							const profileTokens = await api.getProfileTokens();
-							const messageCost = conversationTokens + profileTokens + globalConfig.BASE_SYSTEM_PROMPT_LENGTH;
-							conversationLengthCache.set(key, messageCost);
-						}
-					}
-
-					if (conversationLengthCache.has(key)) baseData.conversationLength = conversationLengthCache.get(key)
-				}
-				return baseData;
-			case 'initOrg':
+// Listen for message sending
+function addWebRequestListeners() {
+	browser.webRequest.onBeforeRequest.addListener(
+		async (details) => {
+			if (details.method === "POST" &&
+				(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
+				// Extract IDs from URL - we can refine these regexes
+				const urlParts = details.url.split('/');
+				const orgId = urlParts[urlParts.indexOf('organizations') + 1];
 				await tokenStorageManager.addOrgId(orgId);
-				return true;
-			case 'getPreviousVersion':
-				return await browser.storage.local.get('previousVersion').then(data => data.previousVersion);
-			case 'setCurrentVersion':
-				return await browser.storage.local.set({ previousVersion: message.version });
-			case 'getCaps':
-				return await tokenStorageManager.getCaps(orgId);
-		}
-	})();
-	debugLog("📤 Sending response:", response);
-	return response;
+				const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1];
+
+				const key = `${orgId}:${conversationId}`;
+				debugLog(`Message sent - Key: ${key}`);
+				// Store pending response with both orgId and tabId
+				await pendingResponses.set(key, {
+					orgId: orgId,
+					conversationId: conversationId,
+					tabId: details.tabId
+				});
+			}
+
+			if (details.method === "GET" && details.url.includes("/settings/billing")) {
+				debugLog("Hit the billing page, let's make sure we get the updated subscription tier in case it was changed...")
+				const orgId = await getActiveOrgId(details.tabId);
+				let subscriptionTier = await new ClaudeAPI().getSubscriptionTier(orgId)
+				await tokenStorageManager.subscriptionTiers.set(orgId, subscriptionTier, 6 * 60 * 60 * 1000)
+			}
+		},
+		{ urls: ["*://claude.ai/*"] }
+	);
+
+	// Listen for responses
+	browser.webRequest.onCompleted.addListener(
+		async (details) => {
+			if (details.method === "GET" &&
+				details.url.includes("/chat_conversations/") &&
+				details.url.includes("tree=True") &&
+				details.url.includes("render_all_tools=true")) {
+				processingQueue = processingQueue.then(async () => {
+					const urlParts = details.url.split('/');
+					const orgId = urlParts[urlParts.indexOf('organizations') + 1];
+					await tokenStorageManager.addOrgId(orgId);
+					const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
+
+					const key = `${orgId}:${conversationId}`;
+					const result = await processResponse(orgId, conversationId, await pendingResponses.has(key), details);
+
+					if (result && await pendingResponses.has(key)) {
+						await pendingResponses.delete(key);
+					}
+				});
+			}
+		},
+		{ urls: ["*://claude.ai/*"] },
+		["responseHeaders"]
+	);
+
 }
+//#endregion
 
-browser.runtime.onMessage.addListener((message, sender) => {
-	debugLog("Background received message:", message);
-	return handleMessage(message, sender);
-});
 
+const configManager = new Config();
+const tokenStorageManager = new TokenStorageManager();
+const pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
+const conversationLengthCache = new Map();
+let processingQueue = Promise.resolve();
+
+addWebRequestListeners();
+addExtensionListeners();
