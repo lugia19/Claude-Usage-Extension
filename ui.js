@@ -66,21 +66,26 @@
 	async function sendBackgroundMessage(message) {
 		const enrichedMessage = {
 			...message,
-			//sessionKey: document.cookie.split('; ').find(row => row.startsWith('sessionKey='))?.split('=')[1], //It's HTTPOnly...
 			orgId: document.cookie.split('; ').find(row => row.startsWith('lastActiveOrg='))?.split('=')[1]
 		};
 		let counter = 10;
 		while (counter > 0) {
 			try {
 				const response = await browser.runtime.sendMessage(enrichedMessage);
-				return response
+				return response;
 			} catch (error) {
-				console.warn('Failed to send message to background script: ', error, "\nRetrying...");
-				await sleep(200);
+				// Check if it's the specific "receiving end does not exist" error
+				if (error.message?.includes('Receiving end does not exist')) {
+					console.warn('Background script not ready, retrying...', error);
+					await sleep(200);
+				} else {
+					// For any other error, throw immediately
+					throw error;
+				}
 			}
 			counter--;
 		}
-		console.error("Failed to send message to background script after 5 retries.")
+		throw new Error("Failed to send message to background script after 10 retries.");
 	}
 
 	async function waitForElement(target, selector, maxTime = 1000) {
