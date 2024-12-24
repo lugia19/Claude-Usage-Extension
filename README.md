@@ -11,16 +11,15 @@ This extension is meant to help you gauge how much usage of claude you have left
 [![Mozilla Add-on](https://img.shields.io/amo/v/claude-usage-tracker.svg)](https://addons.mozilla.org/firefox/addon/claude-usage-tracker)
 
 ### Features
-The extension will correctly handle calculating token usage (via [gpt-tokenizer](https://github.com/niieani/gpt-tokenizer)) from:
+The extension will correctly handle calculating token usage (either via Anthropic's own API if you input your own key, or via [gpt-tokenizer](https://github.com/niieani/gpt-tokenizer)).
+
+It can pull from:
 - Files uploaded to the chat (Or synced via google drive)
 - Project (knowledge files and instructions)
 - Personal preferences
 - Message history
 - The system prompt of any enabled tools (analysis tool, artifacts) on a per-chat basis
 - The AI's output (This is weighted as being 10x the usage of input tokens, a rough estimate)
-
-### Limitations
-- The GPT Tokenizer is a rough approximation
 
 ### Privacy
 It will additionally fetch your organization ID on claude.ai to synchronize your usage amounts across devices via firebase.
