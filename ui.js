@@ -69,7 +69,18 @@
 			//sessionKey: document.cookie.split('; ').find(row => row.startsWith('sessionKey='))?.split('=')[1], //It's HTTPOnly...
 			orgId: document.cookie.split('; ').find(row => row.startsWith('lastActiveOrg='))?.split('=')[1]
 		};
-		return browser.runtime.sendMessage(enrichedMessage);
+		let counter = 10;
+		while (counter > 0) {
+			try {
+				const response = await browser.runtime.sendMessage(enrichedMessage);
+				return response
+			} catch (error) {
+				console.warn('Failed to send message to background script: ', error, "\nRetrying...");
+				await sleep(200);
+			}
+			counter--;
+		}
+		console.error("Failed to send message to background script after 5 retries.")
 	}
 
 	async function waitForElement(target, selector, maxTime = 1000) {
@@ -268,7 +279,6 @@
 
 		let isEnabled = true;
 		function setActive(active, isHomePage) {
-			console.log("setActive called with active", active, "isHomePage", isHomePage)
 			if (!isEnabled) return;	//Overridden to be disabled, don't change it.
 			activeIndicator.style.opacity = active ? '1' : '0';
 			container.style.opacity = active ? '1' : '0.7';
@@ -374,7 +384,9 @@
 			font-size: 14px;
 		`;
 		closeButton.textContent = '×';
-		closeButton.onclick = () => notificationCard.remove();
+		closeButton.addEventListener('click', () => {
+			notificationCard.remove();
+		})
 
 		notificationCard.appendChild(message);
 		notificationCard.appendChild(kofiButton);
@@ -382,6 +394,99 @@
 
 		return notificationCard;
 	}
+
+	async function createSettingsPanel() {
+		// Remove any existing settings panel
+		const panel = document.createElement('div');
+		panel.className = 'settings-panel';
+		panel.style.cssText = `
+			position: absolute;
+			bottom: calc(100% + 10px);
+			left: 0;
+			right: 0;
+			background: #2D2D2D;
+			border: 1px solid #3B3B3B;
+			border-radius: 8px;
+			padding: 12px;
+			color: white;
+			font-size: 12px;
+			text-align: left;
+			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+			z-index: 9999;
+		`;
+
+		const label = document.createElement('label');
+		label.textContent = 'API Key (more accurate):';
+		label.style.display = 'block';
+		label.style.marginBottom = '8px';
+
+		const input = document.createElement('input');
+		input.type = 'password';
+		input.style.cssText = `
+			width: calc(100% - 12px);
+			padding: 6px;
+			margin-bottom: 12px;
+			background: #3B3B3B;
+			border: 1px solid #4B4B4B;
+			border-radius: 4px;
+			color: white;
+		`;
+
+		let apiKey = await sendBackgroundMessage({ type: 'getAPIKey' })
+		if (apiKey) input.value = apiKey
+
+		const saveButton = document.createElement('button');
+		saveButton.textContent = 'Save';
+		saveButton.style.cssText = `
+			background: #3b82f6;
+			border: none;
+			border-radius: 4px;
+			color: white;
+			cursor: pointer;
+			padding: 6px 12px;
+		`;
+
+		saveButton.addEventListener('click', async () => {
+			let result = await sendBackgroundMessage({ type: 'setAPIKey', newKey: input.value })
+			if (!result) {
+				const errorMsg = document.createElement('div');
+				errorMsg.style.cssText = `
+					color: #ef4444;
+					font-size: 14px;
+				`;
+				errorMsg.textContent = 'Invalid API key.';
+				input.after(errorMsg);
+				setTimeout(() => errorMsg.remove(), 3000);
+				return;
+			}
+
+			// If successful, reload the page.
+			location.reload();
+		})
+		const closeButton = document.createElement('button');
+		closeButton.textContent = '×';
+		closeButton.style.cssText = `
+			position: absolute;
+			top: 8px;
+			right: 8px;
+			background: none;
+			border: none;
+			color: #3b82f6;
+			cursor: pointer;
+			font-size: 14px;
+		`;
+		closeButton.addEventListener('click', () => {
+			panel.remove();
+		})
+
+		panel.appendChild(closeButton);
+		panel.appendChild(label);
+		panel.appendChild(input);
+		panel.appendChild(saveButton);
+
+		return panel
+	}
+
 
 	async function initUI() {
 		const container = document.createElement('div');
@@ -425,8 +530,32 @@
 		`;
 		headerEstimateDisplay.textContent = 'Est. messages left: Loading...';
 
+		// Add settings button to header
+		const settingsButton = document.createElement('button');
+		settingsButton.innerHTML = `
+			<svg viewBox="0 0 24 24" width="20" height="20" style="cursor: pointer;">
+				<path fill="currentColor" d="M19.43 12.98c.04-.32.07-.64.07-.98 0-.34-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98 0 .33.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
+			</svg>
+		`;
+		settingsButton.style.cssText = `
+			margin-left: auto;
+			display: flex;
+			align-items: center;
+			color: #3b82f6;
+		`;
+		settingsButton.addEventListener('click', async () => {
+			const existingPanel = container.querySelector('.settings-panel');
+			if (existingPanel) {
+				existingPanel.remove();
+			} else {
+				const panel = await createSettingsPanel()
+				container.appendChild(panel);
+			}
+		});
+
 		header.appendChild(arrow);
 		header.appendChild(headerEstimateDisplay);
+		header.appendChild(settingsButton);
 
 		// Counters
 		const currentConversationDisplay = document.createElement('div');

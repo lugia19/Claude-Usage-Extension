@@ -5,7 +5,7 @@ const tokenizer = GPTTokenizer_o200k_base;
 
 
 const STORAGE_KEY = "claudeUsageTracker_v5"
-const DEBUG_MODE = true
+const DEBUG_MODE = false
 
 //#region Utility functions
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -27,7 +27,22 @@ function mergeDeep(target, source) {
 	return target;
 }
 
-//browser.storage.local.set({ 'apiKey': "[REDACTED]" });
+async function checkAndSetAPIKey(newKey) {
+	if (newKey == "") {
+		await browser.storage.local.remove('apiKey');
+		return true;
+	}
+	try {
+		const result = await countTokensViaAPI(["Test"], [], null, newKey)
+		if (result && result != 0) {
+			await browser.storage.local.set({ apiKey: newKey });
+			return true;
+		}
+	} catch (error) {
+		console.error("Error setting API key:", error);
+		return false;
+	}
+}
 
 async function getTextTokens(text, estimateOnly) {
 	let api_key = (await browser.storage.local.get('apiKey'))?.apiKey
@@ -42,17 +57,16 @@ async function getTextTokens(text, estimateOnly) {
 	}
 }
 
-async function countTokensViaAPI(userMessages = [], assistantMessages = [], file = null) {
-	const api_key = (await browser.storage.local.get('apiKey'))?.apiKey
-	console.log(api_key)
+async function countTokensViaAPI(userMessages = [], assistantMessages = [], file = null, keyOverride = null) {
+	let api_key = keyOverride
 	if (!api_key) {
-		return 0;
+		api_key = (await browser.storage.local.get('apiKey'))?.apiKey
+		if (!api_key) {
+			return 0;
+		}
 	}
 	try {
-		console.log("CALLING API!")
-		console.log(userMessages)
-		console.log(assistantMessages)
-		console.log(file)
+		debugLog("CALLING API!", userMessages, assistantMessages, file)
 		const messages = [];
 
 		if (file && userMessages.length === 0) {
@@ -116,9 +130,12 @@ async function countTokensViaAPI(userMessages = [], assistantMessages = [], file
 		});
 
 		const data = await response.json();
-		console.log("API response:", data);
+		debugLog("API response:", data);
+		if (data.error) {
+			console.error("API error:", data.error);
+			return 0
+		}
 		return data.input_tokens;
-
 	} catch (error) {
 		console.error("Error counting tokens via API:", error);
 		return 0
@@ -446,12 +463,12 @@ class TokenStorageManager {
 
 	async getUploadedFileTokens(orgId, file, estimateOnly = false, uploaderClaudeAI_API = null) {
 		if (await this.filesTokenCache.has(`${orgId}:${file.file_uuid}`)) {
-			console.log("Using cached amount")
+			debugLog("Using cached amount for file:", file.file_uuid, "which is", await this.filesTokenCache.get(`${orgId}:${file.file_uuid}`));
 			return await this.filesTokenCache.get(`${orgId}:${file.file_uuid}`);
 		} else {
 			if ((await browser.storage.local.get('apiKey'))?.apiKey && !estimateOnly) {
 				try {
-					console.log("Using api...")
+					debugLog("Using api...")
 					let filename = ""
 					let fileurl = ""
 					filename = file.file_name
@@ -463,15 +480,18 @@ class TokenStorageManager {
 
 					let fileTokens = await countTokensViaAPI([], [], { "url": fileurl, "filename": filename, "uploaderAPI": uploaderClaudeAI_API })
 					if (fileTokens === 0) {
+						debugLog("Falling back to estimate...")
 						return this.getUploadedFileTokens(orgId, file, true)
 					}
 					await this.filesTokenCache.set(`${orgId}:${file.file_uuid}`, fileTokens)
 					return fileTokens
 				} catch (error) {
 					console.error("Error fetching file tokens:", error)
+					debugLog("Falling back to estimate...")
+					return this.getUploadedFileTokens(orgId, file, true)
 				}
 			} else {
-				console.log("Falling back to estimate...")
+				debugLog("Using estimate...")
 				if (file.file_kind === "image") {
 					const width = file.preview_asset.image_width
 					const height = file.preview_asset.image_width
@@ -523,7 +543,7 @@ class ClaudeAPI {
 	// API methods
 	async getUploadedFileAsBase64(url) {
 		try {
-			console.log(`Starting file download from: https://claude.ai${url}`);
+			debugLog(`Starting file download from: https://claude.ai${url}`);
 			await this.ensureSessionKey();
 
 			const response = await fetch(`https://claude.ai${url}`, {
@@ -537,15 +557,12 @@ class ClaudeAPI {
 				return null;
 			}
 
-			console.log("Getting blob...");
 			const blob = await response.blob();
-			console.log('Blob received, size:', blob.size, 'type:', blob.type);
-
 			return new Promise((resolve) => {
 				const reader = new FileReader();
 				reader.onloadend = () => {
 					const base64Data = reader.result.split(',')[1];
-					console.log('Base64 length:', base64Data.length);
+					debugLog('Base64 length:', base64Data.length);
 					resolve({
 						data: base64Data,
 						media_type: blob.type
@@ -901,6 +918,11 @@ async function handleMessageFromContent(message, sender) {
 				return await browser.storage.local.set({ previousVersion: message.version });
 			case 'getCaps':
 				return await tokenStorageManager.getCaps(orgId);
+			case 'getAPIKey':
+				return (await browser.storage.local.get('apiKey'))?.apiKey;
+			case 'setAPIKey':
+				const { newKey } = message
+				return await checkAndSetAPIKey(newKey);
 		}
 	})();
 	debugLog("📤 Sending response:", response);
