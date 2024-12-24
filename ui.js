@@ -375,8 +375,8 @@
 		const closeButton = document.createElement('button');
 		closeButton.style.cssText = `
 			position: absolute;
-			top: 8px;
-			right: 8px;
+			top: 0px;
+			right: 6px;
 			background: none;
 			border: none;
 			color: #3b82f6;
@@ -387,8 +387,25 @@
 		closeButton.addEventListener('click', () => {
 			notificationCard.remove();
 		})
+		let patchNotesLink = undefined;
+		if (versionInfo.previousVersion) {
+			patchNotesLink = document.createElement('a');
+			patchNotesLink.href = 'https://github.com/lugia19/Claude-Usage-Extension/releases';
+			patchNotesLink.target = '_blank';
+			patchNotesLink.style.cssText = `
+				color: #3b82f6;
+				text-decoration: underline;
+				cursor: pointer;
+				display: block;
+				margin-bottom: 10px;
+				font-size: 12px;
+			`;
+			patchNotesLink.textContent = 'View patch notes';
+		}
+
 
 		notificationCard.appendChild(message);
+		if (patchNotesLink) notificationCard.appendChild(patchNotesLink);
 		notificationCard.appendChild(kofiButton);
 		notificationCard.appendChild(closeButton);
 
