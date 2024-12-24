@@ -856,12 +856,24 @@
 	//#endregion
 
 	//#region Event Handlers
-	function pollForModelChange() {
+	//This polls for model changes as well as running out of messages
+	function pollForUIUpdates() {
 		setInterval(async () => {
 			const newModel = await getCurrentModel();
 			const isHomePage = getConversationId() === null;
 			const newConversation = getConversationId();
-			// Check for model or conversation change
+
+			// Check for message limit element
+			const messageLimitElement = document.querySelector('a[href*="8325612-does-claude-pro-have-any-usage-limits"]');
+			if (messageLimitElement) {
+				const limitTextElement = messageLimitElement.closest('.text-text-400');
+				if (limitTextElement && limitTextElement.textContent.includes('messages remaining')) {
+					debugLog("We've reached the limit for the current model. Sending reset data to background for model", newModel);
+					await sendBackgroundMessage({ type: 'resetHit', model: newModel });
+				}
+			}
+
+			// Existing checks
 			if (currentConversation !== newConversation && !isHomePage) {
 				debugLog(`Conversation changed from ${currentConversation} to ${newConversation}`);
 				await updateProgressBar(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
@@ -955,7 +967,7 @@
 		currentlyDisplayedModel = await getCurrentModel();
 
 		await initUI();
-		pollForModelChange();
+		pollForUIUpdates();
 
 		await updateProgressBar(await sendBackgroundMessage({ type: 'requestData' }));
 		await sendBackgroundMessage({ type: 'initOrg' });
