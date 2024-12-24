@@ -203,10 +203,14 @@ class TokenStorageManager {
 	constructor() {
 		this.syncInterval = 1; // 1m
 		this.isSyncingFirebase = false;
+		this.isSyncingResetTimes = false;
 		this.storageLock = false;
 		this.orgIds = undefined;
 		this.subscriptionTiers = new StoredMap("subscriptionTiers")
 		this.filesTokenCache = new StoredMap("fileTokens")
+		this.resetsHit = new StoredMap("resetsHit");
+
+
 		const nextAlarm = new Date();
 		nextAlarm.setHours(nextAlarm.getHours() + 1, 1, 0, 0);
 
@@ -216,12 +220,19 @@ class TokenStorageManager {
 		});
 
 		browser.alarms.create('firebaseSync', { periodInMinutes: this.syncInterval });
+		browser.alarms.create('resetTimesSync', { periodInMinutes: this.syncInterval });
+		//browser.alarms.create('resetTimesSync', { periodInMinutes: 10 });
+
 		//debugLog("Alarm created, syncing every", this.syncInterval, "minutes");
 		browser.alarms.onAlarm.addListener(async (alarm) => {
 			//debugLog("Alarm triggered:", alarm);
 			if (alarm.name === 'firebaseSync') {
 				await this.syncWithFirebase();
 				await updateAllTabs();
+			}
+
+			if (alarm.name === 'resetTimesSync') {
+				await this.syncResetTimes();
 			}
 
 			if (alarm.name === 'checkExpiredData') {
@@ -379,7 +390,6 @@ class TokenStorageManager {
 			//await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 1000)	//5 seconds (for testing only)
 			await this.subscriptionTiers.set(orgId, subscriptionTier, 1 * 60 * 60 * 1000)	//1 hour
 		}
-		debugLog("Returning caps:", configManager.config.MODEL_CAPS[subscriptionTier])
 		return configManager.config.MODEL_CAPS[subscriptionTier]
 	}
 
@@ -503,6 +513,77 @@ class TokenStorageManager {
 		}
 		return 0;
 	}
+
+	async addReset(orgId, model) {
+		const modelData = await this.getModelData(orgId, model);
+		if (!modelData) return;
+
+		const key = `${orgId}:${modelData.resetTimestamp}`;
+
+		// Only add if not already present
+		if (!(await this.resetsHit.has(key))) {
+			await this.resetsHit.set(key, {
+				total: modelData.total,
+				model: model,
+				timestamp: modelData.resetTimestamp
+			});
+		}
+	}
+
+	async syncResetTimes() {
+		if (this.isSyncingResetTimes) {
+			debugLog("Reset times sync already in progress, skipping");
+			return;
+		}
+
+		this.isSyncingResetTimes = true;
+		debugLog("=== RESET TIMES SYNC STARTING ===");
+
+		try {
+			// Group all entries by orgId
+			const groupedResets = {};
+			for (const [key, value] of await this.resetsHit.entries()) {
+				const orgId = key.split(':')[0];
+				if (!groupedResets[orgId]) {
+					groupedResets[orgId] = {};
+				}
+				groupedResets[orgId][key] = value;
+			}
+
+			// Sync each orgId's data to Firebase
+			for (const [orgId, resets] of Object.entries(groupedResets)) {
+				// Transform the data to use model:timestamp as keys
+				const transformedResets = {};
+				for (const [_, resetData] of Object.entries(resets)) {
+					const newKey = `${resetData.model}:${resetData.timestamp}`;
+					transformedResets[newKey] = {
+						total: resetData.total,
+						timestamp: resetData.timestamp,
+						model: resetData.model
+					};
+				}
+
+				const url = `${configManager.config.FIREBASE_BASE_URL}/users/${orgId}/resets.json`;
+				debugLog("Writing reset times for orgId:", orgId);
+
+				const writeResponse = await fetch(url, {
+					method: 'PUT',
+					body: JSON.stringify(transformedResets)
+				});
+				if (!writeResponse.ok) {
+					throw new Error(`Write failed! status: ${writeResponse.status}`);
+				}
+			}
+			debugLog("=== RESET TIMES SYNC COMPLETED SUCCESSFULLY ===");
+		} catch (error) {
+			console.error('=== RESET TIMES SYNC FAILED ===');
+			console.error('Error details:', error);
+		} finally {
+			this.isSyncingResetTimes = false;
+		}
+	}
+
+
 }
 
 // Claude API interface
@@ -832,6 +913,27 @@ class StoredMap {
 			[this.storageKey]: Array.from(this.map)
 		});
 	}
+
+	async entries() {
+		await this.ensureInitialized();
+		const entries = [];
+
+		for (const [key, storedValue] of this.map.entries()) {
+			// Skip expired entries
+			if (storedValue.expires && Date.now() > storedValue.expires) {
+				await this.delete(key);
+				continue;
+			}
+
+			// Add the entry with the actual value for timed entries
+			entries.push([
+				key,
+				storedValue.expires ? storedValue.value : storedValue
+			]);
+		}
+
+		return entries;
+	}
 }
 
 //#endregion
@@ -923,6 +1025,10 @@ async function handleMessageFromContent(message, sender) {
 			case 'setAPIKey':
 				const { newKey } = message
 				return await checkAndSetAPIKey(newKey);
+			case 'resetHit':
+				const { model } = message;
+				await tokenStorageManager.addReset(orgId, model);
+				return true;
 		}
 	})();
 	debugLog("📤 Sending response:", response);
