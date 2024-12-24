@@ -220,8 +220,7 @@ class TokenStorageManager {
 		});
 
 		browser.alarms.create('firebaseSync', { periodInMinutes: this.syncInterval });
-		browser.alarms.create('resetTimesSync', { periodInMinutes: this.syncInterval });
-		//browser.alarms.create('resetTimesSync', { periodInMinutes: 10 });
+		browser.alarms.create('resetTimesSync', { periodInMinutes: 10 });
 
 		//debugLog("Alarm created, syncing every", this.syncInterval, "minutes");
 		browser.alarms.onAlarm.addListener(async (alarm) => {
@@ -515,6 +514,7 @@ class TokenStorageManager {
 	}
 
 	async addReset(orgId, model) {
+		await sleep(1000); //We want to ensure we get the latest data, which can take a second - so we wait.
 		const modelData = await this.getModelData(orgId, model);
 		if (!modelData) return;
 
@@ -1027,7 +1027,9 @@ async function handleMessageFromContent(message, sender) {
 				return await checkAndSetAPIKey(newKey);
 			case 'resetHit':
 				const { model } = message;
-				await tokenStorageManager.addReset(orgId, model);
+				tokenStorageManager.addReset(orgId, model).catch(err => {
+					console.error('Adding reset failed:', err);
+				});
 				return true;
 		}
 	})();
