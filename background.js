@@ -382,10 +382,11 @@ class TokenStorageManager {
 		return merged;
 	}
 
-	async getCaps(orgId) {
+	async getCaps(orgId, cookieStoreId = "0") {
 		let subscriptionTier = await this.subscriptionTiers.get(orgId)
 		if (!subscriptionTier) {
-			subscriptionTier = await new ClaudeAPI().getSubscriptionTier(orgId)
+			const api = await ClaudeAPI.create(cookieStoreId);
+			subscriptionTier = await api.getSubscriptionTier(orgId)
 			//await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 1000)	//5 seconds (for testing only)
 			await this.subscriptionTiers.set(orgId, subscriptionTier, 1 * 60 * 60 * 1000)	//1 hour
 		}
@@ -588,35 +589,35 @@ class TokenStorageManager {
 
 // Claude API interface
 class ClaudeAPI {
-	constructor(sessionKey) {
+	static async create(cookieStoreId = "0") {
+		const api = new ClaudeAPI();
+		api.sessionKey = await api.getSessionKey(cookieStoreId)
+		return api;
+	}
+
+	constructor() {
 		this.baseUrl = 'https://claude.ai/api';
-		this.sessionKey = sessionKey;
+		this.sessionKey = undefined;
 	}
 
 	//I love jank...
-	async ensureSessionKey() {
-		if (!this.sessionKey) {
-			const cookie = await browser.cookies.get({
-				url: "https://claude.ai",
-				name: "sessionKey"
-			});
-			this.sessionKey = cookie?.value;
-		}
-		return this.sessionKey;
+	async getSessionKey(cookieStoreId = "0") {
+		const cookie = await browser.cookies.get({
+			url: "https://claude.ai",
+			name: "sessionKey",
+			storeId: cookieStoreId
+		});
+		return cookie?.value;
 	}
 
-	// Core request method with auth
-	async request(endpoint, options = {}) {
-		await this.ensureSessionKey();
-		const headers = {
-			'Cookie': `sessionKey=${this.sessionKey}`,
-			'Content-Type': 'application/json',
-			...options.headers
-		};
-
+	// Core GET method with auth
+	async getRequest(endpoint) {
 		const response = await fetch(`${this.baseUrl}${endpoint}`, {
-			...options,
-			headers
+			headers: {
+				'X-Overwrite-SessionKey': this.sessionKey,	//This is only relevant on firefox, to handle different cookie stores
+				'Content-Type': 'application/json'
+			},
+			method: 'GET'
 		});
 		return response.json();
 	}
@@ -625,11 +626,9 @@ class ClaudeAPI {
 	async getUploadedFileAsBase64(url) {
 		try {
 			debugLog(`Starting file download from: https://claude.ai${url}`);
-			await this.ensureSessionKey();
-
 			const response = await fetch(`https://claude.ai${url}`, {
 				headers: {
-					'Cookie': `sessionKey=${this.sessionKey}`
+					'X-Overwrite-SessionKey': this.sessionKey
 				}
 			});
 
@@ -661,7 +660,7 @@ class ClaudeAPI {
 	async getSyncText(orgId, syncURI, syncType) {
 		if (!syncURI) return "";
 		if (syncType != "gdrive") return ""
-		let syncText = (await this.request(`/organizations/${orgId}/sync/mcp/drive/document/${syncURI}`))?.text
+		let syncText = (await this.getRequest(`/organizations/${orgId}/sync/mcp/drive/document/${syncURI}`))?.text
 		debugLog("Sync text:", syncText);
 		return syncText || "";
 	}
@@ -669,20 +668,20 @@ class ClaudeAPI {
 	async getProjectTokens(orgId, projectId) {
 		//These are all text. No point in employing caching as it'll only take up one request anyway.
 		let project_text = "";
-		const projectData = await this.request(`/organizations/${orgId}/projects/${projectId}`);
+		const projectData = await this.getRequest(`/organizations/${orgId}/projects/${projectId}`);
 
 		if (projectData.prompt_template) {
 			project_text += projectData.prompt_template;
 		}
 
-		const docsData = await this.request(`/organizations/${orgId}/projects/${projectId}/docs`);
+		const docsData = await this.getRequest(`/organizations/${orgId}/projects/${projectId}/docs`);
 		for (const doc of docsData) {
 			debugLog("Doc:", doc.uuid);
 			project_text += doc.content;
 			debugLog("Doc tokens:", await getTextTokens(doc.content, true));
 		}
 
-		const syncData = await this.request(`/organizations/${orgId}/projects/${projectId}/syncs`);
+		const syncData = await this.getRequest(`/organizations/${orgId}/projects/${projectId}/syncs`);
 		for (const sync of syncData) {
 			debugLog("Sync:", sync.uuid);
 			const syncText = await this.getSyncText(orgId, sync.config?.uri, sync.type);
@@ -696,7 +695,7 @@ class ClaudeAPI {
 	}
 
 	async getConversation(orgId, conversationId, full_tree = false) {
-		return this.request(
+		return this.getRequest(
 			`/organizations/${orgId}/chat_conversations/${conversationId}?tree=${full_tree}&rendering_mode=messages&render_all_tools=true`
 		);
 	}
@@ -706,6 +705,7 @@ class ClaudeAPI {
 		// Count messages by sender
 		let humanMessagesCount = 0;
 		let assistantMessagesCount = 0;
+
 		const lastMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
 
 		for (const message of conversationData.chat_messages) {
@@ -803,7 +803,7 @@ class ClaudeAPI {
 	}
 
 	async getProfileTokens() {
-		const profileData = await this.request('/account_profile');
+		const profileData = await this.getRequest('/account_profile');
 		let totalTokens = 0;
 		if (profileData.conversation_preferences) {
 			totalTokens = await getTextTokens(profileData.conversation_preferences) + 800
@@ -814,7 +814,7 @@ class ClaudeAPI {
 	}
 
 	async getSubscriptionTier(orgId) {
-		const statsigData = await this.request(`/bootstrap/${orgId}/statsig`);
+		const statsigData = await this.getRequest(`/bootstrap/${orgId}/statsig`);
 
 		if (statsigData.user?.custom?.isRaven) {
 			return "team"
@@ -826,7 +826,7 @@ class ClaudeAPI {
 	}
 }
 
-async function getActiveOrgId(tab) {
+async function requestActiveOrgId(tab) {
 	if (typeof tab !== "number") {
 		tab = tab.id
 	}
@@ -945,7 +945,7 @@ class StoredMap {
 async function updateAllTabs(currentLength = undefined, lengthTabId = undefined) {
 	const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 	for (const tab of tabs) {
-		const orgId = await getActiveOrgId(tab);
+		const orgId = await requestActiveOrgId(tab);
 		const tabData = {
 			modelData: {}
 		};
@@ -973,8 +973,7 @@ async function handleMessageFromContent(message, sender) {
 	debugLog("📥 Received message:", message);
 	//const { sessionKey, orgId } = message;
 	const { orgId } = message;
-	const api = new ClaudeAPI();
-
+	const api = await ClaudeAPI.create(sender.tab?.cookieStoreId);
 	const response = await (async () => {
 		switch (message.type) {
 			case 'getCollapsedState':
@@ -1056,13 +1055,7 @@ function addExtensionListeners() {
 //#region Network handling
 async function processResponse(orgId, conversationId, isNewMessage, details) {
 	const tabId = details.tabId;
-	const sessionKey = details.responseHeaders
-		.find(header => header.name.toLowerCase() === 'cookie')
-		?.value.split('; ')
-		.find(cookie => cookie.startsWith('sessionKey='))
-		?.split('=')[1];
-
-	const api = new ClaudeAPI(sessionKey);
+	const api = await ClaudeAPI.create(details.cookieStoreId);
 
 	const conversationTokens = await api.getConversationTokens(orgId, conversationId);
 	if (conversationTokens === undefined) {
@@ -1122,6 +1115,40 @@ async function processResponse(orgId, conversationId, isNewMessage, details) {
 
 // Listen for message sending
 function addWebRequestListeners() {
+	// Only relevant for firefox - to support different accounts in different containers
+	if (browser.webRequest?.onBeforeSendHeaders?.addListener) {
+		browser.webRequest.onBeforeSendHeaders.addListener(
+			(details) => {
+				const overwriteKey = details.requestHeaders.find(h =>
+					h.name === 'X-Overwrite-SessionKey'
+				)?.value;
+
+				if (overwriteKey) {
+					// Find existing cookie header
+					const cookieHeader = details.requestHeaders.find(h => h.name === 'Cookie');
+					if (cookieHeader) {
+						// Parse existing cookies
+						const cookies = cookieHeader.value.split('; ')
+							.filter(c => !c.startsWith('sessionKey='));
+						// Add our new sessionKey
+						cookies.push(`sessionKey=${overwriteKey}`);
+						// Rebuild cookie header
+						cookieHeader.value = cookies.join('; ');
+					}
+
+					// Remove our custom header
+					details.requestHeaders = details.requestHeaders.filter(h =>
+						h.name !== 'X-Overwrite-SessionKey'
+					);
+				}
+				return { requestHeaders: details.requestHeaders };
+			},
+			{ urls: ["*://claude.ai/api/*"] },
+			["blocking", "requestHeaders"]
+		);
+	}
+
+
 	browser.webRequest.onBeforeRequest.addListener(
 		async (details) => {
 			if (details.method === "POST" &&
@@ -1144,8 +1171,9 @@ function addWebRequestListeners() {
 
 			if (details.method === "GET" && details.url.includes("/settings/billing")) {
 				debugLog("Hit the billing page, let's make sure we get the updated subscription tier in case it was changed...")
-				const orgId = await getActiveOrgId(details.tabId);
-				let subscriptionTier = await new ClaudeAPI().getSubscriptionTier(orgId)
+				const orgId = await requestActiveOrgId(details.tabId);
+				const api = await ClaudeAPI.create(details.cookieStoreId);
+				let subscriptionTier = await api.getSubscriptionTier(orgId)
 				await tokenStorageManager.subscriptionTiers.set(orgId, subscriptionTier, 6 * 60 * 60 * 1000)
 			}
 		},
@@ -1177,7 +1205,6 @@ function addWebRequestListeners() {
 		{ urls: ["*://claude.ai/*"] },
 		["responseHeaders"]
 	);
-
 }
 //#endregion
 
