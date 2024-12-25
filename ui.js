@@ -821,10 +821,8 @@
 			section.tooltip.textContent = `${modelTotal.toLocaleString()} / ${maxTokens.toLocaleString()} tokens (${percentage.toFixed(1)}%)`;
 			section.messageCounter.textContent = `Messages: ${messageCount}`;
 
-			const resetTime = modelInfo.resetTimestamp ?
-				formatTimeRemaining(new Date(modelInfo.resetTimestamp)) :
-				'Reset in: Not set';
-			section.resetTimeDisplay.textContent = resetTime;
+			section.resetTimeDisplay.resetTime = modelInfo.resetTimestamp;
+
 			section.setEnabled(modelCaps[modelName] != 0);
 		});
 	}
@@ -898,6 +896,11 @@
 				if (section) {
 					const isActiveModel = modelName === currentlyDisplayedModel;
 					section.setActive(isActiveModel, isHomePage);
+
+					const resetTime = section.resetTimeDisplay.resetTime ?
+						formatTimeRemaining(new Date(section.resetTimeDisplay.resetTime)) :
+						'Reset in: Not set';
+					section.resetTimeDisplay.textContent = resetTime;
 				}
 			});
 
@@ -910,7 +913,6 @@
 				const lengthDisplay = document.getElementById('conversation-token-count');
 				lengthDisplay.textContent = `Current cost: N/A tokens`;
 			}
-
 		}, config.UI_UPDATE_INTERVAL_MS);
 	}
 
