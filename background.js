@@ -1114,9 +1114,13 @@ async function processResponse(orgId, conversationId, isNewMessage, details) {
 
 
 // Listen for message sending
-function addWebRequestListeners() {
+async function addWebRequestListeners() {
 	// Only relevant for firefox - to support different accounts in different containers
-	if (browser.webRequest?.onBeforeSendHeaders?.addListener) {
+	const stores = await browser.cookies.getAllCookieStores();
+	const isFirefoxContainers = stores[0].id === "firefox-default";
+
+	if (isFirefoxContainers) {
+		console.log("We're in firefox with containers, registering blocking listener...")
 		browser.webRequest.onBeforeSendHeaders.addListener(
 			(details) => {
 				const overwriteKey = details.requestHeaders.find(h =>
@@ -1218,8 +1222,8 @@ let processingQueue = Promise.resolve();
 
 configManager.initialize().then(() => {
 	tokenStorageManager = new TokenStorageManager();
-	tokenStorageManager.loadOrgIds().then(() => {
-		addWebRequestListeners();
+	tokenStorageManager.loadOrgIds().then(async () => {
+		await addWebRequestListeners();
 		addExtensionListeners();
 	})
 
