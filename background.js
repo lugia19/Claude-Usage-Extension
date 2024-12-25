@@ -1216,24 +1216,15 @@ async function addFirefoxContainerFixListener() {
 }
 
 //#endregion
-
-
-const configManager = new Config();
-const pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
-const conversationLengthCache = new Map();
-let tokenStorageManager = null;
-let processingQueue = Promise.resolve();
-
-// Add error handling
-configManager.initialize().catch(err => {
-	console.error('Config initialization failed:', err);
-}).then(() => {
-	tokenStorageManager = new TokenStorageManager();
-	return tokenStorageManager.loadOrgIds().catch(err => {
-		console.error('TokenStorage initialization failed:', err);
-	});
-})
-
 addWebRequestListeners();
 addExtensionListeners();
 addFirefoxContainerFixListener();
+
+const configManager = new Config();
+configManager.initialize();
+const pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
+const conversationLengthCache = new Map();
+let tokenStorageManager = new TokenStorageManager();
+tokenStorageManager.loadOrgIds()
+let processingQueue = Promise.resolve();
+
