@@ -1120,7 +1120,7 @@ async function addWebRequestListeners() {
 	const isFirefoxContainers = stores[0].id === "firefox-default";
 
 	if (isFirefoxContainers) {
-		console.log("We're in firefox with containers, registering blocking listener...")
+		debugLog("We're in firefox with containers, registering blocking listener...")
 		browser.webRequest.onBeforeSendHeaders.addListener(
 			(details) => {
 				const overwriteKey = details.requestHeaders.find(h =>
