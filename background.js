@@ -1114,8 +1114,69 @@ async function processResponse(orgId, conversationId, isNewMessage, details) {
 
 
 // Listen for message sending
-async function addWebRequestListeners() {
-	// Only relevant for firefox - to support different accounts in different containers
+function addWebRequestListeners() {
+	browser.webRequest.onBeforeRequest.addListener(
+		async (details) => {
+			if (details.method === "POST" &&
+				(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
+				debugLog("Request sent - URL:", details.url);
+				// Extract IDs from URL - we can refine these regexes
+				const urlParts = details.url.split('/');
+				const orgId = urlParts[urlParts.indexOf('organizations') + 1];
+				await tokenStorageManager.addOrgId(orgId);
+				const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1];
+
+				const key = `${orgId}:${conversationId}`;
+				debugLog(`Message sent - Key: ${key}`);
+				// Store pending response with both orgId and tabId
+				await pendingResponses.set(key, {
+					orgId: orgId,
+					conversationId: conversationId,
+					tabId: details.tabId
+				});
+			}
+
+			if (details.method === "GET" && details.url.includes("/settings/billing")) {
+				debugLog("Hit the billing page, let's make sure we get the updated subscription tier in case it was changed...")
+				const orgId = await requestActiveOrgId(details.tabId);
+				const api = await ClaudeAPI.create(details.cookieStoreId);
+				let subscriptionTier = await api.getSubscriptionTier(orgId)
+				await tokenStorageManager.subscriptionTiers.set(orgId, subscriptionTier, 6 * 60 * 60 * 1000)
+			}
+		},
+		{ urls: ["*://claude.ai/*"] }
+	);
+
+	// Listen for responses
+	browser.webRequest.onCompleted.addListener(
+		async (details) => {
+			if (details.method === "GET" &&
+				details.url.includes("/chat_conversations/") &&
+				details.url.includes("tree=True") &&
+				details.url.includes("render_all_tools=true")) {
+				debugLog("Response recieved - URL:", details.url);
+				processingQueue = processingQueue.then(async () => {
+					const urlParts = details.url.split('/');
+					const orgId = urlParts[urlParts.indexOf('organizations') + 1];
+					await tokenStorageManager.addOrgId(orgId);
+					const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
+
+					const key = `${orgId}:${conversationId}`;
+					const result = await processResponse(orgId, conversationId, await pendingResponses.has(key), details);
+
+					if (result && await pendingResponses.has(key)) {
+						await pendingResponses.delete(key);
+					}
+				});
+			}
+		},
+		{ urls: ["*://claude.ai/*"] },
+		["responseHeaders"]
+	);
+}
+
+// Only relevant for firefox - to support different accounts in different containers
+async function addFirefoxContainerFixListener() {
 	const stores = await browser.cookies.getAllCookieStores();
 	const isFirefoxContainers = stores[0].id === "firefox-default";
 
@@ -1152,65 +1213,8 @@ async function addWebRequestListeners() {
 			["blocking", "requestHeaders"]
 		);
 	}
-
-
-	browser.webRequest.onBeforeRequest.addListener(
-		async (details) => {
-			if (details.method === "POST" &&
-				(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
-				// Extract IDs from URL - we can refine these regexes
-				const urlParts = details.url.split('/');
-				const orgId = urlParts[urlParts.indexOf('organizations') + 1];
-				await tokenStorageManager.addOrgId(orgId);
-				const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1];
-
-				const key = `${orgId}:${conversationId}`;
-				debugLog(`Message sent - Key: ${key}`);
-				// Store pending response with both orgId and tabId
-				await pendingResponses.set(key, {
-					orgId: orgId,
-					conversationId: conversationId,
-					tabId: details.tabId
-				});
-			}
-
-			if (details.method === "GET" && details.url.includes("/settings/billing")) {
-				debugLog("Hit the billing page, let's make sure we get the updated subscription tier in case it was changed...")
-				const orgId = await requestActiveOrgId(details.tabId);
-				const api = await ClaudeAPI.create(details.cookieStoreId);
-				let subscriptionTier = await api.getSubscriptionTier(orgId)
-				await tokenStorageManager.subscriptionTiers.set(orgId, subscriptionTier, 6 * 60 * 60 * 1000)
-			}
-		},
-		{ urls: ["*://claude.ai/*"] }
-	);
-
-	// Listen for responses
-	browser.webRequest.onCompleted.addListener(
-		async (details) => {
-			if (details.method === "GET" &&
-				details.url.includes("/chat_conversations/") &&
-				details.url.includes("tree=True") &&
-				details.url.includes("render_all_tools=true")) {
-				processingQueue = processingQueue.then(async () => {
-					const urlParts = details.url.split('/');
-					const orgId = urlParts[urlParts.indexOf('organizations') + 1];
-					await tokenStorageManager.addOrgId(orgId);
-					const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
-
-					const key = `${orgId}:${conversationId}`;
-					const result = await processResponse(orgId, conversationId, await pendingResponses.has(key), details);
-
-					if (result && await pendingResponses.has(key)) {
-						await pendingResponses.delete(key);
-					}
-				});
-			}
-		},
-		{ urls: ["*://claude.ai/*"] },
-		["responseHeaders"]
-	);
 }
+
 //#endregion
 
 
@@ -1220,11 +1224,16 @@ const conversationLengthCache = new Map();
 let tokenStorageManager = null;
 let processingQueue = Promise.resolve();
 
-configManager.initialize().then(() => {
+// Add error handling
+configManager.initialize().catch(err => {
+	console.error('Config initialization failed:', err);
+}).then(() => {
 	tokenStorageManager = new TokenStorageManager();
-	tokenStorageManager.loadOrgIds().then(async () => {
-		await addWebRequestListeners();
-		addExtensionListeners();
-	})
-
+	return tokenStorageManager.loadOrgIds().catch(err => {
+		console.error('TokenStorage initialization failed:', err);
+	});
 })
+
+addWebRequestListeners();
+addExtensionListeners();
+addFirefoxContainerFixListener();
