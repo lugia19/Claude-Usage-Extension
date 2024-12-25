@@ -382,10 +382,9 @@ class TokenStorageManager {
 		return merged;
 	}
 
-	async getCaps(orgId, cookieStoreId = "0") {
+	async getCaps(orgId, api) {
 		let subscriptionTier = await this.subscriptionTiers.get(orgId)
 		if (!subscriptionTier) {
-			const api = await ClaudeAPI.create(cookieStoreId);
 			subscriptionTier = await api.getSubscriptionTier(orgId)
 			//await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 1000)	//5 seconds (for testing only)
 			await this.subscriptionTiers.set(orgId, subscriptionTier, 1 * 60 * 60 * 1000)	//1 hour
@@ -591,6 +590,7 @@ class TokenStorageManager {
 class ClaudeAPI {
 	static async create(cookieStoreId = "0") {
 		const api = new ClaudeAPI();
+		debugLog("Creating API from cookie store:", cookieStoreId);
 		api.sessionKey = await api.getSessionKey(cookieStoreId)
 		return api;
 	}
@@ -815,7 +815,7 @@ class ClaudeAPI {
 
 	async getSubscriptionTier(orgId) {
 		const statsigData = await this.getRequest(`/bootstrap/${orgId}/statsig`);
-
+		console.log("Got statsig data:", statsigData);
 		if (statsigData.user?.custom?.isRaven) {
 			return "team"
 		}
@@ -1018,7 +1018,7 @@ async function handleMessageFromContent(message, sender) {
 			case 'setCurrentVersion':
 				return await browser.storage.local.set({ previousVersion: message.version });
 			case 'getCaps':
-				return await tokenStorageManager.getCaps(orgId);
+				return await tokenStorageManager.getCaps(orgId, api);
 			case 'getAPIKey':
 				return (await browser.storage.local.get('apiKey'))?.apiKey;
 			case 'setAPIKey':
@@ -1124,6 +1124,7 @@ function addWebRequestListeners() {
 				)?.value;
 
 				if (overwriteKey) {
+					debugLog("Overwriting session key.");
 					// Find existing cookie header
 					const cookieHeader = details.requestHeaders.find(h => h.name === 'Cookie');
 					if (cookieHeader) {
