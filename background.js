@@ -96,7 +96,9 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 		await updateAllTabs();
 	}
 });
+//#endregion
 
+//#region Alarms
 const nextAlarm = new Date();
 nextAlarm.setHours(nextAlarm.getHours() + 1, 1, 0, 0);
 debugLog("Creating firebase alarms...");
@@ -108,6 +110,12 @@ browser.alarms.create('checkExpiredData', {
 browser.alarms.create('firebaseSync', { periodInMinutes: 5 });
 browser.alarms.create('resetTimesSync', { periodInMinutes: 10 });
 debugLog("Firebase alarms created.");
+
+debugLog("Initializing config refresh...");
+browser.alarms.create('refreshConfig', {
+	periodInMinutes: 15
+});
+debugLog("Config refresh alarm created.");
 //#endregion
 
 
@@ -289,7 +297,6 @@ async function countTokensViaAPI(userMessages = [], assistantMessages = [], file
 class Config {
 	static instance = null;
 	static CONFIG_URL = 'https://raw.githubusercontent.com/lugia19/Claude-Usage-Extension/refs/heads/main/constants.json';
-	static REFRESH_INTERVAL = 10; // minutes
 
 	constructor() {
 		if (Config.instance) {
@@ -305,10 +312,6 @@ class Config {
 		localConfig.MODELS = Object.keys(localConfig.MODEL_CAPS.pro).filter(key => key !== 'default');
 		this.defaultConfig = localConfig;
 		this.config = await this.getFreshConfig();
-		debugLog("Initializing config refresh...");
-		browser.alarms.create('refreshConfig', {
-			periodInMinutes: Config.REFRESH_INTERVAL
-		});
 	}
 
 	async getFreshConfig() {
