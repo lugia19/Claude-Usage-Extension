@@ -862,6 +862,7 @@
 	//This polls for model changes as well as running out of messages
 	function pollForUIUpdates() {
 		setInterval(async () => {
+			let updateTriggered = false
 			const newModel = await getCurrentModel();
 			const isHomePage = getConversationId() === null;
 			const newConversation = getConversationId();
@@ -876,15 +877,19 @@
 				}
 			}
 
-			// Existing checks
+			// Have we changed conversation?
 			if (currentConversation !== newConversation && !isHomePage) {
 				debugLog(`Conversation changed from ${currentConversation} to ${newConversation}`);
 				await updateProgressBar(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
 				currentConversation = newConversation;
+				updateTriggered = true;
 			}
 
-			if (newModel !== currentlyDisplayedModel) {
+			//Have we changed model?
+			if (newModel !== currentlyDisplayedModel && !updateTriggered) {
 				debugLog(`Model changed from ${currentlyDisplayedModel} to ${newModel}`);
+				await updateProgressBar(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
+				updateTriggered = true
 			}
 
 			debugLog("Updating current model...")
