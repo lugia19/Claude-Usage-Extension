@@ -96,6 +96,18 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 		await updateAllTabs();
 	}
 });
+
+const nextAlarm = new Date();
+nextAlarm.setHours(nextAlarm.getHours() + 1, 1, 0, 0);
+debugLog("Creating firebase alarms...");
+browser.alarms.create('checkExpiredData', {
+	when: nextAlarm.getTime(),
+	periodInMinutes: 60
+});
+
+browser.alarms.create('firebaseSync', { periodInMinutes: 5 });
+browser.alarms.create('resetTimesSync', { periodInMinutes: 10 });
+debugLog("Firebase alarms created.");
 //#endregion
 
 
@@ -113,6 +125,7 @@ function debugLog(...args) {
 			if (!debugUntil || debugUntil <= now) {
 				return Promise.resolve();
 			}
+			console.log(...args);
 
 			const timestamp = new Date().toLocaleString('default', {
 				hour: '2-digit',
@@ -292,6 +305,7 @@ class Config {
 		localConfig.MODELS = Object.keys(localConfig.MODEL_CAPS.pro).filter(key => key !== 'default');
 		this.defaultConfig = localConfig;
 		this.config = await this.getFreshConfig();
+		debugLog("Initializing config refresh...");
 		browser.alarms.create('refreshConfig', {
 			periodInMinutes: Config.REFRESH_INTERVAL
 		});
@@ -328,19 +342,6 @@ class TokenStorageManager {
 		this.subscriptionTiers = new StoredMap("subscriptionTiers")
 		this.filesTokenCache = new StoredMap("fileTokens")
 		this.resetsHit = new StoredMap("resetsHit");
-
-		const nextAlarm = new Date();
-		nextAlarm.setHours(nextAlarm.getHours() + 1, 1, 0, 0);
-
-		browser.alarms.create('checkExpiredData', {
-			when: nextAlarm.getTime(),
-			periodInMinutes: 60
-		});
-
-		browser.alarms.create('firebaseSync', { periodInMinutes: 5 });
-		browser.alarms.create('resetTimesSync', { periodInMinutes: 10 });
-
-		//debugLog("Alarm created, syncing every", 5, "minutes");
 	}
 
 	async ensureOrgIds() {
@@ -913,7 +914,8 @@ class ClaudeAPI {
 
 	async getSubscriptionTier(orgId) {
 		const statsigData = await this.getRequest(`/bootstrap/${orgId}/statsig`);
-		debugLog("Got statsig data:", statsigData);
+		debugLog("User is Raven?", statsigData.user?.custom?.isRaven);
+		debugLog("User is Pro?", statsigData.user?.custom?.isPro);
 		if (statsigData.user?.custom?.isRaven) {
 			return "team"
 		}

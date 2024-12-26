@@ -11,6 +11,7 @@
 				if (!debugUntil || debugUntil <= now) {
 					return Promise.resolve();
 				}
+				console.log(...args);
 				const timestamp = new Date().toLocaleString('default', {
 					hour: '2-digit',
 					minute: '2-digit',
