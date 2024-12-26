@@ -2,10 +2,73 @@ import './lib/browser-polyfill.min.js';
 import './lib/o200k_base.js';
 
 const tokenizer = GPTTokenizer_o200k_base;
-
-
 const STORAGE_KEY = "claudeUsageTracker_v5"
 const DEBUG_MODE = false
+//#region Variable declarations
+let processingQueue = Promise.resolve();
+let pendingResponses;
+let conversationLengthCache;
+let tokenStorageManager;
+let configManager;
+//#endregion
+
+//#region Listener setup (I hate MV3 - listeners must be initialized here)
+//Extension-related listeners:
+browser.runtime.onMessage.addListener((message, sender) => {
+	debugLog("Background received message:", message);
+	return handleMessageFromContent(message, sender);
+});
+
+browser.action.onClicked.addListener(() => {
+	browser.tabs.create({
+		url: "https://ko-fi.com/lugia19"
+	});
+});
+
+//Webrequest-listeners
+browser.webRequest.onBeforeRequest.addListener(onBeforeRequestHandler,
+	{ urls: ["*://claude.ai/*"] }
+);
+
+browser.webRequest.onCompleted.addListener(
+	onCompletedHandler,
+	{ urls: ["*://claude.ai/*"] },
+	["responseHeaders"]
+);
+addFirefoxContainerFixListener();
+
+//Alarm listeners
+browser.alarms.onAlarm.addListener(async (alarm) => {
+	if (!configManager) return
+	if (alarm.name === 'refreshConfig') {
+		configManager.config = await configManager.getFreshConfig();
+	}
+});
+
+browser.alarms.onAlarm.addListener(async (alarm) => {
+	//debugLog("Alarm triggered:", alarm);
+	if (!tokenStorageManager) return;
+	await tokenStorageManager.ensureOrgIds();
+
+	if (alarm.name === 'firebaseSync') {
+		await tokenStorageManager.syncWithFirebase();
+		await updateAllTabs();
+	}
+
+	if (alarm.name === 'resetTimesSync') {
+		await tokenStorageManager.syncResetTimes();
+	}
+
+	if (alarm.name === 'checkExpiredData') {
+		for (const orgId of tokenStorageManager.orgIds) {
+			await tokenStorageManager.checkAndCleanExpiredData(orgId);
+		}
+		await updateAllTabs();
+	}
+});
+//#endregion
+
+
 
 //#region Utility functions
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -163,7 +226,9 @@ class Config {
 		localConfig.MODELS = Object.keys(localConfig.MODEL_CAPS.pro).filter(key => key !== 'default');
 		this.defaultConfig = localConfig;
 		this.config = await this.getFreshConfig();
-		this.setupRefresh();
+		browser.alarms.create('refreshConfig', {
+			periodInMinutes: Config.REFRESH_INTERVAL
+		});
 	}
 
 	async getFreshConfig() {
@@ -184,23 +249,12 @@ class Config {
 			return this.defaultConfig;
 		}
 	}
-
-	setupRefresh() {
-		browser.alarms.create('refreshConfig', {
-			periodInMinutes: Config.REFRESH_INTERVAL
-		});
-
-		browser.alarms.onAlarm.addListener(async (alarm) => {
-			if (alarm.name === 'refreshConfig') {
-				this.config = await this.getFreshConfig();
-			}
-		});
-	}
 }
 
 // Token storage manager
 class TokenStorageManager {
 	constructor() {
+		this.firebase_base_url = "https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app"
 		this.isSyncingFirebase = false;
 		this.isSyncingResetTimes = false;
 		this.storageLock = false;
@@ -208,7 +262,6 @@ class TokenStorageManager {
 		this.subscriptionTiers = new StoredMap("subscriptionTiers")
 		this.filesTokenCache = new StoredMap("fileTokens")
 		this.resetsHit = new StoredMap("resetsHit");
-
 
 		const nextAlarm = new Date();
 		nextAlarm.setHours(nextAlarm.getHours() + 1, 1, 0, 0);
@@ -219,33 +272,13 @@ class TokenStorageManager {
 		});
 
 		browser.alarms.create('firebaseSync', { periodInMinutes: 5 });
-		browser.alarms.create('resetTimesSync', { periodInMinutes: 15 });
+		browser.alarms.create('resetTimesSync', { periodInMinutes: 10 });
 
 		//debugLog("Alarm created, syncing every", 5, "minutes");
-		browser.alarms.onAlarm.addListener(async (alarm) => {
-			//debugLog("Alarm triggered:", alarm);
-			if (!this.orgIds) {
-				await this.loadOrgIds();
-			}
-			if (alarm.name === 'firebaseSync') {
-				await this.syncWithFirebase();
-				await updateAllTabs();
-			}
-
-			if (alarm.name === 'resetTimesSync') {
-				await this.syncResetTimes();
-			}
-
-			if (alarm.name === 'checkExpiredData') {
-				for (const orgId of this.orgIds) {
-					await this.#checkAndCleanExpiredData(orgId);
-				}
-				await updateAllTabs();
-			}
-		});
 	}
 
-	async loadOrgIds() {
+	async ensureOrgIds() {
+		if (this.orgIds) return
 		try {
 			const result = await browser.storage.local.get('orgIds');
 			this.orgIds = new Set(result.orgIds || []);
@@ -256,6 +289,7 @@ class TokenStorageManager {
 	}
 
 	async addOrgId(orgId) {
+		await this.ensureOrgIds();
 		this.orgIds.add(orgId);
 		await browser.storage.local.set({ 'orgIds': Array.from(this.orgIds) });
 	}
@@ -283,7 +317,7 @@ class TokenStorageManager {
 
 		this.isSyncingFirebase = true;
 		debugLog("=== FIREBASE SYNC STARTING ===");
-
+		await this.ensureOrgIds();
 		try {
 			for (const orgId of this.orgIds) {
 				// Get local data
@@ -291,7 +325,7 @@ class TokenStorageManager {
 				debugLog("Local models:", localModels);
 
 				// Get remote data
-				const url = `${configManager.config.FIREBASE_BASE_URL}/users/${orgId}/models.json`;
+				const url = `${this.firebase_base_url}/users/${orgId}/models.json`;
 				debugLog("Fetching from:", url);
 
 				const response = await fetch(url);
@@ -399,8 +433,7 @@ class TokenStorageManager {
 		await this.#setValue(`${STORAGE_KEY}_collapsed`, isCollapsed);
 	}
 
-	//This needs to iterate over orgIDs as well, since we will store data per user
-	async #checkAndCleanExpiredData(orgId) {
+	async checkAndCleanExpiredData(orgId) {
 		const allModelData = await this.#getValue(this.#getStorageKey(orgId, 'models'));
 		if (!allModelData) return;
 
@@ -421,7 +454,7 @@ class TokenStorageManager {
 	}
 
 	async getModelData(orgId, model) {
-		await this.#checkAndCleanExpiredData(orgId);
+		await this.checkAndCleanExpiredData(orgId);
 		const allModelData = await this.#getValue(this.#getStorageKey(orgId, 'models'));
 		return allModelData?.[model];
 	}
@@ -562,7 +595,7 @@ class TokenStorageManager {
 					};
 				}
 
-				const url = `${configManager.config.FIREBASE_BASE_URL}/users/${orgId}/resets.json`;
+				const url = `${this.firebase_base_url}/users/${orgId}/resets.json`;
 				debugLog("Writing reset times for orgId:", orgId);
 
 				const writeResponse = await fetch(url, {
@@ -980,7 +1013,9 @@ async function handleMessageFromContent(message, sender) {
 			case 'setCollapsedState':
 				return await tokenStorageManager.setCollapsedState(message.isCollapsed);
 			case 'getConfig':
-				return await configManager.config;
+				let config = await configManager.config;
+				if (!config) config = await configManager.getFreshConfig();
+				return config;
 			case 'requestData':
 				const baseData = { modelData: {} };
 				const { conversationId } = message ?? undefined;
@@ -1033,19 +1068,6 @@ async function handleMessageFromContent(message, sender) {
 	})();
 	debugLog("📤 Sending response:", response);
 	return response;
-}
-
-function addExtensionListeners() {
-	browser.runtime.onMessage.addListener((message, sender) => {
-		debugLog("Background received message:", message);
-		return handleMessageFromContent(message, sender);
-	});
-
-	browser.action.onClicked.addListener(() => {
-		browser.tabs.create({
-			url: "https://ko-fi.com/lugia19"
-		});
-	});
 }
 //#endregion
 
@@ -1113,65 +1135,55 @@ async function processResponse(orgId, conversationId, isNewMessage, details) {
 
 
 // Listen for message sending
-function addWebRequestListeners() {
-	browser.webRequest.onBeforeRequest.addListener(
-		async (details) => {
-			if (details.method === "POST" &&
-				(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
-				debugLog("Request sent - URL:", details.url);
-				// Extract IDs from URL - we can refine these regexes
-				const urlParts = details.url.split('/');
-				const orgId = urlParts[urlParts.indexOf('organizations') + 1];
-				await tokenStorageManager.addOrgId(orgId);
-				const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1];
+async function onBeforeRequestHandler(details) {
+	if (details.method === "POST" &&
+		(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
+		debugLog("Request sent - URL:", details.url);
+		// Extract IDs from URL - we can refine these regexes
+		const urlParts = details.url.split('/');
+		const orgId = urlParts[urlParts.indexOf('organizations') + 1];
+		await tokenStorageManager.addOrgId(orgId);
+		const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1];
 
-				const key = `${orgId}:${conversationId}`;
-				debugLog(`Message sent - Key: ${key}`);
-				// Store pending response with both orgId and tabId
-				await pendingResponses.set(key, {
-					orgId: orgId,
-					conversationId: conversationId,
-					tabId: details.tabId
-				});
+		const key = `${orgId}:${conversationId}`;
+		debugLog(`Message sent - Key: ${key}`);
+		// Store pending response with both orgId and tabId
+		await pendingResponses.set(key, {
+			orgId: orgId,
+			conversationId: conversationId,
+			tabId: details.tabId
+		});
+	}
+
+	if (details.method === "GET" && details.url.includes("/settings/billing")) {
+		debugLog("Hit the billing page, let's make sure we get the updated subscription tier in case it was changed...")
+		const orgId = await requestActiveOrgId(details.tabId);
+		const api = await ClaudeAPI.create(details.cookieStoreId);
+		let subscriptionTier = await api.getSubscriptionTier(orgId)
+		await tokenStorageManager.subscriptionTiers.set(orgId, subscriptionTier, 6 * 60 * 60 * 1000)
+	}
+}
+
+async function onCompletedHandler(details) {
+	if (details.method === "GET" &&
+		details.url.includes("/chat_conversations/") &&
+		details.url.includes("tree=True") &&
+		details.url.includes("render_all_tools=true")) {
+		debugLog("Response recieved - URL:", details.url);
+		processingQueue = processingQueue.then(async () => {
+			const urlParts = details.url.split('/');
+			const orgId = urlParts[urlParts.indexOf('organizations') + 1];
+			await tokenStorageManager.addOrgId(orgId);
+			const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
+
+			const key = `${orgId}:${conversationId}`;
+			const result = await processResponse(orgId, conversationId, await pendingResponses.has(key), details);
+
+			if (result && await pendingResponses.has(key)) {
+				await pendingResponses.delete(key);
 			}
-
-			if (details.method === "GET" && details.url.includes("/settings/billing")) {
-				debugLog("Hit the billing page, let's make sure we get the updated subscription tier in case it was changed...")
-				const orgId = await requestActiveOrgId(details.tabId);
-				const api = await ClaudeAPI.create(details.cookieStoreId);
-				let subscriptionTier = await api.getSubscriptionTier(orgId)
-				await tokenStorageManager.subscriptionTiers.set(orgId, subscriptionTier, 6 * 60 * 60 * 1000)
-			}
-		},
-		{ urls: ["*://claude.ai/*"] }
-	);
-
-	// Listen for responses
-	browser.webRequest.onCompleted.addListener(
-		async (details) => {
-			if (details.method === "GET" &&
-				details.url.includes("/chat_conversations/") &&
-				details.url.includes("tree=True") &&
-				details.url.includes("render_all_tools=true")) {
-				debugLog("Response recieved - URL:", details.url);
-				processingQueue = processingQueue.then(async () => {
-					const urlParts = details.url.split('/');
-					const orgId = urlParts[urlParts.indexOf('organizations') + 1];
-					await tokenStorageManager.addOrgId(orgId);
-					const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
-
-					const key = `${orgId}:${conversationId}`;
-					const result = await processResponse(orgId, conversationId, await pendingResponses.has(key), details);
-
-					if (result && await pendingResponses.has(key)) {
-						await pendingResponses.delete(key);
-					}
-				});
-			}
-		},
-		{ urls: ["*://claude.ai/*"] },
-		["responseHeaders"]
-	);
+		});
+	}
 }
 
 // Only relevant for firefox - to support different accounts in different containers
@@ -1179,6 +1191,7 @@ async function addFirefoxContainerFixListener() {
 	const stores = await browser.cookies.getAllCookieStores();
 	const isFirefoxContainers = stores[0].id === "firefox-default";
 
+	//Fine to register this here, as it's only relevant for the background script's own requests. No wakeup needed.
 	if (isFirefoxContainers) {
 		debugLog("We're in firefox with containers, registering blocking listener...")
 		browser.webRequest.onBeforeSendHeaders.addListener(
@@ -1215,15 +1228,12 @@ async function addFirefoxContainerFixListener() {
 }
 
 //#endregion
-addWebRequestListeners();
-addExtensionListeners();
-addFirefoxContainerFixListener();
 
-const configManager = new Config();
+//#region Variable fill in and initialization
+pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
+conversationLengthCache = new Map();
+tokenStorageManager = new TokenStorageManager();
+configManager = new Config();
 configManager.initialize();
-const pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
-const conversationLengthCache = new Map();
-let tokenStorageManager = new TokenStorageManager();
-tokenStorageManager.loadOrgIds()
-let processingQueue = Promise.resolve();
-
+debugLog("Done initializing.")
+//#endregion

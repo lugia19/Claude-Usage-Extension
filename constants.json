@@ -76,7 +76,6 @@
 		}
 	},
 	"BASE_SYSTEM_PROMPT_LENGTH": 2900,
-	"FIREBASE_BASE_URL": "https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app",
 	"FEATURE_COSTS": {
 		"enabled_artifacts_attachments": 2000,
 		"preview_feature_uses_artifacts": 5500,
