@@ -3,7 +3,7 @@ import './lib/o200k_base.js';
 
 const tokenizer = GPTTokenizer_o200k_base;
 const STORAGE_KEY = "claudeUsageTracker_v5"
-const DEBUG_MODE = false
+const DEBUG_MODE = true
 //#region Variable declarations
 let processingQueue = Promise.resolve();
 let pendingResponses;
@@ -25,19 +25,50 @@ browser.action.onClicked.addListener(() => {
 	});
 });
 
-//Webrequest-listeners
-browser.webRequest.onBeforeRequest.addListener(onBeforeRequestHandler,
-	{ urls: ["*://claude.ai/*"] }
+browser.runtime.onInstalled.addListener(() => {
+	browser.contextMenus.create({
+		id: 'openDebugPage',
+		title: 'Open Debug Page',
+		contexts: ['action']
+	});
+});
+
+browser.contextMenus.onClicked.addListener((info, tab) => {
+	if (info.menuItemId === 'openDebugPage') {
+		browser.tabs.create({
+			url: browser.runtime.getURL('debug.html')
+		});
+	}
+});
+
+// WebRequest listeners with specific URL patterns
+browser.webRequest.onBeforeRequest.addListener(
+	onBeforeRequestHandler,
+	{
+		urls: [
+			"*://claude.ai/api/organizations/*/completion",
+			"*://claude.ai/api/organizations/*/retry_completion",
+			"*://claude.ai/api/settings/billing*"
+		]
+	}
 );
 
 browser.webRequest.onCompleted.addListener(
 	onCompletedHandler,
-	{ urls: ["*://claude.ai/*"] },
-	["responseHeaders"]
-);
+	{
+		urls: [
+			"*://claude.ai/api/organizations/*/chat_conversations/*"
+		]
+	},
+	["responseHeaders"]);
+
 addFirefoxContainerFixListener();
 
 //Alarm listeners
+browser.alarms.onAlarm.addListener(async (alarm) => {
+	debugLog("Alarm triggered:", alarm.name);
+});
+
 browser.alarms.onAlarm.addListener(async (alarm) => {
 	if (!configManager) return
 	if (alarm.name === 'refreshConfig') {
@@ -46,7 +77,6 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 });
 
 browser.alarms.onAlarm.addListener(async (alarm) => {
-	//debugLog("Alarm triggered:", alarm);
 	if (!tokenStorageManager) return;
 	await tokenStorageManager.ensureOrgIds();
 
@@ -74,9 +104,45 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 function debugLog(...args) {
-	if (DEBUG_MODE) {
-		console.log(...args);
-	}
+	const sender = "background"
+	return browser.storage.local.get('debug_mode_until')
+		.then(result => {
+			const debugUntil = result.debug_mode_until;
+			const now = Date.now();
+
+			if (!debugUntil || debugUntil <= now) {
+				return Promise.resolve();
+			}
+
+			const timestamp = new Date().toLocaleString('default', {
+				hour: '2-digit',
+				minute: '2-digit',
+				second: '2-digit',
+				hour12: false,
+				fractionalSecondDigits: 3
+			});
+
+			const logEntry = {
+				timestamp: timestamp,
+				sender: sender,
+				message: args.map(arg => {
+					if (typeof arg === 'object') {
+						return JSON.stringify(arg, null, 2);
+					}
+					return String(arg);
+				}).join(' ')
+			};
+
+			return browser.storage.local.get('debug_logs')
+				.then(result => {
+					const logs = result.debug_logs || [];
+					logs.push(logEntry);
+
+					if (logs.length > 1000) logs.shift();
+
+					return browser.storage.local.set({ debug_logs: logs });
+				});
+		});
 }
 
 function mergeDeep(target, source) {
@@ -1136,6 +1202,7 @@ async function processResponse(orgId, conversationId, isNewMessage, details) {
 
 // Listen for message sending
 async function onBeforeRequestHandler(details) {
+	debugLog("Intercepted request:", details.url);
 	if (details.method === "POST" &&
 		(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
 		debugLog("Request sent - URL:", details.url);
@@ -1165,6 +1232,7 @@ async function onBeforeRequestHandler(details) {
 }
 
 async function onCompletedHandler(details) {
+	debugLog("Intercepted response:", details.url);
 	if (details.method === "GET" &&
 		details.url.includes("/chat_conversations/") &&
 		details.url.includes("tree=True") &&
@@ -1201,17 +1269,26 @@ async function addFirefoxContainerFixListener() {
 				)?.value;
 
 				if (overwriteKey) {
-					debugLog("Overwriting session key.");
 					// Find existing cookie header
 					const cookieHeader = details.requestHeaders.find(h => h.name === 'Cookie');
 					if (cookieHeader) {
 						// Parse existing cookies
-						const cookies = cookieHeader.value.split('; ')
-							.filter(c => !c.startsWith('sessionKey='));
-						// Add our new sessionKey
-						cookies.push(`sessionKey=${overwriteKey}`);
+						const cookies = cookieHeader.value.split('; ');
+						// Extract existing sessionKey if present
+						const existingSessionKey = cookies
+							.find(c => c.startsWith('sessionKey='))
+							?.split('=')[1];
+
+						if (existingSessionKey != overwriteKey) {
+							debugLog("Modifying session key (request must've been made from non-default container...");
+						}
+
+						// Filter out existing sessionKey and add new one
+						const filteredCookies = cookies.filter(c => !c.startsWith('sessionKey='));
+						filteredCookies.push(`sessionKey=${overwriteKey}`);
+
 						// Rebuild cookie header
-						cookieHeader.value = cookies.join('; ');
+						cookieHeader.value = filteredCookies.join('; ');
 					}
 
 					// Remove our custom header

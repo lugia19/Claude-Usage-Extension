@@ -1,11 +1,44 @@
 (function () {
 	'use strict';
 
-	const DEBUG_MODE = false
 	function debugLog(...args) {
-		if (DEBUG_MODE) {
-			console.log(...args);
-		}
+		const sender = `content:${document.title.substring(0, 20)}${document.title.length > 20 ? '...' : ''}`;
+		return browser.storage.local.get('debug_mode_until')
+			.then(result => {
+				const debugUntil = result.debug_mode_until;
+				const now = Date.now();
+
+				if (!debugUntil || debugUntil <= now) {
+					return Promise.resolve();
+				}
+				const timestamp = new Date().toLocaleString('default', {
+					hour: '2-digit',
+					minute: '2-digit',
+					second: '2-digit',
+					hour12: false,
+					fractionalSecondDigits: 3
+				});
+				const logEntry = {
+					timestamp: timestamp,
+					sender: sender,
+					message: args.map(arg => {
+						if (typeof arg === 'object') {
+							return JSON.stringify(arg, null, 2);
+						}
+						return String(arg);
+					}).join(' ')
+				};
+
+				return browser.storage.local.get('debug_logs')
+					.then(result => {
+						const logs = result.debug_logs || [];
+						logs.push(logEntry);
+
+						if (logs.length > 1000) logs.shift();
+
+						return browser.storage.local.set({ debug_logs: logs });
+					});
+			});
 	}
 
 	if (window.claudeTrackerInstance) {
@@ -115,11 +148,9 @@
 			}
 		}
 		const modelSelector = await waitForElement(document, config.SELECTORS.MODEL_PICKER, 3000);
-		debugLog("Model selector", modelSelector)
 		if (!modelSelector) return 'default';
 
 		let fullModelName = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim() || 'default';
-		debugLog("Full model name", fullModelName)
 		if (!fullModelName || fullModelName === 'default') return 'default';
 
 		fullModelName = fullModelName.toLowerCase();
@@ -892,9 +923,7 @@
 				updateTriggered = true
 			}
 
-			debugLog("Updating current model...")
 			currentlyDisplayedModel = newModel;
-
 			// Update all sections - will collapse inactive ones
 			config.MODELS.forEach(async modelName => {
 				const section = modelSections[modelName];
