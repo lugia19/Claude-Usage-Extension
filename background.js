@@ -225,6 +225,9 @@ class TokenStorageManager {
 		//debugLog("Alarm created, syncing every", this.syncInterval, "minutes");
 		browser.alarms.onAlarm.addListener(async (alarm) => {
 			//debugLog("Alarm triggered:", alarm);
+			if (!this.orgIds) {
+				await this.loadOrgIds();
+			}
 			if (alarm.name === 'firebaseSync') {
 				await this.syncWithFirebase();
 				await updateAllTabs();
@@ -235,9 +238,6 @@ class TokenStorageManager {
 			}
 
 			if (alarm.name === 'checkExpiredData') {
-				if (!this.orgIds) {
-					await this.loadOrgIds();
-				}
 				for (const orgId of this.orgIds) {
 					await this.#checkAndCleanExpiredData(orgId);
 				}
@@ -815,7 +815,7 @@ class ClaudeAPI {
 
 	async getSubscriptionTier(orgId) {
 		const statsigData = await this.getRequest(`/bootstrap/${orgId}/statsig`);
-		console.log("Got statsig data:", statsigData);
+		debugLog("Got statsig data:", statsigData);
 		if (statsigData.user?.custom?.isRaven) {
 			return "team"
 		}
