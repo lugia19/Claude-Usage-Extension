@@ -201,7 +201,6 @@ class Config {
 // Token storage manager
 class TokenStorageManager {
 	constructor() {
-		this.syncInterval = 1; // 1m
 		this.isSyncingFirebase = false;
 		this.isSyncingResetTimes = false;
 		this.storageLock = false;
@@ -219,10 +218,10 @@ class TokenStorageManager {
 			periodInMinutes: 60
 		});
 
-		browser.alarms.create('firebaseSync', { periodInMinutes: this.syncInterval });
-		browser.alarms.create('resetTimesSync', { periodInMinutes: 10 });
+		browser.alarms.create('firebaseSync', { periodInMinutes: 5 });
+		browser.alarms.create('resetTimesSync', { periodInMinutes: 15 });
 
-		//debugLog("Alarm created, syncing every", this.syncInterval, "minutes");
+		//debugLog("Alarm created, syncing every", 5, "minutes");
 		browser.alarms.onAlarm.addListener(async (alarm) => {
 			//debugLog("Alarm triggered:", alarm);
 			if (!this.orgIds) {
