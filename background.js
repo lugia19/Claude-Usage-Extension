@@ -20,26 +20,36 @@ browser.runtime.onMessage.addListener((message, sender) => {
 });
 
 browser.action.onClicked.addListener(() => {
-	browser.tabs.create({
-		url: "https://ko-fi.com/lugia19"
-	});
-});
-
-browser.runtime.onInstalled.addListener(() => {
-	browser.contextMenus.create({
-		id: 'openDebugPage',
-		title: 'Open Debug Page',
-		contexts: ['action']
-	});
-});
-
-browser.contextMenus.onClicked.addListener((info, tab) => {
-	if (info.menuItemId === 'openDebugPage') {
+	if (browser.contextMenus) {
+		// Desktop - open ko-fi
+		browser.tabs.create({
+			url: "https://ko-fi.com/lugia19"
+		});
+	} else {
+		// Mobile - open debug page
 		browser.tabs.create({
 			url: browser.runtime.getURL('debug.html')
 		});
 	}
 });
+
+if (browser.contextMenus) {
+	browser.runtime.onInstalled.addListener(() => {
+		browser.contextMenus.create({
+			id: 'openDebugPage',
+			title: 'Open Debug Page',
+			contexts: ['action']
+		});
+	});
+
+	browser.contextMenus.onClicked.addListener((info, tab) => {
+		if (info.menuItemId === 'openDebugPage') {
+			browser.tabs.create({
+				url: browser.runtime.getURL('debug.html')
+			});
+		}
+	});
+}
 
 // WebRequest listeners with specific URL patterns
 browser.webRequest.onBeforeRequest.addListener(
