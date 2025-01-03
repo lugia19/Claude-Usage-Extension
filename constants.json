@@ -12,8 +12,8 @@
 	"MODEL_CAPS": {
 		"free": {
 			"Opus": 0,
-			"Sonnet": 500000,
-			"Haiku": 1000000,
+			"Sonnet": 300000,
+			"Haiku": 600000,
 			"default": 1
 		},
 		"pro": {
