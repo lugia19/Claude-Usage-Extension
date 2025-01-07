@@ -918,7 +918,7 @@ class ClaudeAPI {
 		const profileData = await this.getRequest('/account_profile');
 		let totalTokens = 0;
 		if (profileData.conversation_preferences) {
-			totalTokens = await getTextTokens(profileData.conversation_preferences) + 800
+			totalTokens = await getTextTokens(profileData.conversation_preferences) + 850
 		}
 
 		debugLog(`Profile tokens: ${totalTokens}`);
