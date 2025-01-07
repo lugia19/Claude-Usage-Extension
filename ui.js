@@ -49,6 +49,7 @@
 	window.claudeTrackerInstance = true;
 
 	let config;
+	let ui;
 
 	//#region Storage Interface
 	class TokenStorageInterface {
@@ -178,180 +179,288 @@
 	//#endregion
 
 	//#region UI elements
-	function createModelSection(modelName) {
-		const container = document.createElement('div');
-		container.style.cssText = `
-			margin-bottom: 12px;
-			border-bottom: 1px solid #3B3B3B;
-			padding-bottom: 8px;
-			opacity: '1';
-			transition: opacity 0.2s;
+	function makeDraggable(element, dragHandle = null) {
+		let isDragging = false;
+		let currentX;
+		let currentY;
+		let initialX;
+		let initialY;
+
+		// If no specific drag handle is provided, the entire element is draggable
+		const dragElement = dragHandle || element;
+
+		function handleDragStart(e) {
+			isDragging = true;
+
+			if (e.type === "mousedown") {
+				initialX = e.clientX - element.offsetLeft;
+				initialY = e.clientY - element.offsetTop;
+			} else if (e.type === "touchstart") {
+				initialX = e.touches[0].clientX - element.offsetLeft;
+				initialY = e.touches[0].clientY - element.offsetTop;
 			}
-		`;
 
-		container.style.cssText += `
-        	position: relative;
-    	`;
+			dragElement.style.cursor = 'grabbing';
+		}
 
-		const sectionHeader = document.createElement('div');
-		sectionHeader.style.cssText = `
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 8px;
-            color: white;
-            font-size: 12px;
-        `;
+		function handleDragMove(e) {
+			if (!isDragging) return;
+			e.preventDefault();
 
-		const arrow = document.createElement('div');
-		arrow.innerHTML = '▼';
-		arrow.style.cssText = `
-            cursor: pointer;
-            transition: transform 0.2s;
-            font-size: 10px;
-        `;
+			if (e.type === "mousemove") {
+				currentX = e.clientX - initialX;
+				currentY = e.clientY - initialY;
+			} else if (e.type === "touchmove") {
+				currentX = e.touches[0].clientX - initialX;
+				currentY = e.touches[0].clientY - initialY;
+			}
 
-		const title = document.createElement('div');
-		title.textContent = modelName;
-		title.style.cssText = `flex-grow: 1;`;
+			// Ensure the element stays within the viewport
+			const maxX = window.innerWidth - element.offsetWidth;
+			const maxY = window.innerHeight - element.offsetHeight;
+			currentX = Math.min(Math.max(0, currentX), maxX);
+			currentY = Math.min(Math.max(0, currentY), maxY);
 
-		const activeIndicator = document.createElement('div');
-		activeIndicator.style.cssText = `
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #3b82f6;
-            opacity:'1';
-            transition: opacity 0.2s;
-        `;
+			element.style.left = `${currentX}px`;
+			element.style.top = `${currentY}px`;
+			element.style.right = 'auto';
+			element.style.bottom = 'auto';
+		}
 
-		sectionHeader.appendChild(arrow);
-		sectionHeader.appendChild(title);
-		sectionHeader.appendChild(activeIndicator);
+		function handleDragEnd() {
+			isDragging = false;
+			dragElement.style.cursor = dragHandle ? 'move' : 'grab';
+		}
 
-		const content = document.createElement('div');
+		// Mouse events
+		dragElement.addEventListener('mousedown', handleDragStart);
+		document.addEventListener('mousemove', handleDragMove);
+		document.addEventListener('mouseup', handleDragEnd);
 
-		const resetTimeDisplay = document.createElement('div');
-		resetTimeDisplay.style.cssText = `
-			color: #888;
-			font-size: 11px;
-			margin-bottom: 8px;
-		`;
-		resetTimeDisplay.textContent = 'Reset in: Not set.';
+		// Touch events
+		dragElement.addEventListener('touchstart', handleDragStart, { passive: false });
+		document.addEventListener('touchmove', handleDragMove, { passive: false });
+		document.addEventListener('touchend', handleDragEnd);
+		document.addEventListener('touchcancel', handleDragEnd);
+
+		// Set initial cursor style
+		dragElement.style.cursor = dragHandle ? 'move' : 'grab';
+
+		// Return a cleanup function
+		return () => {
+			dragElement.removeEventListener('mousedown', handleDragStart);
+			document.removeEventListener('mousemove', handleDragMove);
+			document.removeEventListener('mouseup', handleDragEnd);
+			dragElement.removeEventListener('touchstart', handleDragStart);
+			document.removeEventListener('touchmove', handleDragMove);
+			document.removeEventListener('touchend', handleDragEnd);
+			document.removeEventListener('touchcancel', handleDragEnd);
+		};
+	}
 
 
-		const progressContainer = document.createElement('div');
-		progressContainer.style.cssText = `
-            background: #3B3B3B;
-            height: 6px;
-            border-radius: 3px;
-            overflow: hidden;
-        `;
+	class ModelSection {
+		constructor(modelName) {
+			this.modelName = modelName;
+			this.isCollapsed = true;
+			this.isEnabled = true;
+			this.resetTime = null;
+			this.buildSection();
+		}
 
-		const progressBar = document.createElement('div');
-		progressBar.style.cssText = `
-            width: 0%;
-            height: 100%;
-            background: #3b82f6;
-            transition: width 0.3s ease, background-color 0.3s ease;
-        `;
+		buildSection() {
+			// Create main container
+			this.container = document.createElement('div');
+			this.container.style.cssText = `
+				margin-bottom: 12px;
+				border-bottom: 1px solid #3B3B3B;
+				padding-bottom: 8px;
+				opacity: 1;
+				transition: opacity 0.2s;
+				position: relative;
+			`;
 
-		const tooltip = document.createElement('div');
-		tooltip.style.cssText = `
-			position: absolute;
-			bottom: 100%;
-			left: 50%;
-			transform: translateX(-50%);
-			background: rgba(0, 0, 0, 0.9);
-			color: white;
-			padding: 4px 8px;
-			border-radius: 4px;
-			font-size: 12px;
-			opacity: 0;
-			transition: opacity 0.2s;
-			pointer-events: none;
-			margin-bottom: 4px;
-			white-space: nowrap;
-			z-index: 10000;
-		`;
+			// Create header
+			const sectionHeader = document.createElement('div');
+			sectionHeader.style.cssText = `
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				margin-bottom: 8px;
+				color: white;
+				font-size: 12px;
+			`;
 
-		// Add hover events to the section container
-		container.addEventListener('mouseenter', () => {
-			tooltip.style.opacity = '1';
-		});
-		container.addEventListener('mouseleave', () => {
-			tooltip.style.opacity = '0';
-		});
+			// Create collapse arrow
+			this.arrow = document.createElement('div');
+			this.arrow.innerHTML = '▼';
+			this.arrow.style.cssText = `
+				cursor: pointer;
+				transition: transform 0.2s;
+				font-size: 10px;
+			`;
+			this.arrow.style.transform = this.isCollapsed ? 'rotate(-90deg)' : '';
 
-		progressContainer.appendChild(progressBar);
+			// Create title
+			const title = document.createElement('div');
+			title.textContent = this.modelName;
+			title.style.cssText = 'flex-grow: 1;';
 
-		const messageCounter = document.createElement('div');
-		messageCounter.style.cssText = `
-			color: #888;
-			font-size: 11px;
-			margin-top: 4px;
-		`;
-		messageCounter.textContent = 'Messages: 0';
-		content.appendChild(messageCounter);  // Add the counter
+			// Create active indicator
+			this.activeIndicator = document.createElement('div');
+			this.activeIndicator.style.cssText = `
+				width: 8px;
+				height: 8px;
+				border-radius: 50%;
+				background: #3b82f6;
+				opacity: 1;
+				transition: opacity 0.2s;
+			`;
 
-		content.appendChild(resetTimeDisplay);
-		content.appendChild(progressContainer);
-		content.appendChild(tooltip);
+			// Assemble header
+			sectionHeader.appendChild(this.arrow);
+			sectionHeader.appendChild(title);
+			sectionHeader.appendChild(this.activeIndicator);
 
-		container.appendChild(sectionHeader);
-		container.appendChild(content);
+			// Create content container
+			this.content = document.createElement('div');
+			this.content.style.display = this.isCollapsed ? 'none' : 'block';
 
-		// Add collapsed state tracking
-		let isCollapsed = true //Start collapsed
-		content.style.display = isCollapsed ? 'none' : 'block';
-		arrow.style.transform = isCollapsed ? 'rotate(-90deg)' : '';
+			// Create reset time display
+			this.resetTimeDisplay = document.createElement('div');
+			this.resetTimeDisplay.style.cssText = `
+				color: #888;
+				font-size: 11px;
+				margin-bottom: 8px;
+			`;
+			this.resetTimeDisplay.textContent = 'Reset in: Not set.';
 
-		// Toggle section collapse/expand
-		arrow.addEventListener('click', (e) => {
-			e.stopPropagation();
-			isCollapsed = !isCollapsed;
-			content.style.display = isCollapsed ? 'none' : 'block';
-			arrow.style.transform = isCollapsed ? 'rotate(-90deg)' : '';
-		});
+			// Create progress container and bar
+			const progressContainer = document.createElement('div');
+			progressContainer.style.cssText = `
+				background: #3B3B3B;
+				height: 6px;
+				border-radius: 3px;
+				overflow: hidden;
+			`;
 
-		let isEnabled = true;
-		function setActive(active, isHomePage) {
-			if (!isEnabled) return;	//Overridden to be disabled, don't change it.
-			activeIndicator.style.opacity = active ? '1' : '0';
-			container.style.opacity = active ? '1' : '0.7';
+			this.progressBar = document.createElement('div');
+			this.progressBar.style.cssText = `
+				width: 0%;
+				height: 100%;
+				background: #3b82f6;
+				transition: width 0.3s ease, background-color 0.3s ease;
+			`;
+
+			// Create tooltip
+			this.tooltip = document.createElement('div');
+			this.tooltip.style.cssText = `
+				position: absolute;
+				bottom: 100%;
+				left: 50%;
+				transform: translateX(-50%);
+				background: rgba(0, 0, 0, 0.9);
+				color: white;
+				padding: 4px 8px;
+				border-radius: 4px;
+				font-size: 12px;
+				opacity: 0;
+				transition: opacity 0.2s;
+				pointer-events: none;
+				margin-bottom: 4px;
+				white-space: nowrap;
+				z-index: 9999;
+			`;
+
+			// Create message counter
+			this.messageCounter = document.createElement('div');
+			this.messageCounter.style.cssText = `
+				color: #888;
+				font-size: 11px;
+				margin-top: 4px;
+			`;
+			this.messageCounter.textContent = 'Messages: 0';
+
+			// Assemble content
+			progressContainer.appendChild(this.progressBar);
+			this.content.appendChild(this.messageCounter);
+			this.content.appendChild(this.resetTimeDisplay);
+			this.content.appendChild(progressContainer);
+			this.content.appendChild(this.tooltip);
+
+			// Assemble final container
+			this.container.appendChild(sectionHeader);
+			this.container.appendChild(this.content);
+
+			// Add event listeners
+			this.setupEventListeners();
+		}
+
+		setupEventListeners() {
+			// Toggle section collapse/expand
+			this.arrow.addEventListener('click', (e) => {
+				e.stopPropagation();
+				this.isCollapsed = !this.isCollapsed;
+				this.content.style.display = this.isCollapsed ? 'none' : 'block';
+				this.arrow.style.transform = this.isCollapsed ? 'rotate(-90deg)' : '';
+			});
+
+			// Tooltip visibility
+			this.container.addEventListener('mouseenter', () => {
+				this.tooltip.style.opacity = '1';
+			});
+			this.container.addEventListener('mouseleave', () => {
+				this.tooltip.style.opacity = '0';
+			});
+		}
+
+		setActive(active, isHomePage) {
+			if (!this.isEnabled) return;
+
+			this.activeIndicator.style.opacity = active ? '1' : '0';
+			this.container.style.opacity = active ? '1' : '0.7';
+
 			if (!isHomePage || isMobileView()) {
-				// In desktop non-home page (or mobile everywhere), completely hide inactive sections
-				container.style.display = active ? 'block' : 'none';
+				this.container.style.display = active ? 'block' : 'none';
 			} else {
-				// In desktop home page, just collapse inactive sections
-				container.style.display = 'block';
+				this.container.style.display = 'block';
 			}
 
 			if (active) {
-				isCollapsed = false;
-				content.style.display = 'block';
-				arrow.style.transform = '';
+				this.isCollapsed = false;
+				this.content.style.display = 'block';
+				this.arrow.style.transform = '';
 			} else if (!isHomePage) {
-				isCollapsed = true;
-				content.style.display = 'none';
-				arrow.style.transform = 'rotate(-90deg)';
+				this.isCollapsed = true;
+				this.content.style.display = 'none';
+				this.arrow.style.transform = 'rotate(-90deg)';
 			}
 		}
 
-		function setEnabled(enabled) {
-			isEnabled = enabled;
-			if (!enabled) container.style.display = enabled ? 'block' : 'none';
+		setEnabled(enabled) {
+			this.isEnabled = enabled;
+			if (!enabled) {
+				this.container.style.display = 'none';
+			}
 		}
 
-		return {
-			container,
-			progressBar,
-			resetTimeDisplay,
-			tooltip,
-			messageCounter,
-			setActive,
-			setEnabled
-		};
+		updateProgress(total, maxTokens) {
+			const percentage = (total / maxTokens) * 100;
+			this.progressBar.style.width = `${Math.min(percentage, 100)}%`;
+			this.progressBar.style.background = total >= maxTokens * config.WARNING_THRESHOLD ? '#ef4444' : '#3b82f6';
+			this.tooltip.textContent = `${total.toLocaleString()} / ${maxTokens.toLocaleString()} tokens (${percentage.toFixed(1)}%)`;
+		}
+
+		updateMessageCount(count) {
+			this.messageCounter.textContent = `Messages: ${count}`;
+		}
+
+		updateResetTime(timestamp) {
+			this.resetTime = timestamp;
+			this.resetTimeDisplay.textContent = timestamp ?
+				formatTimeRemaining(new Date(timestamp)) :
+				'Reset in: Not set';
+		}
 	}
 
 	async function checkVersionNotification() {
@@ -369,494 +478,477 @@
 		};
 	}
 
-	function createVersionNotificationCard(versionInfo) {
-		const notificationCard = document.createElement('div');
-		notificationCard.style.cssText = `
-			position: absolute;
-			bottom: calc(100% + 10px);
-			left: 0;
-			right: 0;
-			background: #2D2D2D;
-			border: 1px solid #3B3B3B;
-			border-radius: 8px;
-			padding: 12px;
-			color: white;
-			font-size: 12px;
-			text-align: center;
-			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-		`;
-
-		const message = document.createElement('div');
-		message.style.marginBottom = '10px';
-		message.textContent = versionInfo.previousVersion ?
-			`Updated from v${versionInfo.previousVersion} to v${versionInfo.currentVersion}!` :
-			`Welcome to the usage tracker! You're on v${versionInfo.currentVersion}`;
-
-		const kofiButton = document.createElement('a');
-		kofiButton.href = 'https://ko-fi.com/R6R14IUBY';
-		kofiButton.target = '_blank';
-		kofiButton.style.cssText = `
-			display: block;
-			text-align: center;
-			margin-top: 10px;
-		`;
-
-		const kofiImg = document.createElement('img');
-		kofiImg.src = browser.runtime.getURL('kofi-button.png');
-		kofiImg.height = 36;
-		kofiImg.style.border = '0';
-		kofiImg.alt = 'Buy Me a Coffee at ko-fi.com';
-
-		kofiButton.appendChild(kofiImg);
-
-		const closeButton = document.createElement('button');
-		closeButton.style.cssText = `
-			position: absolute;
-			top: 0px;
-			right: 6px;
-			background: none;
-			border: none;
-			color: #3b82f6;
-			cursor: pointer;
-			font-size: 14px;
-		`;
-		closeButton.textContent = '×';
-		closeButton.addEventListener('click', () => {
-			notificationCard.remove();
-		})
-		let patchNotesLink = undefined;
-		if (versionInfo.previousVersion) {
-			patchNotesLink = document.createElement('a');
-			patchNotesLink.href = 'https://github.com/lugia19/Claude-Usage-Extension/releases';
-			patchNotesLink.target = '_blank';
-			patchNotesLink.style.cssText = `
-				color: #3b82f6;
-				text-decoration: underline;
-				cursor: pointer;
-				display: block;
-				margin-bottom: 10px;
-				font-size: 12px;
-			`;
-			patchNotesLink.textContent = 'View patch notes';
+	class FloatingCard {
+		constructor(position) {
+			this.element = document.createElement('div');
+			this.position = position || { top: '20px', right: '20px' };
+			this.setupBaseStyles();
 		}
 
+		setupBaseStyles() {
+			// Start with basic styles that aren't position-related
+			const baseStyles = `
+				position: fixed;
+				background: #2D2D2D;
+				border: 1px solid #3B3B3B;
+				border-radius: 8px;
+				padding: 12px;
+				color: white;
+				font-size: 12px;
+				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+				z-index: 10000;
+				user-select: none;
+			`;
 
-		notificationCard.appendChild(message);
-		if (patchNotesLink) notificationCard.appendChild(patchNotesLink);
-		notificationCard.appendChild(kofiButton);
-		notificationCard.appendChild(closeButton);
+			// Add position styles based on provided position object
+			const positionStyles = Object.entries(this.position)
+				.map(([key, value]) => `${key}: ${value};`)
+				.join('\n');
 
-		return notificationCard;
+			this.element.style.cssText = baseStyles + positionStyles;
+		}
+
+		addCloseButton() {
+			const closeButton = document.createElement('button');
+			closeButton.style.cssText = `
+				position: absolute;
+				top: 0px;
+				right: 8px;
+				background: none;
+				border: none;
+				color: #3b82f6;
+				cursor: pointer;
+				font-size: 14px;
+				padding: 4px 8px;
+			`;
+			closeButton.textContent = '×';
+			closeButton.addEventListener('click', () => this.remove());
+			this.element.appendChild(closeButton);
+		}
+
+		show() {
+			document.body.appendChild(this.element);
+		}
+
+		makeCardDraggable(dragHandle = null) {
+			this.cleanup = makeDraggable(this.element, dragHandle);
+		}
+
+		remove() {
+			if (this.cleanup) {
+				this.cleanup();
+			}
+			this.element.remove();
+		}
 	}
 
-	async function createSettingsPanel() {
-		// Remove any existing settings panel
-		const panel = document.createElement('div');
-		panel.className = 'settings-panel';
-		panel.style.cssText = `
-			position: absolute;
-			bottom: calc(100% + 10px);
-			left: 0;
-			right: 0;
-			background: #2D2D2D;
-			border: 1px solid #3B3B3B;
-			border-radius: 8px;
-			padding: 12px;
-			color: white;
-			font-size: 12px;
-			text-align: left;
-			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-			z-index: 9999;
-		`;
+	class VersionNotificationCard extends FloatingCard {
+		constructor(versionInfo) {
+			super();
+			this.versionInfo = versionInfo;
+			this.element.style.textAlign = 'center';
+			this.element.style.maxWidth = '250px';
+			this.build();
+		}
 
-		const label = document.createElement('label');
-		label.textContent = 'API Key (more accurate):';
-		label.style.display = 'block';
-		label.style.marginBottom = '8px';
+		build() {
+			// Create and style the header/drag handle
+			const dragHandle = document.createElement('div');
+			dragHandle.style.cssText = `
+				padding: 8px;
+				margin: -12px -12px 8px -12px;
+				border-bottom: 1px solid #3B3B3B;
+				cursor: move;
+			`;
+			dragHandle.textContent = 'Usage Tracker';
 
-		const input = document.createElement('input');
-		input.type = 'password';
-		input.style.cssText = `
-			width: calc(100% - 12px);
-			padding: 6px;
-			margin-bottom: 12px;
-			background: #3B3B3B;
-			border: 1px solid #4B4B4B;
-			border-radius: 4px;
-			color: white;
-		`;
+			// Add version message
+			const message = document.createElement('div');
+			message.style.marginBottom = '10px';
+			message.textContent = this.versionInfo.previousVersion ?
+				`Updated from v${this.versionInfo.previousVersion} to v${this.versionInfo.currentVersion}!` :
+				`Welcome to the usage tracker! You're on v${this.versionInfo.currentVersion}`;
 
-		let apiKey = await sendBackgroundMessage({ type: 'getAPIKey' })
-		if (apiKey) input.value = apiKey
 
-		const saveButton = document.createElement('button');
-		saveButton.textContent = 'Save';
-		saveButton.style.cssText = `
-			background: #3b82f6;
-			border: none;
-			border-radius: 4px;
-			color: white;
-			cursor: pointer;
-			padding: 6px 12px;
-		`;
-
-		saveButton.addEventListener('click', async () => {
-			let result = await sendBackgroundMessage({ type: 'setAPIKey', newKey: input.value })
-			if (!result) {
-				const errorMsg = document.createElement('div');
-				errorMsg.style.cssText = `
-					color: #ef4444;
-					font-size: 14px;
+			let patchNotesLink = null;
+			// Add patch notes link if applicable
+			if (this.versionInfo.previousVersion) {
+				patchNotesLink = document.createElement('a');
+				patchNotesLink.href = 'https://github.com/lugia19/Claude-Usage-Extension/releases';
+				patchNotesLink.target = '_blank';
+				patchNotesLink.style.cssText = `
+					color: #3b82f6;
+					text-decoration: underline;
+					cursor: pointer;
+					display: block;
+					margin-bottom: 10px;
+					font-size: 12px;
 				`;
-				errorMsg.textContent = 'Invalid API key.';
-				input.after(errorMsg);
-				setTimeout(() => errorMsg.remove(), 3000);
+				patchNotesLink.textContent = 'View patch notes';
+				this.element.appendChild(patchNotesLink);
+			}
+
+			// Add Ko-fi button
+			const kofiButton = document.createElement('a');
+			kofiButton.href = 'https://ko-fi.com/R6R14IUBY';
+			kofiButton.target = '_blank';
+			kofiButton.style.cssText = `
+				display: block;
+				text-align: center;
+				margin-top: 10px;
+			`;
+
+			const kofiImg = document.createElement('img');
+			kofiImg.src = browser.runtime.getURL('kofi-button.png');
+			kofiImg.height = 36;
+			kofiImg.style.border = '0';
+			kofiImg.alt = 'Buy Me a Coffee at ko-fi.com';
+
+			kofiButton.appendChild(kofiImg);
+
+			// Add elements to the card in the correct order
+			this.element.appendChild(dragHandle);
+			this.element.appendChild(message);
+			if (this.versionInfo.previousVersion) {
+				this.element.appendChild(patchNotesLink);
+			}
+			this.element.appendChild(kofiButton);
+			this.addCloseButton();
+
+			// Make the card draggable by the header
+			this.makeCardDraggable(dragHandle);
+		}
+	}
+
+	class SettingsCard extends FloatingCard {
+		static currentInstance = null;
+
+		constructor() {
+			super({ bottom: '20px', left: '20px' });
+			this.element.classList.add('settings-panel'); // Add the class for easier querying
+			this.element.style.maxWidth = '275px';
+		}
+
+		async build() {
+			const label = document.createElement('label');
+			label.textContent = 'API Key (more accurate):';
+			label.style.display = 'block';
+			label.style.marginBottom = '8px';
+
+			const input = document.createElement('input');
+			input.type = 'password';
+			input.style.cssText = `
+				width: calc(100% - 12px);
+				padding: 6px;
+				margin-bottom: 12px;
+				background: #3B3B3B;
+				border: 1px solid #4B4B4B;
+				border-radius: 4px;
+				color: white;
+			`;
+
+			let apiKey = await sendBackgroundMessage({ type: 'getAPIKey' })
+			if (apiKey) input.value = apiKey
+
+			const saveButton = document.createElement('button');
+			saveButton.textContent = 'Save';
+			saveButton.style.cssText = `
+				background: #3b82f6;
+				border: none;
+				border-radius: 4px;
+				color: white;
+				cursor: pointer;
+				padding: 6px 12px;
+			`;
+
+			saveButton.addEventListener('click', async () => {
+				let result = await sendBackgroundMessage({ type: 'setAPIKey', newKey: input.value })
+				if (!result) {
+					const errorMsg = document.createElement('div');
+					errorMsg.style.cssText = `
+						color: #ef4444;
+						font-size: 14px;
+					`;
+					errorMsg.textContent = 'Invalid API key.';
+					input.after(errorMsg);
+					setTimeout(() => errorMsg.remove(), 3000);
+					return;
+				}
+
+				location.reload();
+			});
+
+			this.element.appendChild(label);
+			this.element.appendChild(input);
+			this.element.appendChild(saveButton);
+			this.addCloseButton();
+
+			// Make the card draggable by the label area
+			const dragHandle = document.createElement('div');
+			dragHandle.style.cssText = `
+				padding: 8px;
+				margin: -12px -12px 8px -12px;
+				border-bottom: 1px solid #3B3B3B;
+				cursor: move;
+			`;
+			dragHandle.textContent = 'Settings';
+
+			this.element.insertBefore(dragHandle, this.element.firstChild);
+			this.makeCardDraggable(dragHandle);
+		}
+
+		show() {
+			if (SettingsCard.currentInstance) {
+				SettingsCard.currentInstance.remove();
+			}
+			super.show();
+			SettingsCard.currentInstance = this;
+		}
+
+		remove() {
+			super.remove();
+			if (SettingsCard.currentInstance === this) {
+				SettingsCard.currentInstance = null;
+			}
+		}
+
+	}
+
+	class MainUI {
+		constructor() {
+			this.container = null;
+			this.currentlyDisplayedModel = 'default';
+			this.currentConversation = -1;
+			this.modelSections = {};
+			this.isCollapsed = false;
+			this.uiReady = false;
+			this.pendingUpdates = [];
+		}
+
+		async initialize() {
+			this.container = document.createElement('div');
+			this.container.style.cssText = `
+				position: fixed;
+				bottom: 20px;
+				right: 20px;
+				background: #2D2D2D;
+				border: 1px solid #3B3B3B;
+				border-radius: 8px;
+				z-index: 9998;
+				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+				user-select: none;
+			`;
+
+			// Get stored collapse state
+			this.isCollapsed = await storageInterface.getCollapsedState();
+
+			await this.buildHeader();
+			await this.buildContent();
+
+			document.body.appendChild(this.container);
+
+			// Make the container draggable using the header
+			makeDraggable(this.container, this.header);
+
+			// Check for version notification
+			const versionInfo = await checkVersionNotification();
+			debugLog("Version info", versionInfo);
+			if (versionInfo) {
+				const notificationCard = new VersionNotificationCard(versionInfo);
+				notificationCard.show();
+			}
+
+			this.uiReady = true;
+			// Process any updates that arrived before UI was ready
+			while (this.pendingUpdates.length > 0) {
+				debugLog("UI is ready, processing pending updates...");
+				const update = this.pendingUpdates.shift();
+				await this.updateProgressBar(update);
+			}
+
+			// Initialize model section visibility
+			const isHomePage = getConversationId() === null;
+			config.MODELS.forEach(modelName => {
+				const section = this.modelSections[modelName];
+				if (section) {
+					const isActiveModel = modelName === this.currentlyDisplayedModel;
+					section.setActive(isActiveModel, isHomePage);
+				}
+			});
+		}
+
+		async buildHeader() {
+			this.header = document.createElement('div');
+			this.header.style.cssText = `
+				display: flex;
+				align-items: center;
+				padding: 8px 10px;
+				color: white;
+				font-size: 12px;
+				gap: 8px;
+				cursor: move;
+			`;
+
+			const arrow = document.createElement('div');
+			arrow.innerHTML = '▼';
+			arrow.style.cssText = `
+				cursor: pointer;
+				transition: transform 0.2s;
+			`;
+			arrow.style.transform = this.isCollapsed ? 'rotate(-90deg)' : '';
+
+			// Create estimate display for the header
+			this.headerEstimateDisplay = document.createElement('div');
+			this.headerEstimateDisplay.id = 'messages-left-estimate';
+			this.headerEstimateDisplay.style.cssText = `
+				flex-grow: 1;
+				white-space: nowrap;
+			`;
+			this.headerEstimateDisplay.textContent = 'Est. messages left: Loading...';
+
+			// Add settings button
+			const settingsButton = document.createElement('button');
+			settingsButton.innerHTML = `
+				<svg viewBox="0 0 24 24" width="20" height="20" style="cursor: pointer;">
+					<path fill="currentColor" d="M19.43 12.98c.04-.32.07-.64.07-.98 0-.34-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98 0 .33.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
+				</svg>
+			`;
+			settingsButton.style.cssText = `
+				margin-left: auto;
+				display: flex;
+				align-items: center;
+				color: #3b82f6;
+			`;
+			settingsButton.addEventListener('click', async () => {
+				if (SettingsCard.currentInstance) {
+					SettingsCard.currentInstance.remove();
+				} else {
+					const settingsCard = new SettingsCard();
+					await settingsCard.build();
+					settingsCard.show();
+				}
+			});
+
+			this.header.appendChild(arrow);
+			this.header.appendChild(this.headerEstimateDisplay);
+			this.header.appendChild(settingsButton);
+
+			// Toggle collapse/expand
+			arrow.addEventListener('click', async (e) => {
+				e.stopPropagation();
+				this.isCollapsed = !this.isCollapsed;
+				this.content.style.display = this.isCollapsed ? 'none' : 'block';
+				arrow.style.transform = this.isCollapsed ? 'rotate(-90deg)' : '';
+
+				// Also hide lengthDisplay on mobile
+				if (isMobileView()) {
+					this.lengthDisplay.style.display = this.isCollapsed ? 'none' : 'block';
+				}
+
+				// Store the new state
+				await storageInterface.setCollapsedState(this.isCollapsed);
+			});
+
+			this.container.appendChild(this.header);
+		}
+
+		async buildContent() {
+			// Conversation info
+			const currentConversationDisplay = document.createElement('div');
+			currentConversationDisplay.style.cssText = `
+				color: white;
+				font-size: 12px;
+				padding: 0 10px;
+				margin-bottom: 8px;
+				border-bottom: 1px solid #3B3B3B;
+				padding-bottom: 8px;
+			`;
+
+			this.lengthDisplay = document.createElement('div');
+			this.lengthDisplay.id = 'conversation-token-count';
+			this.lengthDisplay.style.cssText = `
+				color: #888;
+				font-size: 11px;
+				margin-top: 4px;
+			`;
+			this.lengthDisplay.textContent = 'Current cost: 0 tokens';
+
+			currentConversationDisplay.appendChild(this.lengthDisplay);
+
+			// Content container
+			this.content = document.createElement('div');
+			this.content.style.cssText = `
+				padding: 0 10px 10px 10px;
+			`;
+			this.content.style.display = this.isCollapsed ? 'none' : 'block';
+
+			// Create sections for each model
+			config.MODELS.forEach(model => {
+				const section = new ModelSection(model);
+				this.modelSections[model] = section;
+				this.content.appendChild(section.container);
+			});
+
+			this.container.appendChild(currentConversationDisplay);
+			this.container.appendChild(this.content);
+		}
+
+		async updateProgressBar(data) {
+			debugLog("Got data", data);
+			if (!this.uiReady) {
+				debugLog("UI not ready, pushing to pending updates...");
+				this.pendingUpdates.push(data);
 				return;
 			}
 
-			// If successful, reload the page.
-			location.reload();
-		})
-		const closeButton = document.createElement('button');
-		closeButton.textContent = '×';
-		closeButton.style.cssText = `
-			position: absolute;
-			top: 8px;
-			right: 8px;
-			background: none;
-			border: none;
-			color: #3b82f6;
-			cursor: pointer;
-			font-size: 14px;
-		`;
-		closeButton.addEventListener('click', () => {
-			panel.remove();
-		})
+			const { conversationLength, modelData } = data;
 
-		panel.appendChild(closeButton);
-		panel.appendChild(label);
-		panel.appendChild(input);
-		panel.appendChild(saveButton);
-
-		return panel
-	}
-
-
-	async function initUI() {
-		const container = document.createElement('div');
-		container.style.cssText = `
-			position: fixed;
-			bottom: 20px;
-			right: 20px;
-			background: #2D2D2D;
-			border: 1px solid #3B3B3B;
-			border-radius: 8px;
-			z-index: 9999;
-			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-			user-select: none;
-		`;
-
-		// Header (always visible)
-		const header = document.createElement('div');
-		header.style.cssText = `
-			display: flex;
-			align-items: center;
-			padding: 8px 10px;
-			color: white;
-			font-size: 12px;
-			gap: 8px;
-			cursor: move;
-		`;
-
-		const arrow = document.createElement('div');
-		arrow.innerHTML = '▼';
-		arrow.style.cssText = `
-			cursor: pointer;
-			transition: transform 0.2s;
-		`;
-
-		// Create estimate display for the header
-		const headerEstimateDisplay = document.createElement('div');
-		headerEstimateDisplay.id = 'messages-left-estimate';
-		headerEstimateDisplay.style.cssText = `
-			flex-grow: 1;
-			white-space: nowrap;
-		`;
-		headerEstimateDisplay.textContent = 'Est. messages left: Loading...';
-
-		// Add settings button to header
-		const settingsButton = document.createElement('button');
-		settingsButton.innerHTML = `
-			<svg viewBox="0 0 24 24" width="20" height="20" style="cursor: pointer;">
-				<path fill="currentColor" d="M19.43 12.98c.04-.32.07-.64.07-.98 0-.34-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98 0 .33.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
-			</svg>
-		`;
-		settingsButton.style.cssText = `
-			margin-left: auto;
-			display: flex;
-			align-items: center;
-			color: #3b82f6;
-		`;
-		settingsButton.addEventListener('click', async () => {
-			const existingPanel = container.querySelector('.settings-panel');
-			if (existingPanel) {
-				existingPanel.remove();
-			} else {
-				const panel = await createSettingsPanel()
-				container.appendChild(panel);
-			}
-		});
-
-		header.appendChild(arrow);
-		header.appendChild(headerEstimateDisplay);
-		header.appendChild(settingsButton);
-
-		// Counters
-		const currentConversationDisplay = document.createElement('div');
-		currentConversationDisplay.style.cssText = `
-			color: white;
-			font-size: 12px;
-			padding: 0 10px;
-			margin-bottom: 8px;
-			border-bottom: 1px solid #3B3B3B;
-			padding-bottom: 8px;
-		`;
-
-		const lengthDisplay = document.createElement('div');
-		lengthDisplay.id = 'conversation-token-count';
-		lengthDisplay.style.cssText = `
-			color: #888;
-			font-size: 11px;
-			margin-top: 4px;
-		`;
-		lengthDisplay.textContent = 'Current cost: 0 tokens';
-
-		currentConversationDisplay.appendChild(lengthDisplay);
-
-		// Content container (collapsible)
-		const content = document.createElement('div');
-		content.style.cssText = `
-			padding: 0 10px 10px 10px;
-			min-width: 150px;  // minimum width to ensure readability
-			max-width: 275px;  // maximum width for larger content
-			width: fit-content;  // allow container to shrink to fit content
-		`;
-
-		// Create sections for each model
-		config.MODELS.forEach(model => {
-			const section = createModelSection(model);
-			modelSections[model] = section;
-			content.appendChild(section.container);
-		});
-
-		container.appendChild(header);
-		container.appendChild(currentConversationDisplay);
-		container.appendChild(content);
-		document.body.appendChild(container);
-
-		// Get stored collapse state
-		let isCollapsed = await storageInterface.getCollapsedState();
-		content.style.display = isCollapsed ? 'none' : 'block';
-		arrow.style.transform = isCollapsed ? 'rotate(-90deg)' : '';
-
-		// Toggle collapse/expand
-		arrow.addEventListener('click', async (e) => {
-			e.stopPropagation();
-			isCollapsed = !isCollapsed;
-			content.style.display = isCollapsed ? 'none' : 'block';
-			arrow.style.transform = isCollapsed ? 'rotate(-90deg)' : '';
-
-			// Also hide lengthDisplay on mobile
-			if (isMobileView()) {
-				lengthDisplay.style.display = isCollapsed ? 'none' : 'block';
-			}
-
-			// Store the new state
-			await storageInterface.setCollapsedState(isCollapsed);
-		});
-
-		if (isMobileView() && isCollapsed) {
-			lengthDisplay.style.display = 'none';
-		}
-
-		// Dragging functionality
-		let isDragging = false;
-		let currentX;
-		let currentY;
-		let initialX;
-		let initialY;
-
-		function handleDragStart(e) {
-			if (e.target === arrow) return;
-
-			isDragging = true;
-			if (e.type === "mousedown") {
-				initialX = e.clientX - container.offsetLeft;
-				initialY = e.clientY - container.offsetTop;
-			} else if (e.type === "touchstart") {
-				initialX = e.touches[0].clientX - container.offsetLeft;
-				initialY = e.touches[0].clientY - container.offsetTop;
-			}
-			header.style.cursor = 'grabbing';
-		}
-
-		function handleDragMove(e) {
-			if (!isDragging) return;
-			e.preventDefault();
-
-			if (e.type === "mousemove") {
-				currentX = e.clientX - initialX;
-				currentY = e.clientY - initialY;
-			} else if (e.type === "touchmove") {
-				currentX = e.touches[0].clientX - initialX;
-				currentY = e.touches[0].clientY - initialY;
-			}
-
-			const maxX = window.innerWidth - container.offsetWidth;
-			const maxY = window.innerHeight - container.offsetHeight;
-			currentX = Math.min(Math.max(0, currentX), maxX);
-			currentY = Math.min(Math.max(0, currentY), maxY);
-
-			container.style.left = `${currentX}px`;
-			container.style.top = `${currentY}px`;
-			container.style.right = 'auto';
-			container.style.bottom = 'auto';
-		}
-
-		function handleDragEnd() {
-			isDragging = false;
-			header.style.cursor = 'move';
-		}
-
-		// Mouse events
-		header.addEventListener('mousedown', handleDragStart);
-		document.addEventListener('mousemove', handleDragMove);
-		document.addEventListener('mouseup', handleDragEnd);
-
-		// Touch events
-		header.addEventListener('touchstart', handleDragStart, { passive: false });
-		document.addEventListener('touchmove', handleDragMove, { passive: false });
-		document.addEventListener('touchend', handleDragEnd);
-		document.addEventListener('touchcancel', handleDragEnd);
-
-		const versionInfo = await checkVersionNotification();
-		debugLog("Version info", versionInfo)
-		if (versionInfo) {
-			const notificationCard = createVersionNotificationCard(versionInfo);
-			container.appendChild(notificationCard);
-		}
-
-
-		uiReady = true;
-		// Process any updates that arrived before UI was ready
-		while (pendingUpdates.length > 0) {
-			debugLog("UI is ready, processing pending updates...")
-			const update = pendingUpdates.shift();
-			await updateProgressBar(update);
-		}
-
-		// Initialize model section visibility
-		const isHomePage = getConversationId() === null;
-		config.MODELS.forEach(async modelName => {
-			const section = modelSections[modelName];
-			if (section) {
-				const isActiveModel = modelName === currentlyDisplayedModel;
-				section.setActive(isActiveModel, isHomePage);
-			}
-		});
-	}
-
-
-	// New version takes a data object instead of fetching
-	async function updateProgressBar(data) {
-		debugLog("Got data", data)
-		if (!uiReady) {
-			debugLog("UI not ready, pushing to pending updates...")
-			pendingUpdates.push(data);
-			return;
-		}
-
-		let {
-			conversationLength,
-			modelData,  // Object containing data for all models
-		} = data;
-
-		// Update conversation length display
-		const lengthDisplay = document.getElementById('conversation-token-count');
-		if (lengthDisplay) {
+			// Update conversation length display
 			if (conversationLength) {
-				lengthDisplay.textContent = `Current cost: ${conversationLength.toLocaleString()} tokens`;
-			} else {
-				const lengthText = lengthDisplay.textContent;
-				const lengthMatch = lengthText.match(/Current cost:\s*([\d\s.,]+)\s*tokens/);
-				if (lengthMatch) {
-					// Remove spaces, keep last decimal/comma as decimal point, remove others
-					const cleaned = lengthMatch[1]
-						.replace(/\s/g, '')         // Remove spaces
-						.replace(/[.,]/g, '');      // Remove all decimal points and commas
-					conversationLength = parseInt(cleaned);
-				}
+				this.lengthDisplay.textContent = `Current cost: ${conversationLength.toLocaleString()} tokens`;
 			}
-		}
 
-		// Update messages left estimate if we have the current model
-		const estimateDisplay = document.getElementById('messages-left-estimate');
-		if (estimateDisplay) {
+			// Update messages left estimate
 			//Let's ensure the model is up to date...
-			currentlyDisplayedModel = await getCurrentModel();
+			this.currentlyDisplayedModel = await getCurrentModel();
 
 			// Get the token cap for current model, or use default if not found
-			const modelCaps = await storageInterface.getCaps()
-			const maxTokens = modelCaps[currentlyDisplayedModel] || modelCaps.default
+			const modelCaps = await storageInterface.getCaps();
+			const maxTokens = modelCaps[this.currentlyDisplayedModel] || modelCaps.default;
 
 			// Get the total tokens used so far
-			const currentModelData = modelData[currentlyDisplayedModel];
+			const currentModelData = modelData[this.currentlyDisplayedModel];
 			const modelTotal = currentModelData?.total || 0;
 
 			// Calculate how many tokens are left
 			const remainingTokens = maxTokens - modelTotal;
-			debugLog(`Calculating difference: ${maxTokens} - ${modelTotal} = ${remainingTokens}`)
-			debugLog("Estimating messages...")
-
+			debugLog(`Calculating difference: ${maxTokens} - ${modelTotal} = ${remainingTokens}`);
+			debugLog("Estimating messages...");
 
 			let estimate;
-			if (conversationLength > 0 && currentlyDisplayedModel != "default") {
-				// Divide remaining by avg length, ensure not negative
+			if (conversationLength > 0 && this.currentlyDisplayedModel != "default") {
 				estimate = Math.max(0, remainingTokens / conversationLength);
-				// Round to 1 decimal place
 				estimate = estimate.toFixed(1);
 			} else {
 				estimate = "N/A";
 			}
-			debugLog("Estimate", estimate)
-			estimateDisplay.textContent = `Est. messages left: ${estimate}`;
+			debugLog("Estimate", estimate);
+			this.headerEstimateDisplay.textContent = `Est. messages left: ${estimate}`;
+
+			// Update each model section
+			debugLog("Updating model sections...");
+			for (const [modelName, section] of Object.entries(this.modelSections)) {
+				const modelInfo = modelData[modelName] || {};
+				const modelTotal = modelInfo.total || 0;
+				const messageCount = modelInfo.messageCount || 0;
+				const maxTokens = modelCaps[modelName];
+
+				section.updateProgress(modelTotal, maxTokens);
+				section.updateMessageCount(messageCount);
+				section.updateResetTime(modelInfo.resetTimestamp);
+				section.setEnabled(modelCaps[modelName] != 0);
+			}
 		}
-
-		// Update each model section
-		debugLog("Updating model sections...")
-		config.MODELS.forEach(async modelName => {
-			const modelInfo = modelData[modelName] || {};
-			const modelTotal = modelInfo.total || 0;
-			const messageCount = modelInfo.messageCount || 0;
-
-			const modelCaps = await storageInterface.getCaps()
-			const maxTokens = modelCaps[modelName]
-
-			const percentage = (modelTotal / maxTokens) * 100;
-			const section = modelSections[modelName];
-			if (!section) {
-				console.warn(`Section for model ${modelName} not found`);
-				return;
-			};
-			section.progressBar.style.width = `${Math.min(percentage, 100)}%`;
-			section.progressBar.style.background = modelTotal >= maxTokens * config.WARNING_THRESHOLD ? '#ef4444' : '#3b82f6';
-			section.tooltip.textContent = `${modelTotal.toLocaleString()} / ${maxTokens.toLocaleString()} tokens (${percentage.toFixed(1)}%)`;
-			section.messageCounter.textContent = `Messages: ${messageCount}`;
-
-			section.resetTimeDisplay.resetTime = modelInfo.resetTimestamp;
-
-			section.setEnabled(modelCaps[modelName] != 0);
-		});
 	}
 
 	function formatTimeRemaining(resetTime) {
@@ -873,7 +965,7 @@
 	// Listen for messages from background
 	browser.runtime.onMessage.addListener(async (message) => {
 		if (message.type === 'updateUsage') {
-			updateProgressBar(message.data);
+			await ui.updateProgressBar(message.data);
 		}
 
 		if (message.type === 'getActiveModel') {
@@ -894,7 +986,7 @@
 	//This polls for model changes as well as running out of messages
 	function pollForUIUpdates() {
 		setInterval(async () => {
-			let updateTriggered = false
+			let updateTriggered = false;
 			const newModel = await getCurrentModel();
 			const isHomePage = getConversationId() === null;
 			const newConversation = getConversationId();
@@ -910,43 +1002,34 @@
 			}
 
 			// Have we changed conversation?
-			if (currentConversation !== newConversation && !isHomePage) {
-				debugLog(`Conversation changed from ${currentConversation} to ${newConversation}`);
-				await updateProgressBar(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
-				currentConversation = newConversation;
+			if (ui.currentConversation !== newConversation && !isHomePage) {
+				debugLog(`Conversation changed from ${ui.currentConversation} to ${newConversation}`);
+				await ui.updateProgressBar(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
+				ui.currentConversation = newConversation;
 				updateTriggered = true;
 			}
 
 			//Have we changed model?
-			if (newModel !== currentlyDisplayedModel && !updateTriggered) {
-				debugLog(`Model changed from ${currentlyDisplayedModel} to ${newModel}`);
-				await updateProgressBar(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
-				updateTriggered = true
+			if (newModel !== ui.currentlyDisplayedModel && !updateTriggered) {
+				debugLog(`Model changed from ${ui.currentlyDisplayedModel} to ${newModel}`);
+				await ui.updateProgressBar(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
+				updateTriggered = true;
 			}
 
-			currentlyDisplayedModel = newModel;
+			ui.currentlyDisplayedModel = newModel;
+
 			// Update all sections - will collapse inactive ones
-			config.MODELS.forEach(async modelName => {
-				const section = modelSections[modelName];
-				if (section) {
-					const isActiveModel = modelName === currentlyDisplayedModel;
-					section.setActive(isActiveModel, isHomePage);
+			for (const [modelName, section] of Object.entries(ui.modelSections)) {
+				const isActiveModel = modelName === ui.currentlyDisplayedModel;
+				section.setActive(isActiveModel, isHomePage);
+			}
 
-					const resetTime = section.resetTimeDisplay.resetTime ?
-						formatTimeRemaining(new Date(section.resetTimeDisplay.resetTime)) :
-						'Reset in: Not set';
-					section.resetTimeDisplay.textContent = resetTime;
-				}
-			});
-
-			currentConversation = newConversation;
+			ui.currentConversation = newConversation;
 
 			if (isHomePage) {
 				// Reset conversation length display
-				const estimateDisplay = document.getElementById('messages-left-estimate');
-				estimateDisplay.textContent = `Est. messages left: N/A`;
-				const lengthDisplay = document.getElementById('conversation-token-count');
-				lengthDisplay.textContent = `Current cost: N/A tokens`;
+				ui.headerEstimateDisplay.textContent = `Est. messages left: N/A`;
+				ui.lengthDisplay.textContent = `Current cost: N/A tokens`;
 			}
 		}, config.UI_UPDATE_INTERVAL_MS);
 	}
@@ -1008,10 +1091,11 @@
 		// Initialize everything else
 		currentlyDisplayedModel = await getCurrentModel();
 
-		await initUI();
+		ui = new MainUI();
+		await ui.initialize();
 		pollForUIUpdates();
 
-		await updateProgressBar(await sendBackgroundMessage({ type: 'requestData' }));
+		await ui.updateProgressBar(await sendBackgroundMessage({ type: 'requestData' }));
 		await sendBackgroundMessage({ type: 'initOrg' });
 		debugLog('Initialization complete. Ready to track tokens.');
 	}
