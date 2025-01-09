@@ -233,7 +233,7 @@
 		}
 
 		buildSection() {
-			// Main container
+			// Main container stays the same
 			this.container = document.createElement('div');
 			this.container.style.cssText = `
 				margin-bottom: 8px;
@@ -243,36 +243,44 @@
 				position: relative;
 			`;
 
-			// Top line with model name, message count, and reset time
+			// Top line with flexbox layout
 			const topLine = document.createElement('div');
 			topLine.style.cssText = `
 				display: flex;
 				align-items: center;
-				gap: 8px;
-				margin-bottom: 4px;
 				color: white;
 				font-size: 12px;
+				margin-bottom: 4px;
+				user-select: none;
 			`;
 
-			// Model name
+			// Model name container with fixed width
+			const nameContainer = document.createElement('div');
+			nameContainer.style.cssText = `
+				width: 20%;
+				flex-shrink: 0;
+			`;
 			const title = document.createElement('div');
 			title.textContent = this.modelName;
-			title.style.cssText = 'flex-grow: 1;';
+			nameContainer.appendChild(title);
 
-			// Message counter
-			this.messageCounter = document.createElement('div');
-			this.messageCounter.style.cssText = `
+			// Stats container for messages and reset time
+			const statsContainer = document.createElement('div');
+			statsContainer.style.cssText = `
+				display: flex;
+				gap: 12px;
+				flex-grow: 1;
 				color: #888;
 				font-size: 11px;
 			`;
+
+			// Message counter
+			this.messageCounter = document.createElement('div');
+			this.messageCounter.style.width = '40%';
 			this.messageCounter.textContent = 'Messages: 0';
 
 			// Reset time display
 			this.resetTimeDisplay = document.createElement('div');
-			this.resetTimeDisplay.style.cssText = `
-				color: #888;
-				font-size: 11px;
-			`;
 			this.resetTimeDisplay.textContent = 'Reset in: Not set';
 
 			// Active indicator
@@ -284,17 +292,22 @@
 				background: #3b82f6;
 				opacity: 1;
 				transition: opacity 0.2s;
+				margin-left: auto;
+				flex-shrink: 0;
 			`;
 
-			// Create and add progress bar
+			// Assemble the top line
+			statsContainer.appendChild(this.messageCounter);
+			statsContainer.appendChild(this.resetTimeDisplay);
+
+			topLine.appendChild(nameContainer);
+			topLine.appendChild(statsContainer);
+			topLine.appendChild(this.activeIndicator);
+
+			// Create progress bar
 			this.progressBar = new ProgressBar();
 
 			// Assemble everything
-			topLine.appendChild(title);
-			topLine.appendChild(this.messageCounter);
-			topLine.appendChild(this.resetTimeDisplay);
-			topLine.appendChild(this.activeIndicator);
-
 			this.container.appendChild(topLine);
 			this.container.appendChild(this.progressBar.container);
 		}
