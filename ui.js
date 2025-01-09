@@ -138,11 +138,6 @@
 	}
 
 	function isMobileView() {
-		// First check if we're on a chat page
-		if (!window.location.pathname.startsWith('/chat/')) {
-			return false;
-		}
-
 		// Check if height > width (portrait orientation)
 		return window.innerHeight > window.innerWidth;
 	}
@@ -782,12 +777,14 @@
 			this.statLine.className = 'flex items-center min-w-0 max-w-full';
 			this.statLine.style.userSelect = 'none'; // Make the whole line unselectable by default
 
-			// Add label for progress bar
-			const usageLabel = document.createElement('div');
-			usageLabel.className = 'text-text-400 text-xs mr-2';
-			usageLabel.textContent = 'Quota:';
-			usageLabel.style.userSelect = 'none';
-			this.statLine.appendChild(usageLabel);
+			// Add label for progress bar if not on mobile
+			if (!isMobileView()) {
+				const usageLabel = document.createElement('div');
+				usageLabel.className = 'text-text-400 text-xs mr-2';
+				usageLabel.textContent = 'Quota:';
+				usageLabel.style.userSelect = 'none';
+				this.statLine.appendChild(usageLabel);
+			}
 
 			// Create progress bar
 			this.progressBar = new ProgressBar({
