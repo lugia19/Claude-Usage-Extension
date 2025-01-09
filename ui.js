@@ -1,6 +1,7 @@
 (function () {
 	'use strict';
-
+	const BLUE_HIGHLIGHT = '#3b82f6';
+	const RED_WARNING = "#ef4444";
 	function debugLog(...args) {
 		const sender = `content:${document.title.substring(0, 20)}${document.title.length > 20 ? '...' : ''}`;
 		return browser.storage.local.get('debug_mode_until')
@@ -290,40 +291,8 @@
 				transition: opacity 0.2s;
 			`;
 
-			// Progress container and bar
-			const progressContainer = document.createElement('div');
-			progressContainer.style.cssText = `
-				background: #3B3B3B;
-				height: 6px;
-				border-radius: 3px;
-				overflow: hidden;
-			`;
-
-			this.progressBar = document.createElement('div');
-			this.progressBar.style.cssText = `
-				width: 0%;
-				height: 100%;
-				background: #3b82f6;
-				transition: width 0.3s ease, background-color 0.3s ease;
-			`;
-
-			// Tooltip
-			this.tooltip = document.createElement('div');
-			this.tooltip.style.cssText = `
-				position: absolute;
-				background: rgba(0, 0, 0, 0.9);
-				color: white;
-				padding: 4px 8px;
-				border-radius: 4px;
-				font-size: 12px;
-				opacity: 0;
-				transition: opacity 0.2s;
-				pointer-events: none;
-				margin-bottom: 4px;
-				white-space: nowrap;
-				z-index: 9999;
-				position: fixed;  // Changed to fixed
-			`;
+			// Create and add progress bar
+			this.progressBar = new ProgressBar();
 
 			// Assemble everything
 			topLine.appendChild(title);
@@ -331,37 +300,12 @@
 			topLine.appendChild(this.resetTimeDisplay);
 			topLine.appendChild(this.activeIndicator);
 
-			progressContainer.appendChild(this.progressBar);
-
 			this.container.appendChild(topLine);
-			this.container.appendChild(progressContainer);
-			document.body.appendChild(this.tooltip);
-
-			// Add event listeners
-			this.setupEventListeners();
-		}
-
-		setupEventListeners() {
-			this.container.addEventListener('mouseenter', () => {
-				const progressContainerRect = this.progressBar.parentElement.getBoundingClientRect();
-
-				this.tooltip.style.left = `${progressContainerRect.left + (progressContainerRect.width / 2)}px`;
-				this.tooltip.style.top = `${progressContainerRect.top - 30}px`;
-				this.tooltip.style.transform = 'translateX(-50%)';
-				this.tooltip.style.bottom = 'auto';
-				this.tooltip.style.opacity = '1';
-			});
-
-			this.container.addEventListener('mouseleave', () => {
-				this.tooltip.style.opacity = '0';
-			});
+			this.container.appendChild(this.progressBar.container);
 		}
 
 		updateProgress(total, maxTokens) {
-			const percentage = (total / maxTokens) * 100;
-			this.progressBar.style.width = `${Math.min(percentage, 100)}%`;
-			this.progressBar.style.background = total >= maxTokens * config.WARNING_THRESHOLD ? '#ef4444' : '#3b82f6';
-			this.tooltip.textContent = `${total.toLocaleString()} / ${maxTokens.toLocaleString()} tokens (${percentage.toFixed(1)}%)`;
+			this.progressBar.updateProgress(total, maxTokens);
 		}
 
 		updateMessageCount(count) {
@@ -381,13 +325,16 @@
 	}
 
 	async function checkVersionNotification() {
-		const previousVersion = await browser.storage.local.get('previousVersion').previousVersion;
+		const previousVersion = await sendBackgroundMessage({ type: 'getPreviousVersion' });
 		const currentVersion = browser.runtime.getManifest().version;
+
 		// Skip if versions match
 		if (previousVersion === currentVersion) return null;
-
 		// Store current version
-		await browser.storage.local.set({ previousVersion: currentVersion });
+		await sendBackgroundMessage({
+			type: 'setCurrentVersion',
+			version: currentVersion
+		});
 
 		return {
 			previousVersion,
@@ -426,7 +373,7 @@
 				right: 8px;
 				background: none;
 				border: none;
-				color: #3b82f6;
+				color: ${BLUE_HIGHLIGHT};
 				cursor: pointer;
 				font-size: 14px;
 				padding: 4px 8px;
@@ -503,7 +450,7 @@
 				patchNotesLink.href = 'https://github.com/lugia19/Claude-Usage-Extension/releases';
 				patchNotesLink.target = '_blank';
 				patchNotesLink.style.cssText = `
-					color: #3b82f6;
+					color: ${BLUE_HIGHLIGHT};
 					text-decoration: underline;
 					cursor: pointer;
 					display: block;
@@ -579,7 +526,7 @@
 			const saveButton = document.createElement('button');
 			saveButton.textContent = 'Save';
 			saveButton.style.cssText = `
-				background: #3b82f6;
+				background: ${BLUE_HIGHLIGHT};
 				border: none;
 				border-radius: 4px;
 				color: white;
@@ -592,7 +539,7 @@
 				if (!result) {
 					const errorMsg = document.createElement('div');
 					errorMsg.style.cssText = `
-						color: #ef4444;
+						color: ${RED_WARNING};
 						font-size: 14px;
 					`;
 					errorMsg.textContent = 'Invalid API key.';
@@ -640,6 +587,77 @@
 
 	}
 
+	class ProgressBar {
+		constructor(options = {}) {
+			const {
+				width = '100%',
+				backgroundColor = '#3B3B3B',
+				height = '6px'
+			} = options;
+
+			this.container = document.createElement('div');
+			this.container.style.cssText = `
+				background: ${backgroundColor};
+				height: ${height};
+				border-radius: 3px;
+				overflow: hidden;
+				width: ${width};
+				user-select: none;
+			`;
+
+			this.bar = document.createElement('div');
+			this.bar.style.cssText = `
+				width: 0%;
+				height: 100%;
+				background: #3b82f6;
+				transition: width 0.3s ease, background-color 0.3s ease;
+			`;
+
+			this.tooltip = document.createElement('div');
+			this.tooltip.style.cssText = `
+				position: fixed;
+				background: rgba(0, 0, 0, 0.9);
+				color: white;
+				padding: 4px 8px;
+				border-radius: 4px;
+				font-size: 12px;
+				opacity: 0;
+				transition: opacity 0.2s;
+				pointer-events: none;
+				white-space: nowrap;
+				z-index: 9999;
+				user-select: none;
+			`;
+
+			this.container.appendChild(this.bar);
+			document.body.appendChild(this.tooltip);
+
+			this.setupEventListeners();
+		}
+
+		setupEventListeners() {
+			this.container.addEventListener('mouseenter', () => {
+				const rect = this.container.getBoundingClientRect();
+				this.tooltip.style.left = `${rect.left + (rect.width / 2)}px`;
+				this.tooltip.style.top = `${rect.top - 30}px`;
+				this.tooltip.style.transform = 'translateX(-50%)';
+				this.tooltip.style.opacity = '1';
+			});
+
+			this.container.addEventListener('mouseleave', () => {
+				this.tooltip.style.opacity = '0';
+			});
+		}
+
+		updateProgress(total, maxTokens) {
+			const percentage = (total / maxTokens) * 100;
+			this.bar.style.width = `${Math.min(percentage, 100)}%`;
+			this.bar.style.background = total >= maxTokens * config.WARNING_THRESHOLD ? '#ef4444' : '#3b82f6';
+			this.tooltip.textContent = `${total.toLocaleString()} / ${maxTokens.toLocaleString()} tokens (${percentage.toFixed(1)}%)`;
+		}
+	}
+
+
 	function findSidebarContainer() {
 		// First find the nav element with the specific data-testid
 		const sidebarNav = document.querySelector('nav[data-testid="menu-sidebar"]');
@@ -658,19 +676,247 @@
 		return container;
 	}
 
-	class MainUI {
+	class UIManager {
 		constructor() {
-			this.container = null;
+			this.sidebarUI = new SidebarUI();
+			this.chatUI = new ChatUI();
 			this.currentlyDisplayedModel = 'default';
 			this.currentConversation = -1;
-			this.modelSections = {};
-			this.uiReady = false;
-			this.pendingUpdates = [];
 			this.conversationLength = null;
 		}
 
 		async initialize() {
-			// Create our container for the sidebar integration
+			await this.sidebarUI.initialize();
+			this.chatUI.initialize();
+
+			// Initial update
+			await this.updateUI(await sendBackgroundMessage({ type: 'requestData' }));
+			await sendBackgroundMessage({ type: 'initOrg' });
+
+			// Start periodic updates
+			setInterval(() => {
+				this.periodicUIUpdate();
+			}, config.UI_UPDATE_INTERVAL_MS);
+		}
+
+		async updateUI(data) {
+			const { conversationLength, modelData } = data;
+
+			if (conversationLength) this.conversationLength = conversationLength;
+
+			// Update current model
+			this.currentlyDisplayedModel = await getCurrentModel();
+
+			// Get the token cap for current model
+			const modelCaps = await sendBackgroundMessage({ type: 'getCaps' });
+
+			// Update both UIs
+			await this.sidebarUI.updateProgressBars(data, this.currentlyDisplayedModel, modelCaps);
+			this.chatUI.updateChatUI(data, this.currentlyDisplayedModel, modelCaps);
+		}
+
+		async periodicUIUpdate() {
+			const sidebarContainer = findSidebarContainer();
+			const newModel = await getCurrentModel();
+			const isHomePage = getConversationId() === null;
+			const newConversation = getConversationId();
+
+			// Check if UIs need to be re-injected
+			this.sidebarUI.checkAndReinject(sidebarContainer);
+			this.chatUI.checkAndReinject();
+
+			let updateTriggered = false;
+
+			// Check for message limit
+			const messageLimitElement = document.querySelector('a[href*="8325612-does-claude-pro-have-any-usage-limits"]');
+			if (messageLimitElement) {
+				const limitTextElement = messageLimitElement.closest('.text-text-400');
+				if (limitTextElement && limitTextElement.textContent.includes('messages remaining')) {
+					await sendBackgroundMessage({ type: 'resetHit', model: newModel });
+				}
+			}
+
+			// Check for conversation change
+			if (this.currentConversation !== newConversation && !isHomePage) {
+				await this.updateUI(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
+				this.currentConversation = newConversation;
+				updateTriggered = true;
+			}
+
+			// Check for model change
+			if (newModel !== this.currentlyDisplayedModel && !updateTriggered) {
+				await this.updateUI(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
+				updateTriggered = true;
+			}
+
+			this.currentlyDisplayedModel = newModel;
+			this.currentConversation = newConversation;
+
+			if (isHomePage) {
+				this.conversationLength = null;
+				this.chatUI.updateEstimate();
+			}
+
+			// Update UI states
+			this.sidebarUI.updateModelStates(this.currentlyDisplayedModel);
+			this.chatUI.updateLength(this.conversationLength);
+		}
+	}
+
+	class ChatUI {
+		constructor() {
+			this.lengthDisplay = null;
+			this.estimateDisplay = null;
+			this.resetDisplay = null;
+			this.statLine = null;
+			this.progressBar = null;
+		}
+
+		initialize() {
+			this.lengthDisplay = document.createElement('div');
+			this.lengthDisplay.className = 'text-text-500 text-xs';
+			this.lengthDisplay.style.cssText = "margin-top: 2px; font-size: 11px;";
+
+			// Create container for estimate and reset time
+			this.statLine = document.createElement('div');
+			this.statLine.className = 'flex items-center min-w-0 max-w-full';
+			this.statLine.style.userSelect = 'none'; // Make the whole line unselectable by default
+
+			// Create progress bar
+			this.progressBar = new ProgressBar({
+				backgroundColor: '#2D2D2D',  // Slightly darker background
+				width: "25%",
+			});
+			this.progressBar.container.style.marginRight = '12px';
+			this.statLine.appendChild(this.progressBar.container);
+
+			// Add spacer
+			const spacer = document.createElement('div');
+			spacer.className = 'flex-1';
+			spacer.style.userSelect = 'none';
+			this.statLine.appendChild(spacer);
+
+			// Create estimate display
+			this.estimateDisplay = document.createElement('div');
+			this.estimateDisplay.className = 'text-text-400 text-xs mr-3';
+			this.estimateDisplay.style.userSelect = 'text';  // Make text selectable
+			this.statLine.appendChild(this.estimateDisplay);
+
+			// Create reset display
+			this.resetDisplay = document.createElement('div');
+			this.resetDisplay.className = 'text-text-400 text-xs';
+			this.resetDisplay.style.userSelect = 'text';  // Make text selectable
+			this.statLine.appendChild(this.resetDisplay);
+		}
+
+		checkAndReinject() {
+			// Handle length display injection
+			const chatMenu = document.querySelector('[data-testid="chat-menu-trigger"]');
+			if (chatMenu) {
+				const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
+				if (titleLine) {
+					titleLine.classList.remove('md:flex-row');
+					titleLine.classList.add('md:flex-col');
+
+					if (chatMenu.parentElement.nextElementSibling !== this.lengthDisplay) {
+						chatMenu.parentElement.after(this.lengthDisplay);
+					}
+				}
+			}
+
+			// Handle stat line injection
+			const modelSelector = document.querySelector('[data-testid="model-selector-dropdown"]');
+			if (!modelSelector) return;
+			// Handle stat line injection
+			const selectorLine = modelSelector.closest('.min-w-0.flex-1.flex')?.parentElement?.parentElement;
+			if (!selectorLine) return;
+			if (selectorLine && selectorLine.nextElementSibling !== this.statLine) {
+				selectorLine.after(this.statLine);
+			}
+		}
+
+		updateChatUI(data, currentModel, modelCaps) {
+			this.updateLength(data.conversationLength);
+			this.updateProgressBar(data.modelData, currentModel, modelCaps);
+			this.updateEstimate(data.modelData, currentModel, modelCaps, data.conversationLength);
+			this.updateResetTime(data.modelData, currentModel);
+		}
+
+		updateProgressBar(modelData, currentModel, modelCaps) {
+			if (!this.progressBar) return;
+
+			const maxTokens = modelCaps[currentModel] || modelCaps.default;
+			const currentModelData = modelData[currentModel];
+			const modelTotal = currentModelData?.total || 0;
+
+			this.progressBar.updateProgress(modelTotal, maxTokens);
+		}
+
+		updateLength(length) {
+			if (this.lengthDisplay) {
+				this.lengthDisplay.textContent = length ?
+					`Current cost: ${length.toLocaleString()} tokens` :
+					'Current cost: N/A tokens';
+			}
+		}
+
+		updateEstimate(modelData, currentModel, modelCaps, conversationLength) {
+			if (!this.estimateDisplay) return;
+			if (!modelData || !currentModel || !modelCaps || !conversationLength) {
+				this.estimateDisplay.innerHTML = `Est. messages left: <span>N/A</span>`;
+				return
+			}
+			const maxTokens = modelCaps[currentModel] || modelCaps.default;
+			const currentModelData = modelData[currentModel];
+			const modelTotal = currentModelData?.total || 0;
+			const remainingTokens = maxTokens - modelTotal;
+
+			let estimate;
+			if (conversationLength > 0 && currentModel != "default") {
+				estimate = Math.max(0, remainingTokens / conversationLength);
+				estimate = estimate.toFixed(1);
+			} else {
+				estimate = "N/A";
+			}
+
+			this.estimateDisplay.innerHTML = `Est. messages left: <span style="color: ${BLUE_HIGHLIGHT}">${estimate}</span>`;
+		}
+
+		updateResetTime(modelData, currentModel) {
+			if (!this.resetDisplay) return;
+
+			const currentModelInfo = modelData[currentModel];
+			const resetTimestamp = currentModelInfo?.resetTimestamp;
+
+			if (!resetTimestamp) {
+				this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">Not set</span>`;
+				return;
+			}
+
+			const now = new Date();
+			const diff = resetTimestamp - now;
+
+			if (diff <= 0) {
+				this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">pending...</span>`;
+			} else {
+				const hours = Math.floor(diff / (1000 * 60 * 60));
+				const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+				const timeStr = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+				this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">${timeStr}</span>`;
+			}
+		}
+	}
+
+	class SidebarUI {
+		constructor() {
+			this.container = null;
+			this.modelSections = {};
+			this.uiReady = false;
+			this.pendingUpdates = [];
+		}
+
+		async initialize() {
+			// Create container for the sidebar integration
 			this.container = document.createElement('div');
 			this.container.className = 'flex flex-col min-h-0';
 			this.container.style.cssText = `opacity: 1; filter: blur(0px); transform: translateX(0%) translateZ(0px);`
@@ -691,7 +937,7 @@
 			// Process any updates that arrived before UI was ready
 			while (this.pendingUpdates.length > 0) {
 				const update = this.pendingUpdates.shift();
-				await this.updateProgressBar(update);
+				await this.updateProgressBars(update);
 			}
 
 			// Initialize model section visibility
@@ -699,8 +945,8 @@
 			config.MODELS.forEach(modelName => {
 				const section = this.modelSections[modelName];
 				if (section) {
-					const isActiveModel = modelName === this.currentlyDisplayedModel;
-					section.setActive(isActiveModel, isHomePage);
+					const isActiveModel = modelName === currentlyDisplayedModel;
+					section.setActive(isActiveModel);
 				}
 			});
 
@@ -710,10 +956,6 @@
 				const notificationCard = new VersionNotificationCard(versionInfo);
 				notificationCard.show();
 			}
-
-			setInterval(() => {
-				this.periodicUIUpdate();
-			}, config.UI_UPDATE_INTERVAL_MS);
 		}
 
 		async buildHeader() {
@@ -738,7 +980,7 @@
 				margin-left: auto;
 				display: flex;
 				align-items: center;
-				color: #3b82f6;
+				color: ${BLUE_HIGHLIGHT};
 			`;
 			settingsButton.className = "settings-button"
 			settingsButton.addEventListener('click', async () => {
@@ -783,47 +1025,14 @@
 			return content;
 		}
 
-		async updateProgressBar(data) {
-			debugLog("Got data", data);
+		async updateProgressBars(data, currentlyDisplayedModel, modelCaps) {
 			if (!this.uiReady) {
 				debugLog("UI not ready, pushing to pending updates...");
 				this.pendingUpdates.push(data);
 				return;
 			}
 
-			const { conversationLength, modelData } = data;
-
-			// Update conversation length display
-			if (conversationLength) {
-				this.conversationLength = conversationLength;
-			}
-
-			// Update messages left estimate
-			//Let's ensure the model is up to date...
-			this.currentlyDisplayedModel = await getCurrentModel();
-
-			// Get the token cap for current model, or use default if not found
-			const modelCaps = await sendBackgroundMessage({ type: 'getCaps' });
-			const maxTokens = modelCaps[this.currentlyDisplayedModel] || modelCaps.default;
-
-			// Get the total tokens used so far
-			const currentModelData = modelData[this.currentlyDisplayedModel];
-			const modelTotal = currentModelData?.total || 0;
-
-			// Calculate how many tokens are left
-			const remainingTokens = maxTokens - modelTotal;
-			debugLog(`Calculating difference: ${maxTokens} - ${modelTotal} = ${remainingTokens}`);
-			debugLog("Estimating messages...");
-
-			let estimate;
-			if (conversationLength > 0 && this.currentlyDisplayedModel != "default") {
-				estimate = Math.max(0, remainingTokens / conversationLength);
-				estimate = estimate.toFixed(1);
-			} else {
-				estimate = "N/A";
-			}
-			debugLog("Estimate", estimate);
-			//this.headerEstimateDisplay.textContent = `Est. messages left: ${estimate}`; TODO: Move this.
+			const { modelData } = data;
 
 			// Update each model section
 			debugLog("Updating model sections...");
@@ -839,43 +1048,7 @@
 			}
 		}
 
-		injectLengthDisplay() {
-			const chatMenu = document.querySelector('[data-testid="chat-menu-trigger"]');
-			if (chatMenu) {
-				const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
-				if (titleLine) {
-					// Replace md:flex-row with md:flex-col
-					titleLine.classList.remove('md:flex-row');
-					titleLine.classList.add('md:flex-col');
-
-					// Create length display if it doesn't exist yet
-					if (!this.lengthDisplay) {
-						this.lengthDisplay = document.createElement('div');
-						this.lengthDisplay.className = 'text-text-500 text-xs';
-						this.lengthDisplay.style.cssText = "margin-top: 2px; font-size: 11px;";
-					}
-
-					// Update text based on stored length
-					this.lengthDisplay.textContent = this.conversationLength ?
-						`Current cost: ${this.conversationLength.toLocaleString()} tokens` :
-						'Current cost: N/A tokens';
-
-					// Inject if not already present
-					if (chatMenu.parentElement.nextElementSibling !== this.lengthDisplay) {
-						chatMenu.parentElement.after(this.lengthDisplay);
-					}
-				}
-			}
-		}
-
-
-		async periodicUIUpdate() {
-			const sidebarContainer = findSidebarContainer();
-			const newModel = await getCurrentModel();
-			const isHomePage = getConversationId() === null;
-			const newConversation = getConversationId();
-
-			// First check if UI needs to be re-injected
+		checkAndReinject(sidebarContainer) {
 			if (!sidebarContainer || !sidebarContainer.contains(this.container)) {
 				if (sidebarContainer) {
 					console.log('UI not present in sidebar, re-injecting...');
@@ -883,52 +1056,16 @@
 					sidebarContainer.appendChild(this.container);
 					this.uiReady = true;
 				}
-				return; // Skip other checks if we're not properly initialized
+				return false;
 			}
+			return true;
+		}
 
-			let updateTriggered = false;
-
-			// Check for message limit element
-			const messageLimitElement = document.querySelector('a[href*="8325612-does-claude-pro-have-any-usage-limits"]');
-			if (messageLimitElement) {
-				const limitTextElement = messageLimitElement.closest('.text-text-400');
-				if (limitTextElement && limitTextElement.textContent.includes('messages remaining')) {
-					console.log("We've reached the limit for the current model. Sending reset data to background for model", newModel);
-					await sendBackgroundMessage({ type: 'resetHit', model: newModel });
-				}
-			}
-
-			// Check for conversation change
-			if (this.currentConversation !== newConversation && !isHomePage) {
-				console.log(`Conversation changed from ${this.currentConversation} to ${newConversation}`);
-				await this.updateProgressBar(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
-				this.currentConversation = newConversation;
-				updateTriggered = true;
-			}
-
-			// Check for model change
-			if (newModel !== this.currentlyDisplayedModel && !updateTriggered) {
-				console.log(`Model changed from ${this.currentlyDisplayedModel} to ${newModel}`);
-				await this.updateProgressBar(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
-				updateTriggered = true;
-			}
-
-			this.currentlyDisplayedModel = newModel;
-
-			// Update all sections visibility
+		updateModelStates(currentlyDisplayedModel) {
 			for (const [modelName, section] of Object.entries(this.modelSections)) {
-				const isActiveModel = modelName === this.currentlyDisplayedModel;
+				const isActiveModel = modelName === currentlyDisplayedModel;
 				section.setActive(isActiveModel);
 			}
-
-			this.currentConversation = newConversation;
-
-			if (isHomePage) {
-				//this.headerEstimateDisplay.textContent = `Est. messages left: N/A`;
-				this.conversationLength = null;
-			}
-
-			this.injectLengthDisplay();
 		}
 	}
 
@@ -946,7 +1083,7 @@
 	// Listen for messages from background
 	browser.runtime.onMessage.addListener(async (message) => {
 		if (message.type === 'updateUsage') {
-			await ui.updateProgressBar(message.data);
+			await ui.updateUI(message.data);
 		}
 
 		if (message.type === 'getActiveModel') {
@@ -1019,10 +1156,10 @@
 		debugLog('We\'re unique, initializing Chat Token Counter...');
 		currentlyDisplayedModel = await getCurrentModel();
 
-		ui = new MainUI();
+		ui = new UIManager();
 		await ui.initialize();
 
-		await ui.updateProgressBar(await sendBackgroundMessage({ type: 'requestData' }));
+		await ui.updateUI(await sendBackgroundMessage({ type: 'requestData' }));
 		await sendBackgroundMessage({ type: 'initOrg' });
 		debugLog('Initialization complete. Ready to track tokens.');
 	}
