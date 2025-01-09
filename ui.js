@@ -537,7 +537,12 @@
 						color: ${RED_WARNING};
 						font-size: 14px;
 					`;
-					errorMsg.textContent = 'Invalid API key.';
+					if (input.value.startsWith('sk-ant')) {
+						errorMsg.textContent = 'Inactive API key. Have you ever loaded credits to the account?';
+					} else {
+						errorMsg.textContent = 'Invalid API key. Format looks wrong, it should start with sk-ant.';
+					}
+
 					input.after(errorMsg);
 					setTimeout(() => errorMsg.remove(), 3000);
 					return;
@@ -749,7 +754,7 @@
 
 			if (isHomePage) {
 				this.conversationLength = null;
-				this.chatUI.updateEstimate();
+				this.chatUI.updateEstimate(null, null, null, null, true);
 			}
 
 			// Update UI states
@@ -840,9 +845,9 @@
 		}
 
 		updateChatUI(data, currentModel, modelCaps) {
-			this.updateLength(data.conversationLength);
+			if (data.conversationLength) this.updateLength(data.conversationLength);
 			this.updateProgressBar(data.modelData, currentModel, modelCaps);
-			this.updateEstimate(data.modelData, currentModel, modelCaps, data.conversationLength);
+			if (data.conversationLength) this.updateEstimate(data.modelData, currentModel, modelCaps, data.conversationLength, false);
 			this.updateResetTime(data.modelData, currentModel);
 		}
 
@@ -864,9 +869,9 @@
 			}
 		}
 
-		updateEstimate(modelData, currentModel, modelCaps, conversationLength) {
+		updateEstimate(modelData, currentModel, modelCaps, conversationLength, overrideNone) {
 			if (!this.estimateDisplay) return;
-			if (!modelData || !currentModel || !modelCaps || !conversationLength) {
+			if (overrideNone) {
 				this.estimateDisplay.innerHTML = `Est. messages left: <span>N/A</span>`;
 				return
 			}
