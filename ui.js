@@ -53,17 +53,6 @@
 
 	//#region Storage Interface
 	class TokenStorageInterface {
-		async getCollapsedState() {
-			return await sendBackgroundMessage({ type: 'getCollapsedState' });
-		}
-
-		async setCollapsedState(isCollapsed) {
-			return await sendBackgroundMessage({
-				type: 'setCollapsedState',
-				isCollapsed
-			});
-		}
-
 		async getPreviousVersion() {
 			return await sendBackgroundMessage({ type: 'getPreviousVersion' });
 		}
@@ -262,7 +251,6 @@
 	class ModelSection {
 		constructor(modelName) {
 			this.modelName = modelName;
-			this.isCollapsed = true;
 			this.isEnabled = true;
 			this.resetTime = null;
 			this.buildSection();
@@ -291,16 +279,6 @@
 				font-size: 12px;
 			`;
 
-			// Create collapse arrow
-			this.arrow = document.createElement('div');
-			this.arrow.innerHTML = '▼';
-			this.arrow.style.cssText = `
-				cursor: pointer;
-				transition: transform 0.2s;
-				font-size: 10px;
-			`;
-			this.arrow.style.transform = this.isCollapsed ? 'rotate(-90deg)' : '';
-
 			// Create title
 			const title = document.createElement('div');
 			title.textContent = this.modelName;
@@ -318,13 +296,11 @@
 			`;
 
 			// Assemble header
-			sectionHeader.appendChild(this.arrow);
 			sectionHeader.appendChild(title);
 			sectionHeader.appendChild(this.activeIndicator);
 
 			// Create content container
 			this.content = document.createElement('div');
-			this.content.style.display = this.isCollapsed ? 'none' : 'block';
 
 			// Create reset time display
 			this.resetTimeDisplay = document.createElement('div');
@@ -397,14 +373,6 @@
 		}
 
 		setupEventListeners() {
-			// Toggle section collapse/expand
-			this.arrow.addEventListener('click', (e) => {
-				e.stopPropagation();
-				this.isCollapsed = !this.isCollapsed;
-				this.content.style.display = this.isCollapsed ? 'none' : 'block';
-				this.arrow.style.transform = this.isCollapsed ? 'rotate(-90deg)' : '';
-			});
-
 			// Tooltip visibility
 			this.container.addEventListener('mouseenter', () => {
 				this.tooltip.style.opacity = '1';
@@ -412,36 +380,6 @@
 			this.container.addEventListener('mouseleave', () => {
 				this.tooltip.style.opacity = '0';
 			});
-		}
-
-		setActive(active, isHomePage) {
-			if (!this.isEnabled) return;
-
-			this.activeIndicator.style.opacity = active ? '1' : '0';
-			this.container.style.opacity = active ? '1' : '0.7';
-
-			if (!isHomePage || isMobileView()) {
-				this.container.style.display = active ? 'block' : 'none';
-			} else {
-				this.container.style.display = 'block';
-			}
-
-			if (active) {
-				this.isCollapsed = false;
-				this.content.style.display = 'block';
-				this.arrow.style.transform = '';
-			} else if (!isHomePage) {
-				this.isCollapsed = true;
-				this.content.style.display = 'none';
-				this.arrow.style.transform = 'rotate(-90deg)';
-			}
-		}
-
-		setEnabled(enabled) {
-			this.isEnabled = enabled;
-			if (!enabled) {
-				this.container.style.display = 'none';
-			}
 		}
 
 		updateProgress(total, maxTokens) {
@@ -460,6 +398,10 @@
 			this.resetTimeDisplay.textContent = timestamp ?
 				formatTimeRemaining(new Date(timestamp)) :
 				'Reset in: Not set';
+		}
+
+		setActive(active) {
+			this.activeIndicator.style.opacity = active ? '1' : '0';
 		}
 	}
 
@@ -720,7 +662,6 @@
 			this.currentlyDisplayedModel = 'default';
 			this.currentConversation = -1;
 			this.modelSections = {};
-			this.isCollapsed = false;
 			this.uiReady = false;
 			this.pendingUpdates = [];
 		}
@@ -738,10 +679,6 @@
 				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 				user-select: none;
 			`;
-
-			// Get stored collapse state
-			this.isCollapsed = await storageInterface.getCollapsedState();
-
 			await this.buildHeader();
 			await this.buildContent();
 
@@ -766,13 +703,13 @@
 				await this.updateProgressBar(update);
 			}
 
-			// Initialize model section visibility
+			// Initialize model activity
 			const isHomePage = getConversationId() === null;
 			config.MODELS.forEach(modelName => {
 				const section = this.modelSections[modelName];
 				if (section) {
 					const isActiveModel = modelName === this.currentlyDisplayedModel;
-					section.setActive(isActiveModel, isHomePage);
+					section.setActive(isActiveModel);
 				}
 			});
 		}
@@ -788,14 +725,6 @@
 				gap: 8px;
 				cursor: move;
 			`;
-
-			const arrow = document.createElement('div');
-			arrow.innerHTML = '▼';
-			arrow.style.cssText = `
-				cursor: pointer;
-				transition: transform 0.2s;
-			`;
-			arrow.style.transform = this.isCollapsed ? 'rotate(-90deg)' : '';
 
 			// Create estimate display for the header
 			this.headerEstimateDisplay = document.createElement('div');
@@ -829,26 +758,8 @@
 				}
 			});
 
-			this.header.appendChild(arrow);
 			this.header.appendChild(this.headerEstimateDisplay);
 			this.header.appendChild(settingsButton);
-
-			// Toggle collapse/expand
-			arrow.addEventListener('click', async (e) => {
-				e.stopPropagation();
-				this.isCollapsed = !this.isCollapsed;
-				this.content.style.display = this.isCollapsed ? 'none' : 'block';
-				arrow.style.transform = this.isCollapsed ? 'rotate(-90deg)' : '';
-
-				// Also hide lengthDisplay on mobile
-				if (isMobileView()) {
-					this.lengthDisplay.style.display = this.isCollapsed ? 'none' : 'block';
-				}
-
-				// Store the new state
-				await storageInterface.setCollapsedState(this.isCollapsed);
-			});
-
 			this.container.appendChild(this.header);
 		}
 
@@ -880,7 +791,6 @@
 			this.content.style.cssText = `
 				padding: 0 10px 10px 10px;
 			`;
-			this.content.style.display = this.isCollapsed ? 'none' : 'block';
 
 			// Create sections for each model
 			config.MODELS.forEach(model => {
@@ -946,7 +856,6 @@
 				section.updateProgress(modelTotal, maxTokens);
 				section.updateMessageCount(messageCount);
 				section.updateResetTime(modelInfo.resetTimestamp);
-				section.setEnabled(modelCaps[modelName] != 0);
 			}
 		}
 	}
@@ -1021,7 +930,7 @@
 			// Update all sections - will collapse inactive ones
 			for (const [modelName, section] of Object.entries(ui.modelSections)) {
 				const isActiveModel = modelName === ui.currentlyDisplayedModel;
-				section.setActive(isActiveModel, isHomePage);
+				section.setActive(isActiveModel);
 			}
 
 			ui.currentConversation = newConversation;
