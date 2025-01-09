@@ -51,26 +51,6 @@
 	let config;
 	let ui;
 
-	//#region Storage Interface
-	class TokenStorageInterface {
-		async getPreviousVersion() {
-			return await sendBackgroundMessage({ type: 'getPreviousVersion' });
-		}
-
-		async setCurrentVersion(version) {
-			return await sendBackgroundMessage({
-				type: 'setCurrentVersion',
-				version
-			});
-		}
-
-		async getCaps() {
-			return await sendBackgroundMessage({ type: 'getCaps' });
-		}
-	}
-	let storageInterface;
-	//#endregion
-
 	//State variables
 	let currentlyDisplayedModel = 'default';
 	let currentConversation = -1;
@@ -401,13 +381,13 @@
 	}
 
 	async function checkVersionNotification() {
-		const previousVersion = await storageInterface.getPreviousVersion();
+		const previousVersion = await browser.storage.local.get('previousVersion').previousVersion;
 		const currentVersion = browser.runtime.getManifest().version;
 		// Skip if versions match
 		if (previousVersion === currentVersion) return null;
 
 		// Store current version
-		await storageInterface.setCurrentVersion(currentVersion);
+		await browser.storage.local.set({ previousVersion: currentVersion });
 
 		return {
 			previousVersion,
@@ -416,15 +396,15 @@
 	}
 
 	class FloatingCard {
-		constructor(position) {
+		constructor() {
+			this.defaultPosition = { top: '20px', right: '20px' }
 			this.element = document.createElement('div');
-			this.position = position || { top: '20px', right: '20px' };
 			this.setupBaseStyles();
 		}
 
 		setupBaseStyles() {
 			// Start with basic styles that aren't position-related
-			const baseStyles = `
+			this.element.style.cssText = `
 				position: fixed;
 				background: #2D2D2D;
 				border: 1px solid #3B3B3B;
@@ -436,13 +416,6 @@
 				z-index: 10000;
 				user-select: none;
 			`;
-
-			// Add position styles based on provided position object
-			const positionStyles = Object.entries(this.position)
-				.map(([key, value]) => `${key}: ${value};`)
-				.join('\n');
-
-			this.element.style.cssText = baseStyles + positionStyles;
 		}
 
 		addCloseButton() {
@@ -577,7 +550,7 @@
 		static currentInstance = null;
 
 		constructor() {
-			super({ bottom: '20px', left: '20px' });
+			super();
 			this.element.classList.add('settings-panel'); // Add the class for easier querying
 			this.element.style.maxWidth = '275px';
 		}
@@ -830,7 +803,7 @@
 			this.currentlyDisplayedModel = await getCurrentModel();
 
 			// Get the token cap for current model, or use default if not found
-			const modelCaps = await storageInterface.getCaps();
+			const modelCaps = await sendBackgroundMessage({ type: 'getCaps' });
 			const maxTokens = modelCaps[this.currentlyDisplayedModel] || modelCaps.default;
 
 			// Get the total tokens used so far
@@ -952,7 +925,7 @@
 
 			if (isHomePage) {
 				//this.headerEstimateDisplay.textContent = `Est. messages left: N/A`;
-				this.conversationLength = nul;
+				this.conversationLength = null;
 			}
 
 			this.injectLengthDisplay();
@@ -1044,9 +1017,6 @@
 		}
 		userMenuButton.setAttribute('data-script-loaded', true);
 		debugLog('We\'re unique, initializing Chat Token Counter...');
-
-		storageInterface = new TokenStorageInterface();
-		// Initialize everything else
 		currentlyDisplayedModel = await getCurrentModel();
 
 		ui = new MainUI();

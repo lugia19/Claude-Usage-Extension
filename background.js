@@ -1128,10 +1128,6 @@ async function handleMessageFromContent(message, sender) {
 			case 'initOrg':
 				await tokenStorageManager.addOrgId(orgId);
 				return true;
-			case 'getPreviousVersion':
-				return await browser.storage.local.get('previousVersion').then(data => data.previousVersion);
-			case 'setCurrentVersion':
-				return await browser.storage.local.set({ previousVersion: message.version });
 			case 'getCaps':
 				return await tokenStorageManager.getCaps(orgId, api);
 			case 'getAPIKey':
