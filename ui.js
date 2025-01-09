@@ -782,6 +782,13 @@
 			this.statLine.className = 'flex items-center min-w-0 max-w-full';
 			this.statLine.style.userSelect = 'none'; // Make the whole line unselectable by default
 
+			// Add label for progress bar
+			const usageLabel = document.createElement('div');
+			usageLabel.className = 'text-text-400 text-xs mr-2';
+			usageLabel.textContent = 'Quota:';
+			usageLabel.style.userSelect = 'none';
+			this.statLine.appendChild(usageLabel);
+
 			// Create progress bar
 			this.progressBar = new ProgressBar({
 				backgroundColor: '#2D2D2D',  // Slightly darker background
@@ -798,13 +805,13 @@
 
 			// Create estimate display
 			this.estimateDisplay = document.createElement('div');
-			this.estimateDisplay.className = 'text-text-400 text-xs mr-3';
+			this.estimateDisplay.className = 'text-text-400 text-xs mr-2';
 			this.estimateDisplay.style.userSelect = 'text';  // Make text selectable
 			this.statLine.appendChild(this.estimateDisplay);
 
 			// Create reset display
 			this.resetDisplay = document.createElement('div');
-			this.resetDisplay.className = 'text-text-400 text-xs';
+			this.resetDisplay.className = 'text-text-400 text-xs mr-2';
 			this.resetDisplay.style.userSelect = 'text';  // Make text selectable
 			this.statLine.appendChild(this.resetDisplay);
 		}
@@ -1051,7 +1058,7 @@
 		checkAndReinject(sidebarContainer) {
 			if (!sidebarContainer || !sidebarContainer.contains(this.container)) {
 				if (sidebarContainer) {
-					console.log('UI not present in sidebar, re-injecting...');
+					debugLog('UI not present in sidebar, re-injecting...');
 					this.uiReady = false;
 					sidebarContainer.appendChild(this.container);
 					this.uiReady = true;
