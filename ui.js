@@ -257,34 +257,49 @@
 		}
 
 		buildSection() {
-			// Create main container
+			// Main container
 			this.container = document.createElement('div');
 			this.container.style.cssText = `
-				margin-bottom: 12px;
-				border-bottom: 1px solid #3B3B3B;
-				padding-bottom: 8px;
+				margin-bottom: 8px;
+				padding-bottom: 4px;
 				opacity: 1;
 				transition: opacity 0.2s;
 				position: relative;
 			`;
 
-			// Create header
-			const sectionHeader = document.createElement('div');
-			sectionHeader.style.cssText = `
+			// Top line with model name, message count, and reset time
+			const topLine = document.createElement('div');
+			topLine.style.cssText = `
 				display: flex;
 				align-items: center;
 				gap: 8px;
-				margin-bottom: 8px;
+				margin-bottom: 4px;
 				color: white;
 				font-size: 12px;
 			`;
 
-			// Create title
+			// Model name
 			const title = document.createElement('div');
 			title.textContent = this.modelName;
 			title.style.cssText = 'flex-grow: 1;';
 
-			// Create active indicator
+			// Message counter
+			this.messageCounter = document.createElement('div');
+			this.messageCounter.style.cssText = `
+				color: #888;
+				font-size: 11px;
+			`;
+			this.messageCounter.textContent = 'Messages: 0';
+
+			// Reset time display
+			this.resetTimeDisplay = document.createElement('div');
+			this.resetTimeDisplay.style.cssText = `
+				color: #888;
+				font-size: 11px;
+			`;
+			this.resetTimeDisplay.textContent = 'Reset in: Not set';
+
+			// Active indicator
 			this.activeIndicator = document.createElement('div');
 			this.activeIndicator.style.cssText = `
 				width: 8px;
@@ -295,23 +310,7 @@
 				transition: opacity 0.2s;
 			`;
 
-			// Assemble header
-			sectionHeader.appendChild(title);
-			sectionHeader.appendChild(this.activeIndicator);
-
-			// Create content container
-			this.content = document.createElement('div');
-
-			// Create reset time display
-			this.resetTimeDisplay = document.createElement('div');
-			this.resetTimeDisplay.style.cssText = `
-				color: #888;
-				font-size: 11px;
-				margin-bottom: 8px;
-			`;
-			this.resetTimeDisplay.textContent = 'Reset in: Not set.';
-
-			// Create progress container and bar
+			// Progress container and bar
 			const progressContainer = document.createElement('div');
 			progressContainer.style.cssText = `
 				background: #3B3B3B;
@@ -328,13 +327,10 @@
 				transition: width 0.3s ease, background-color 0.3s ease;
 			`;
 
-			// Create tooltip
+			// Tooltip
 			this.tooltip = document.createElement('div');
 			this.tooltip.style.cssText = `
 				position: absolute;
-				bottom: 100%;
-				left: 50%;
-				transform: translateX(-50%);
 				background: rgba(0, 0, 0, 0.9);
 				color: white;
 				padding: 4px 8px;
@@ -346,37 +342,36 @@
 				margin-bottom: 4px;
 				white-space: nowrap;
 				z-index: 9999;
+				position: fixed;  // Changed to fixed
 			`;
 
-			// Create message counter
-			this.messageCounter = document.createElement('div');
-			this.messageCounter.style.cssText = `
-				color: #888;
-				font-size: 11px;
-				margin-top: 4px;
-			`;
-			this.messageCounter.textContent = 'Messages: 0';
+			// Assemble everything
+			topLine.appendChild(title);
+			topLine.appendChild(this.messageCounter);
+			topLine.appendChild(this.resetTimeDisplay);
+			topLine.appendChild(this.activeIndicator);
 
-			// Assemble content
 			progressContainer.appendChild(this.progressBar);
-			this.content.appendChild(this.messageCounter);
-			this.content.appendChild(this.resetTimeDisplay);
-			this.content.appendChild(progressContainer);
-			this.content.appendChild(this.tooltip);
 
-			// Assemble final container
-			this.container.appendChild(sectionHeader);
-			this.container.appendChild(this.content);
+			this.container.appendChild(topLine);
+			this.container.appendChild(progressContainer);
+			document.body.appendChild(this.tooltip);
 
 			// Add event listeners
 			this.setupEventListeners();
 		}
 
 		setupEventListeners() {
-			// Tooltip visibility
 			this.container.addEventListener('mouseenter', () => {
+				const progressContainerRect = this.progressBar.parentElement.getBoundingClientRect();
+
+				this.tooltip.style.left = `${progressContainerRect.left + (progressContainerRect.width / 2)}px`;
+				this.tooltip.style.top = `${progressContainerRect.top - 30}px`;
+				this.tooltip.style.transform = 'translateX(-50%)';
+				this.tooltip.style.bottom = 'auto';
 				this.tooltip.style.opacity = '1';
 			});
+
 			this.container.addEventListener('mouseleave', () => {
 				this.tooltip.style.opacity = '0';
 			});
@@ -396,8 +391,8 @@
 		updateResetTime(timestamp) {
 			this.resetTime = timestamp;
 			this.resetTimeDisplay.textContent = timestamp ?
-				formatTimeRemaining(new Date(timestamp)) :
-				'Reset in: Not set';
+				`Reset in: ${formatTimeRemaining(timestamp).split(': ')[1]}` :
+				'Reset in: Not Set';
 		}
 
 		setActive(active) {
@@ -468,7 +463,23 @@
 			this.element.appendChild(closeButton);
 		}
 
-		show() {
+		show(position) {
+			// If position is provided, use it instead of default
+			if (position) {
+				// Clear any previous position styles
+				['top', 'right', 'bottom', 'left'].forEach(prop => {
+					this.element.style[prop] = null;
+				});
+				// Apply new position
+				Object.entries(position).forEach(([key, value]) => {
+					this.element.style[key] = typeof value === 'number' ? `${value}px` : value;
+				});
+			} else {
+				// Apply default position
+				Object.entries(this.defaultPosition).forEach(([key, value]) => {
+					this.element.style[key] = value;
+				});
+			}
 			document.body.appendChild(this.element);
 		}
 
@@ -639,11 +650,11 @@
 			this.makeCardDraggable(dragHandle);
 		}
 
-		show() {
+		show(position) {
 			if (SettingsCard.currentInstance) {
 				SettingsCard.currentInstance.remove();
 			}
-			super.show();
+			super.show(position);
 			SettingsCard.currentInstance = this;
 		}
 
@@ -656,6 +667,24 @@
 
 	}
 
+	function findSidebarContainer() {
+		// First find the nav element with the specific data-testid
+		const sidebarNav = document.querySelector('nav[data-testid="menu-sidebar"]');
+		if (!sidebarNav) {
+			console.error('Could not find sidebar nav');
+			return null;
+		}
+
+		// Then find the scrollable container within it
+		const container = sidebarNav.querySelector('.overflow-y-auto.overflow-x-hidden.flex.flex-col.gap-4');
+		if (!container) {
+			console.error('Could not find sidebar container within nav');
+			return null;
+		}
+
+		return container;
+	}
+
 	class MainUI {
 		constructor() {
 			this.container = null;
@@ -664,81 +693,71 @@
 			this.modelSections = {};
 			this.uiReady = false;
 			this.pendingUpdates = [];
+			this.conversationLength = null;
 		}
 
 		async initialize() {
+			// Create our container for the sidebar integration
 			this.container = document.createElement('div');
-			this.container.style.cssText = `
-				position: fixed;
-				bottom: 20px;
-				right: 20px;
-				background: #2D2D2D;
-				border: 1px solid #3B3B3B;
-				border-radius: 8px;
-				z-index: 9998;
-				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-				user-select: none;
-			`;
-			await this.buildHeader();
-			await this.buildContent();
+			this.container.className = 'flex flex-col min-h-0';
+			this.container.style.cssText = `opacity: 1; filter: blur(0px); transform: translateX(0%) translateZ(0px);`
 
-			document.body.appendChild(this.container);
+			this.header = await this.buildHeader();
+			this.container.appendChild(this.header);
+			this.content = await this.buildContent();
+			this.container.appendChild(this.content);
 
-			// Make the container draggable using the header
-			makeDraggable(this.container, this.header);
-
-			// Check for version notification
-			const versionInfo = await checkVersionNotification();
-			debugLog("Version info", versionInfo);
-			if (versionInfo) {
-				const notificationCard = new VersionNotificationCard(versionInfo);
-				notificationCard.show();
+			// Find the sidebar's scrollable container and inject at the end
+			const sidebarContainer = findSidebarContainer();
+			if (sidebarContainer) {
+				sidebarContainer.appendChild(this.container);
 			}
 
 			this.uiReady = true;
+
 			// Process any updates that arrived before UI was ready
 			while (this.pendingUpdates.length > 0) {
-				debugLog("UI is ready, processing pending updates...");
 				const update = this.pendingUpdates.shift();
 				await this.updateProgressBar(update);
 			}
 
-			// Initialize model activity
+			// Initialize model section visibility
 			const isHomePage = getConversationId() === null;
 			config.MODELS.forEach(modelName => {
 				const section = this.modelSections[modelName];
 				if (section) {
 					const isActiveModel = modelName === this.currentlyDisplayedModel;
-					section.setActive(isActiveModel);
+					section.setActive(isActiveModel, isHomePage);
 				}
 			});
+
+			// Check for version notification
+			const versionInfo = await checkVersionNotification();
+			if (versionInfo) {
+				const notificationCard = new VersionNotificationCard(versionInfo);
+				notificationCard.show();
+			}
+
+			setInterval(() => {
+				this.periodicUIUpdate();
+			}, config.UI_UPDATE_INTERVAL_MS);
 		}
 
 		async buildHeader() {
-			this.header = document.createElement('div');
-			this.header.style.cssText = `
-				display: flex;
-				align-items: center;
-				padding: 8px 10px;
-				color: white;
-				font-size: 12px;
-				gap: 8px;
-				cursor: move;
-			`;
+			const header = document.createElement('div');
+			header.className = 'text-text-300 mb-1 flex';
 
-			// Create estimate display for the header
-			this.headerEstimateDisplay = document.createElement('div');
-			this.headerEstimateDisplay.id = 'messages-left-estimate';
-			this.headerEstimateDisplay.style.cssText = `
-				flex-grow: 1;
-				white-space: nowrap;
-			`;
-			this.headerEstimateDisplay.textContent = 'Est. messages left: Loading...';
-
+			// Create title
+			const title = document.createElement('span');
+			title.textContent = 'Usage Tracker';
+			title.className = 'text-text-300 mb-1 flex items-center gap-1.5 text-sm font-medium';
+			title.style.cssText = `
+				left: 0px
+			`
 			// Add settings button
 			const settingsButton = document.createElement('button');
 			settingsButton.innerHTML = `
-				<svg viewBox="0 0 24 24" width="20" height="20" style="cursor: pointer;">
+				<svg viewBox="0 0 24 24" width="16" height="16" style="cursor: pointer;">
 					<path fill="currentColor" d="M19.43 12.98c.04-.32.07-.64.07-.98 0-.34-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98 0 .33.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
 				</svg>
 			`;
@@ -748,59 +767,47 @@
 				align-items: center;
 				color: #3b82f6;
 			`;
+			settingsButton.className = "settings-button"
 			settingsButton.addEventListener('click', async () => {
 				if (SettingsCard.currentInstance) {
 					SettingsCard.currentInstance.remove();
 				} else {
+					const buttonRect = settingsButton.getBoundingClientRect();
 					const settingsCard = new SettingsCard();
 					await settingsCard.build();
-					settingsCard.show();
+					settingsCard.show({
+						top: buttonRect.bottom + 5,
+						left: buttonRect.left
+					});
 				}
 			});
 
-			this.header.appendChild(this.headerEstimateDisplay);
-			this.header.appendChild(settingsButton);
-			this.container.appendChild(this.header);
+			header.appendChild(title);
+			header.appendChild(settingsButton);
+
+			return header;
 		}
 
 		async buildContent() {
-			// Conversation info
-			const currentConversationDisplay = document.createElement('div');
-			currentConversationDisplay.style.cssText = `
-				color: white;
-				font-size: 12px;
-				padding: 0 10px;
-				margin-bottom: 8px;
-				border-bottom: 1px solid #3B3B3B;
-				padding-bottom: 8px;
-			`;
+			// Create our container div that matches the Starred/Recents sections style
+			const content = document.createElement('div');
+			content.className = 'flex min-h-0 flex-col min-h-min';
+			content.style.cssText = 'opacity: 1; filter: blur(0px); transform: translateX(0%) translateZ(0px);';
 
-			this.lengthDisplay = document.createElement('div');
-			this.lengthDisplay.id = 'conversation-token-count';
-			this.lengthDisplay.style.cssText = `
-				color: #888;
-				font-size: 11px;
-				margin-top: 4px;
-			`;
-			this.lengthDisplay.textContent = 'Current cost: 0 tokens';
+			// Container for model sections
+			const sectionsContainer = document.createElement('div');
+			sectionsContainer.className = '-mx-1.5 flex flex-1 flex-col gap-0.5 overflow-y-auto px-1.5';
 
-			currentConversationDisplay.appendChild(this.lengthDisplay);
-
-			// Content container
-			this.content = document.createElement('div');
-			this.content.style.cssText = `
-				padding: 0 10px 10px 10px;
-			`;
-
-			// Create sections for each model
+			// Create model sections
 			config.MODELS.forEach(model => {
 				const section = new ModelSection(model);
 				this.modelSections[model] = section;
-				this.content.appendChild(section.container);
+				sectionsContainer.appendChild(section.container);
 			});
 
-			this.container.appendChild(currentConversationDisplay);
-			this.container.appendChild(this.content);
+			content.appendChild(sectionsContainer);
+
+			return content;
 		}
 
 		async updateProgressBar(data) {
@@ -815,7 +822,7 @@
 
 			// Update conversation length display
 			if (conversationLength) {
-				this.lengthDisplay.textContent = `Current cost: ${conversationLength.toLocaleString()} tokens`;
+				this.conversationLength = conversationLength;
 			}
 
 			// Update messages left estimate
@@ -843,7 +850,7 @@
 				estimate = "N/A";
 			}
 			debugLog("Estimate", estimate);
-			this.headerEstimateDisplay.textContent = `Est. messages left: ${estimate}`;
+			//this.headerEstimateDisplay.textContent = `Est. messages left: ${estimate}`; TODO: Move this.
 
 			// Update each model section
 			debugLog("Updating model sections...");
@@ -857,6 +864,98 @@
 				section.updateMessageCount(messageCount);
 				section.updateResetTime(modelInfo.resetTimestamp);
 			}
+		}
+
+		injectLengthDisplay() {
+			const chatMenu = document.querySelector('[data-testid="chat-menu-trigger"]');
+			if (chatMenu) {
+				const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
+				if (titleLine) {
+					// Replace md:flex-row with md:flex-col
+					titleLine.classList.remove('md:flex-row');
+					titleLine.classList.add('md:flex-col');
+
+					// Create length display if it doesn't exist yet
+					if (!this.lengthDisplay) {
+						this.lengthDisplay = document.createElement('div');
+						this.lengthDisplay.className = 'text-text-500 text-xs';
+						this.lengthDisplay.style.cssText = "margin-top: 2px; font-size: 11px;";
+					}
+
+					// Update text based on stored length
+					this.lengthDisplay.textContent = this.conversationLength ?
+						`Current cost: ${this.conversationLength.toLocaleString()} tokens` :
+						'Current cost: N/A tokens';
+
+					// Inject if not already present
+					if (chatMenu.parentElement.nextElementSibling !== this.lengthDisplay) {
+						chatMenu.parentElement.after(this.lengthDisplay);
+					}
+				}
+			}
+		}
+
+
+		async periodicUIUpdate() {
+			const sidebarContainer = findSidebarContainer();
+			const newModel = await getCurrentModel();
+			const isHomePage = getConversationId() === null;
+			const newConversation = getConversationId();
+
+			// First check if UI needs to be re-injected
+			if (!sidebarContainer || !sidebarContainer.contains(this.container)) {
+				if (sidebarContainer) {
+					console.log('UI not present in sidebar, re-injecting...');
+					this.uiReady = false;
+					sidebarContainer.appendChild(this.container);
+					this.uiReady = true;
+				}
+				return; // Skip other checks if we're not properly initialized
+			}
+
+			let updateTriggered = false;
+
+			// Check for message limit element
+			const messageLimitElement = document.querySelector('a[href*="8325612-does-claude-pro-have-any-usage-limits"]');
+			if (messageLimitElement) {
+				const limitTextElement = messageLimitElement.closest('.text-text-400');
+				if (limitTextElement && limitTextElement.textContent.includes('messages remaining')) {
+					console.log("We've reached the limit for the current model. Sending reset data to background for model", newModel);
+					await sendBackgroundMessage({ type: 'resetHit', model: newModel });
+				}
+			}
+
+			// Check for conversation change
+			if (this.currentConversation !== newConversation && !isHomePage) {
+				console.log(`Conversation changed from ${this.currentConversation} to ${newConversation}`);
+				await this.updateProgressBar(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
+				this.currentConversation = newConversation;
+				updateTriggered = true;
+			}
+
+			// Check for model change
+			if (newModel !== this.currentlyDisplayedModel && !updateTriggered) {
+				console.log(`Model changed from ${this.currentlyDisplayedModel} to ${newModel}`);
+				await this.updateProgressBar(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
+				updateTriggered = true;
+			}
+
+			this.currentlyDisplayedModel = newModel;
+
+			// Update all sections visibility
+			for (const [modelName, section] of Object.entries(this.modelSections)) {
+				const isActiveModel = modelName === this.currentlyDisplayedModel;
+				section.setActive(isActiveModel);
+			}
+
+			this.currentConversation = newConversation;
+
+			if (isHomePage) {
+				//this.headerEstimateDisplay.textContent = `Est. messages left: N/A`;
+				this.conversationLength = nul;
+			}
+
+			this.injectLengthDisplay();
 		}
 	}
 
@@ -892,56 +991,6 @@
 	//#endregion
 
 	//#region Event Handlers
-	//This polls for model changes as well as running out of messages
-	function pollForUIUpdates() {
-		setInterval(async () => {
-			let updateTriggered = false;
-			const newModel = await getCurrentModel();
-			const isHomePage = getConversationId() === null;
-			const newConversation = getConversationId();
-
-			// Check for message limit element
-			const messageLimitElement = document.querySelector('a[href*="8325612-does-claude-pro-have-any-usage-limits"]');
-			if (messageLimitElement) {
-				const limitTextElement = messageLimitElement.closest('.text-text-400');
-				if (limitTextElement && limitTextElement.textContent.includes('messages remaining')) {
-					debugLog("We've reached the limit for the current model. Sending reset data to background for model", newModel);
-					await sendBackgroundMessage({ type: 'resetHit', model: newModel });
-				}
-			}
-
-			// Have we changed conversation?
-			if (ui.currentConversation !== newConversation && !isHomePage) {
-				debugLog(`Conversation changed from ${ui.currentConversation} to ${newConversation}`);
-				await ui.updateProgressBar(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
-				ui.currentConversation = newConversation;
-				updateTriggered = true;
-			}
-
-			//Have we changed model?
-			if (newModel !== ui.currentlyDisplayedModel && !updateTriggered) {
-				debugLog(`Model changed from ${ui.currentlyDisplayedModel} to ${newModel}`);
-				await ui.updateProgressBar(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
-				updateTriggered = true;
-			}
-
-			ui.currentlyDisplayedModel = newModel;
-
-			// Update all sections - will collapse inactive ones
-			for (const [modelName, section] of Object.entries(ui.modelSections)) {
-				const isActiveModel = modelName === ui.currentlyDisplayedModel;
-				section.setActive(isActiveModel);
-			}
-
-			ui.currentConversation = newConversation;
-
-			if (isHomePage) {
-				// Reset conversation length display
-				ui.headerEstimateDisplay.textContent = `Est. messages left: N/A`;
-				ui.lengthDisplay.textContent = `Current cost: N/A tokens`;
-			}
-		}, config.UI_UPDATE_INTERVAL_MS);
-	}
 
 	//#endregion
 	async function initialize() {
@@ -1002,7 +1051,6 @@
 
 		ui = new MainUI();
 		await ui.initialize();
-		pollForUIUpdates();
 
 		await ui.updateProgressBar(await sendBackgroundMessage({ type: 'requestData' }));
 		await sendBackgroundMessage({ type: 'initOrg' });
