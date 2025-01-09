@@ -12,8 +12,8 @@
 	"MODEL_CAPS": {
 		"free": {
 			"Opus": 0,
-			"Sonnet": 500000,
-			"Haiku": 1000000,
+			"Sonnet": 300000,
+			"Haiku": 600000,
 			"default": 1
 		},
 		"pro": {
@@ -60,25 +60,25 @@
 	"FEATURE_CHECKBOXES": {
 		"personal_preferences_enabled": {
 			"text": "Preferences enabled",
-			"cost": 800
+			"cost": 850
 		},
 		"artifacts_enabled": {
 			"text": "Artifacts enabled",
-			"cost": 5500
+			"cost": 8400
 		},
 		"analysis_enabled": {
 			"text": "Analysis Tool enabled",
-			"cost": 2000
+			"cost": 2200
 		},
 		"latex_enabled": {
 			"text": "LaTeX Rendering enabled",
 			"cost": 200
 		}
 	},
-	"BASE_SYSTEM_PROMPT_LENGTH": 2900,
+	"BASE_SYSTEM_PROMPT_LENGTH": 3200,
 	"FEATURE_COSTS": {
-		"enabled_artifacts_attachments": 2000,
-		"preview_feature_uses_artifacts": 5500,
+		"enabled_artifacts_attachments": 2200,
+		"preview_feature_uses_artifacts": 8400,
 		"preview_feature_uses_latex": 200
 	}
 }
