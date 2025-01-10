@@ -14,8 +14,8 @@ let configManager;
 
 //#region Listener setup (I hate MV3 - listeners must be initialized here)
 //Extension-related listeners:
-browser.runtime.onMessage.addListener((message, sender) => {
-	debugLog("Background received message:", message);
+browser.runtime.onMessage.addListener(async (message, sender) => {
+	await Log("Background received message:", message);
 	return handleMessageFromContent(message, sender);
 });
 
@@ -77,7 +77,7 @@ addFirefoxContainerFixListener();
 
 //Alarm listeners
 browser.alarms.onAlarm.addListener(async (alarm) => {
-	debugLog("Alarm triggered:", alarm.name);
+	await Log("Alarm triggered:", alarm.name);
 });
 
 browser.alarms.onAlarm.addListener(async (alarm) => {
@@ -112,21 +112,21 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 //#region Alarms
 const nextAlarm = new Date();
 nextAlarm.setHours(nextAlarm.getHours() + 1, 1, 0, 0);
-debugLog("Creating firebase alarms...");
+await Log("Creating firebase alarms...");
 browser.alarms.create('checkExpiredData', {
 	when: nextAlarm.getTime(),
 	periodInMinutes: 60
 });
 
 browser.alarms.create('firebaseSync', { periodInMinutes: 5 });
-browser.alarms.create('resetTimesSync', { periodInMinutes: 1 });
-debugLog("Firebase alarms created.");
+browser.alarms.create('resetTimesSync', { periodInMinutes: 10 });
+await Log("Firebase alarms created.");
 
-debugLog("Initializing config refresh...");
+await Log("Initializing config refresh...");
 browser.alarms.create('refreshConfig', {
 	periodInMinutes: 15
 });
-debugLog("Config refresh alarm created.");
+await Log("Config refresh alarm created.");
 //#endregion
 
 
@@ -134,58 +134,62 @@ debugLog("Config refresh alarm created.");
 //#region Utility functions
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-function debugLog(level = "debug", ...args) {
+async function Log(...args) {
 	const sender = "background"
-	return browser.storage.local.get('debug_mode_until')
-		.then(result => {
-			const debugUntil = result.debug_mode_until;
-			const now = Date.now();
+	let level = "debug";
 
-			if (!debugUntil || debugUntil <= now) {
-				return Promise.resolve();
+	// If first argument is a valid log level, use it and remove it from args
+	if (typeof args[0] === 'string' && ["debug", "warn", "error"].includes(args[0])) {
+		level = args.shift();
+	}
+
+	const result = await browser.storage.local.get('debug_mode_until');
+	const debugUntil = result.debug_mode_until;
+	const now = Date.now();
+
+	if (!debugUntil || debugUntil <= now) {
+		return;
+	}
+
+	console.log(...args);
+
+	const timestamp = new Date().toLocaleString('default', {
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+		hour12: false,
+		fractionalSecondDigits: 3
+	});
+
+	const logEntry = {
+		timestamp: timestamp,
+		sender: sender,
+		level: level,
+		message: args.map(arg => {
+			if (arg instanceof Error) {
+				return arg.stack || `${arg.name}: ${arg.message}`;
 			}
-			console.log(...args);
-
-			const timestamp = new Date().toLocaleString('default', {
-				hour: '2-digit',
-				minute: '2-digit',
-				second: '2-digit',
-				hour12: false,
-				fractionalSecondDigits: 3
-			});
-
-			const logEntry = {
-				timestamp: timestamp,
-				sender: sender,
-				level: level,
-				message: args.map(arg => {
-					if (arg instanceof Error) {
-						return arg.stack || `${arg.name}: ${arg.message}`;
-					}
-					if (typeof arg === 'object') {
-						// Handle null case
-						if (arg === null) return 'null';
-						// For other objects, try to stringify with error handling
-						try {
-							return JSON.stringify(arg, Object.getOwnPropertyNames(arg), 2);
-						} catch (e) {
-							return String(arg);
-						}
-					}
+			if (typeof arg === 'object') {
+				// Handle null case
+				if (arg === null) return 'null';
+				// For other objects, try to stringify with error handling
+				try {
+					return JSON.stringify(arg, Object.getOwnPropertyNames(arg), 2);
+				} catch (e) {
 					return String(arg);
-				}).join(' ')
-			};
+				}
+			}
+			return String(arg);
+		}).join(' ')
+	};
 
-			return browser.storage.local.get('debug_logs')
-				.then(result => {
-					const logs = result.debug_logs || [];
-					logs.push(logEntry);
+	const logsResult = await browser.storage.local.get('debug_logs');
+	const logs = logsResult.debug_logs || [];
+	logs.push(logEntry);
 
-					if (logs.length > 1000) logs.shift();
+	if (logs.length > 1000) logs.shift();
 
-					return browser.storage.local.set({ debug_logs: logs });
-				});
-		});
+	await browser.storage.local.set({ debug_logs: logs });
 }
 
 function mergeDeep(target, source) {
@@ -211,7 +215,7 @@ async function checkAndSetAPIKey(newKey) {
 			return true;
 		}
 	} catch (error) {
-		debugLog("error", "Error setting API key:", error);
+		await Log("error", "Error setting API key:", error);
 		return false;
 	}
 }
@@ -238,7 +242,7 @@ async function countTokensViaAPI(userMessages = [], assistantMessages = [], file
 		}
 	}
 	try {
-		debugLog("CALLING API!", userMessages, assistantMessages, file)
+		await Log("CALLING API!", userMessages, assistantMessages, file)
 		const messages = [];
 
 		if (file && userMessages.length === 0) {
@@ -302,14 +306,14 @@ async function countTokensViaAPI(userMessages = [], assistantMessages = [], file
 		});
 
 		const data = await response.json();
-		debugLog("API response:", data);
+		await Log("API response:", data);
 		if (data.error) {
-			debugLog("error", "API error:", data.error);
+			await Log("error", "API error:", data.error);
 			return 0
 		}
 		return data.input_tokens;
 	} catch (error) {
-		debugLog("error", "Error counting tokens via API:", error);
+		await Log("error", "Error counting tokens via API:", error);
 		return 0
 	}
 }
@@ -340,7 +344,7 @@ class Config {
 		try {
 			const response = await fetch(Config.CONFIG_URL);
 			if (!response.ok) {
-				debugLog("warn", 'Using default config');
+				await Log("warn", 'Using default config');
 				return this.defaultConfig;
 			}
 
@@ -350,7 +354,7 @@ class Config {
 				.filter(key => key !== 'default');
 			return mergedConfig;
 		} catch (error) {
-			debugLog("warn", 'Error loading remote config:', error);
+			await Log("warn", 'Error loading remote config:', error);
 			return this.defaultConfig;
 		}
 	}
@@ -403,35 +407,35 @@ class TokenStorageManager {
 
 	async syncWithFirebase() {
 		if (this.isSyncingFirebase) {
-			debugLog("Sync already in progress, skipping");
+			await Log("Sync already in progress, skipping");
 			return;
 		}
 
 		this.isSyncingFirebase = true;
-		debugLog("=== FIREBASE SYNC STARTING ===");
+		await Log("=== FIREBASE SYNC STARTING ===");
 		await this.ensureOrgIds();
 		try {
 			for (const orgId of this.orgIds) {
 				// Get local data
 				const localModels = await this.#getValue(this.#getStorageKey(orgId, 'models')) || {};
-				debugLog("Local models:", localModels);
+				await Log("Local models:", localModels);
 
 				// Get remote data
 				const url = `${this.firebase_base_url}/users/${orgId}/models.json`;
-				debugLog("Fetching from:", url);
+				await Log("Fetching from:", url);
 
 				const response = await fetch(url);
 				if (!response.ok) {
 					throw new Error(`HTTP error! status: ${response.status}`);
 				}
 				const firebaseModels = await response.json() || {};
-				debugLog("Firebase models:", firebaseModels);
+				await Log("Firebase models:", firebaseModels);
 
-				const mergedModels = this.#mergeModelData(localModels, firebaseModels);
-				debugLog("Merged result:", mergedModels);
+				const mergedModels = await this.#mergeModelData(localModels, firebaseModels);
+				await Log("Merged result:", mergedModels);
 
 				// Write merged data back
-				debugLog("Writing merged data back to Firebase...");
+				await Log("Writing merged data back to Firebase...");
 				const writeResponse = await fetch(url, {
 					method: 'PUT',
 					body: JSON.stringify(mergedModels)
@@ -441,22 +445,22 @@ class TokenStorageManager {
 				}
 
 				// Update local storage
-				debugLog("Updating local storage...");
+				await Log("Updating local storage...");
 				await this.#setValue(this.#getStorageKey(orgId, 'models'), mergedModels);
-				debugLog("=== SYNC COMPLETED SUCCESSFULLY ===");
+				await Log("=== SYNC COMPLETED SUCCESSFULLY ===");
 			}
 		} catch (error) {
-			debugLog("error", '=== SYNC FAILED ===');
-			debugLog("error", 'Error details:', error);
-			debugLog("error", 'Stack:', error.stack);
+			await Log("error", '=== SYNC FAILED ===');
+			await Log("error", 'Error details:', error);
+			await Log("error", 'Stack:', error.stack);
 		} finally {
 			this.isSyncingFirebase = false;
 		}
 	}
 
 	//Just a helper method to merge the data
-	#mergeModelData(localModels = {}, firebaseModels = {}) {
-		debugLog("MERGING...")
+	async #mergeModelData(localModels = {}, firebaseModels = {}) {
+		await Log("MERGING...")
 		const merged = {};
 		const allModelKeys = new Set([
 			...Object.keys(localModels),
@@ -465,7 +469,7 @@ class TokenStorageManager {
 
 		const currentTime = new Date().getTime();
 
-		allModelKeys.forEach(model => {
+		allModelKeys.forEach(async model => {
 			const local = localModels[model];
 			const remote = firebaseModels[model];
 
@@ -476,7 +480,7 @@ class TokenStorageManager {
 			} else {
 				// If reset times match, take the highest counts as before
 				if (local.resetTimestamp === remote.resetTimestamp) {
-					debugLog("TIMESTAMP MATCHES, TAKING HIGHEST COUNTS!")
+					await Log("TIMESTAMP MATCHES, TAKING HIGHEST COUNTS!")
 					merged[model] = {
 						total: Math.max(local.total, remote.total),
 						messageCount: Math.max(local.messageCount, remote.messageCount),
@@ -489,7 +493,7 @@ class TokenStorageManager {
 
 					// If earlier timestamp is still valid (not in past)
 					if (earlier.resetTimestamp > currentTime) {
-						debugLog("EARLIER TIMESTAMP STILL VALID, COMBINING COUNTS!")
+						await Log("EARLIER TIMESTAMP STILL VALID, COMBINING COUNTS!")
 						merged[model] = {
 							total: earlier.total + later.total,
 							messageCount: earlier.messageCount + later.messageCount,
@@ -497,7 +501,7 @@ class TokenStorageManager {
 						};
 					} else {
 						// If earlier timestamp is expired, use later one
-						debugLog("EARLIER TIMESTAMP EXPIRED, USING LATER ONE!")
+						await Log("EARLIER TIMESTAMP EXPIRED, USING LATER ONE!")
 						merged[model] = later;
 					}
 				}
@@ -596,12 +600,12 @@ class TokenStorageManager {
 
 	async getUploadedFileTokens(orgId, file, estimateOnly = false, uploaderClaudeAI_API = null) {
 		if (await this.filesTokenCache.has(`${orgId}:${file.file_uuid}`)) {
-			debugLog("Using cached amount for file:", file.file_uuid, "which is", await this.filesTokenCache.get(`${orgId}:${file.file_uuid}`));
+			await Log("Using cached amount for file:", file.file_uuid, "which is", await this.filesTokenCache.get(`${orgId}:${file.file_uuid}`));
 			return await this.filesTokenCache.get(`${orgId}:${file.file_uuid}`);
 		} else {
 			if ((await browser.storage.local.get('apiKey'))?.apiKey && !estimateOnly) {
 				try {
-					debugLog("Using api...")
+					await Log("Using api...")
 					let filename = ""
 					let fileurl = ""
 					filename = file.file_name
@@ -613,18 +617,18 @@ class TokenStorageManager {
 
 					let fileTokens = await countTokensViaAPI([], [], { "url": fileurl, "filename": filename, "uploaderAPI": uploaderClaudeAI_API })
 					if (fileTokens === 0) {
-						debugLog("Falling back to estimate...")
+						await Log("Falling back to estimate...")
 						return this.getUploadedFileTokens(orgId, file, true)
 					}
 					await this.filesTokenCache.set(`${orgId}:${file.file_uuid}`, fileTokens)
 					return fileTokens
 				} catch (error) {
-					debugLog("error", "Error fetching file tokens:", error)
-					debugLog("Falling back to estimate...")
+					await Log("error", "Error fetching file tokens:", error)
+					await Log("Falling back to estimate...")
 					return this.getUploadedFileTokens(orgId, file, true)
 				}
 			} else {
-				debugLog("Using estimate...")
+				await Log("Using estimate...")
 				if (file.file_kind === "image") {
 					const width = file.preview_asset.image_width
 					const height = file.preview_asset.image_width
@@ -646,7 +650,6 @@ class TokenStorageManager {
 		const cap = (await tokenStorageManager.getCaps(orgId, api))[model]
 		const tier = await tokenStorageManager.subscriptionTiers.get(orgId)
 		// Only add if not already present
-		debugLog("Checking if we've already hit the reset of key ", key)
 		if (!(await this.resetsHit.has(key))) {
 			await this.resetsHit.set(key, {
 				total: `${modelData.total}/${cap}`,
@@ -659,17 +662,15 @@ class TokenStorageManager {
 
 	async syncResetTimes() {
 		if (this.isSyncingResetTimes) {
-			debugLog("Reset times sync already in progress, skipping");
+			await Log("Reset times sync already in progress, skipping");
 			return;
 		}
 
 		this.isSyncingResetTimes = true;
-		debugLog("=== RESET TIMES SYNC STARTING ===");
-
+		await Log("=== RESET TIMES SYNC STARTING ===");
 		try {
 			// Group all entries by orgId
 			const groupedResets = {};
-			debugLog("Resets:", await this.resetsHit.entries())
 			for (const [key, value] of (await this.resetsHit.entries())) {
 				const orgId = key.split(':')[0];
 				if (!groupedResets[orgId]) {
@@ -677,7 +678,6 @@ class TokenStorageManager {
 				}
 				groupedResets[orgId][key] = value;
 			}
-			debugLog("Grouped resets:", groupedResets)
 			// Sync each orgId's data to Firebase
 			for (const [orgId, resets] of Object.entries(groupedResets)) {
 				// Transform the data to use model:timestamp as keys
@@ -691,10 +691,10 @@ class TokenStorageManager {
 						tier: resetData.tier
 					};
 				}
-				debugLog("Transformed resets:", transformedResets)
+				await Log("Transformed resets:", transformedResets)
 
 				const url = `${this.firebase_base_url}/users/${orgId}/resets.json`;
-				debugLog("Writing reset times for orgId:", orgId);
+				await Log("Writing reset times for orgId:", orgId);
 
 				const writeResponse = await fetch(url, {
 					method: 'PUT',
@@ -704,10 +704,10 @@ class TokenStorageManager {
 					throw new Error(`Write failed! status: ${writeResponse.status}`);
 				}
 			}
-			debugLog("=== RESET TIMES SYNC COMPLETED SUCCESSFULLY ===");
+			await Log("=== RESET TIMES SYNC COMPLETED SUCCESSFULLY ===");
 		} catch (error) {
-			debugLog("error", '=== RESET TIMES SYNC FAILED ===');
-			debugLog("error", 'Error details:', error);
+			await Log("error", '=== RESET TIMES SYNC FAILED ===');
+			await Log("error", 'Error details:', error);
 		} finally {
 			this.isSyncingResetTimes = false;
 		}
@@ -720,7 +720,7 @@ class TokenStorageManager {
 class ClaudeAPI {
 	static async create(cookieStoreId = "0") {
 		const api = new ClaudeAPI();
-		debugLog("Creating API from cookie store:", cookieStoreId);
+		await Log("Creating API from cookie store:", cookieStoreId);
 		api.sessionKey = await api.getSessionKey(cookieStoreId)
 		return api;
 	}
@@ -755,7 +755,7 @@ class ClaudeAPI {
 	// API methods
 	async getUploadedFileAsBase64(url) {
 		try {
-			debugLog(`Starting file download from: https://claude.ai${url}`);
+			await Log(`Starting file download from: https://claude.ai${url}`);
 			const response = await fetch(`https://claude.ai${url}`, {
 				headers: {
 					'X-Overwrite-SessionKey': this.sessionKey
@@ -763,16 +763,16 @@ class ClaudeAPI {
 			});
 
 			if (!response.ok) {
-				debugLog("error", 'Fetch failed:', response.status, response.statusText);
+				await Log("error", 'Fetch failed:', response.status, response.statusText);
 				return null;
 			}
 
 			const blob = await response.blob();
 			return new Promise((resolve) => {
 				const reader = new FileReader();
-				reader.onloadend = () => {
+				reader.onloadend = async () => {
 					const base64Data = reader.result.split(',')[1];
-					debugLog('Base64 length:', base64Data.length);
+					await Log('Base64 length:', base64Data.length);
 					resolve({
 						data: base64Data,
 						media_type: blob.type
@@ -782,7 +782,7 @@ class ClaudeAPI {
 			});
 
 		} catch (e) {
-			debugLog("error", 'Download error:', e);
+			await Log("error", 'Download error:', e);
 			return null;
 		}
 	}
@@ -791,14 +791,14 @@ class ClaudeAPI {
 		if (!syncURI) return "";
 		if (syncType != "gdrive") return ""
 		let syncText = (await this.getRequest(`/organizations/${orgId}/sync/mcp/drive/document/${syncURI}`))?.text
-		debugLog("Sync text:", syncText);
+		await Log("Sync text:", syncText);
 		return syncText || "";
 	}
 
 	async getStyleTokens(orgId, styleId, tabId) {
 		if (!styleId) {
 			//Ask the tabId to fetch it from localStorage.
-			debugLog("Fetching styleId from tab:", tabId);
+			await Log("Fetching styleId from tab:", tabId);
 			const response = await browser.tabs.sendMessage(tabId, {
 				action: "getStyleId"
 			});
@@ -812,7 +812,7 @@ class ClaudeAPI {
 		if (!style) {
 			style = styleData?.customStyles?.find(style => style.uuid === styleId);
 		}
-		debugLog("Got style:", style);
+		await Log("Got style:", style);
 		if (style) {
 			return await getTextTokens(style.prompt);
 		} else {
@@ -831,21 +831,21 @@ class ClaudeAPI {
 
 		const docsData = await this.getRequest(`/organizations/${orgId}/projects/${projectId}/docs`);
 		for (const doc of docsData) {
-			debugLog("Doc:", doc.uuid);
+			await Log("Doc:", doc.uuid);
 			project_text += doc.content;
-			debugLog("Doc tokens:", await getTextTokens(doc.content, true));
+			await Log("Doc tokens:", await getTextTokens(doc.content, true));
 		}
 
 		const syncData = await this.getRequest(`/organizations/${orgId}/projects/${projectId}/syncs`);
 		for (const sync of syncData) {
-			debugLog("Sync:", sync.uuid);
+			await Log("Sync:", sync.uuid);
 			const syncText = await this.getSyncText(orgId, sync.config?.uri, sync.type);
 			project_text += syncText;
-			debugLog("Sync tokens:", await getTextTokens(syncText, true));
+			await Log("Sync tokens:", await getTextTokens(syncText, true));
 		}
 
 		let total_tokens = await getTextTokens(project_text);
-		debugLog(`Total tokens for project ${projectId}: ${total_tokens}`);
+		await Log(`Total tokens for project ${projectId}: ${total_tokens}`);
 		return total_tokens;
 	}
 
@@ -871,14 +871,14 @@ class ClaudeAPI {
 		// Sanity check
 		if (humanMessagesCount === 0 || assistantMessagesCount === 0 || humanMessagesCount !== assistantMessagesCount ||
 			!lastMessage || lastMessage.sender !== "assistant") {
-			debugLog(`Message count mismatch or wrong last sender - Human: ${humanMessagesCount}, Assistant: ${assistantMessagesCount}, Last message sender: ${lastMessage?.sender}`);
+			await Log(`Message count mismatch or wrong last sender - Human: ${humanMessagesCount}, Assistant: ${assistantMessagesCount}, Last message sender: ${lastMessage?.sender}`);
 			return undefined;
 		}
 
 		let totalTokens = 0;
 		// Add settings costs
 		for (const [setting, enabled] of Object.entries(conversationData.settings)) {
-			debugLog("Setting:", setting, enabled);
+			await Log("Setting:", setting, enabled);
 			if (enabled && configManager.config.FEATURE_COSTS[setting]) {
 				totalTokens += configManager.config.FEATURE_COSTS[setting];
 			}
@@ -891,13 +891,11 @@ class ClaudeAPI {
 		for (const message of conversationData.chat_messages) {
 			// Files_v2 tokens (handle separately)
 			for (const file of message.files_v2) {
-				debugLog("File_v2:", file.file_name, file.file_uuid)
+				await Log("File_v2:", file.file_name, file.file_uuid)
 				totalTokens += await tokenStorageManager.getUploadedFileTokens(orgId, file, false, this)
 			}
 
 			let messageContent = [];
-
-			debugLog("Message:", message.uuid);
 			// Process content array
 			for (const content of message.content) {
 				if (content.text) {
@@ -913,7 +911,7 @@ class ClaudeAPI {
 
 			// Attachment tokens
 			for (const attachment of message.attachments) {
-				debugLog("Attachment:", attachment.file_name, attachment.id);
+				await Log("Attachment:", attachment.file_name, attachment.id);
 				if (attachment.extracted_content) {
 					messageContent.push(attachment.extracted_content);
 				}
@@ -922,7 +920,7 @@ class ClaudeAPI {
 
 			// Sync tokens
 			for (const sync of message.sync_sources) {
-				debugLog("Sync source:", sync.uuid)
+				await Log("Sync source:", sync.uuid)
 				messageContent.push(await this.getSyncText(orgId, sync.config?.uri, sync.type));
 			}
 
@@ -953,7 +951,7 @@ class ClaudeAPI {
 		if (conversationData.project_uuid) {
 			totalTokens += await this.getProjectTokens(orgId, conversationData.project_uuid);
 		}
-		debugLog(`Total tokens for conversation ${conversationId}: ${totalTokens}`);
+		await Log(`Total tokens for conversation ${conversationId}: ${totalTokens}`);
 		return totalTokens;
 	}
 
@@ -964,14 +962,14 @@ class ClaudeAPI {
 			totalTokens = await getTextTokens(profileData.conversation_preferences) + 850
 		}
 
-		debugLog(`Profile tokens: ${totalTokens}`);
+		await Log(`Profile tokens: ${totalTokens}`);
 		return totalTokens;
 	}
 
 	async getSubscriptionTier(orgId) {
 		const statsigData = await this.getRequest(`/bootstrap/${orgId}/statsig`);
-		debugLog("User is Raven?", statsigData.user?.custom?.isRaven);
-		debugLog("User is Pro?", statsigData.user?.custom?.isPro);
+		await Log("User is Raven?", statsigData.user?.custom?.isRaven);
+		await Log("User is Pro?", statsigData.user?.custom?.isPro);
 		if (statsigData.user?.custom?.isRaven) {
 			return "team"
 		}
@@ -992,7 +990,7 @@ async function requestActiveOrgId(tab) {
 		});
 		return response?.orgId;
 	} catch (error) {
-		debugLog("error", "Error getting org ID:", error);
+		await Log("error", "Error getting org ID:", error);
 		return null;
 	}
 }
@@ -1020,7 +1018,6 @@ class StoredMap {
 			value,
 			expires: Date.now() + lifetime
 		} : value;
-		debugLog("Setting value:", key, storedValue);
 		this.map.set(key, storedValue);
 		await browser.storage.local.set({
 			[this.storageKey]: Array.from(this.map)
@@ -1074,15 +1071,12 @@ class StoredMap {
 	async entries() {
 		await this.ensureInitialized();
 		const entries = [];
-		debugLog("Entries:", this.map.entries())
 		for (const [key, storedValue] of this.map.entries()) {
 			// Skip expired entries
-			debugLog("Checking entry:", key, storedValue);
 			if (storedValue.expires && Date.now() > storedValue.expires) {
 				await this.delete(key);
 				continue;
 			}
-			debugLog("Entry is valid, adding to list");
 			// Add the entry with the actual value for timed entries
 			entries.push([
 				key,
@@ -1128,7 +1122,7 @@ async function updateAllTabs(currentLength = undefined, lengthTabId = undefined)
 
 // Content -> Background messaging
 async function handleMessageFromContent(message, sender) {
-	debugLog("📥 Received message:", message);
+	await Log("📥 Received message:", message);
 	//const { sessionKey, orgId } = message;
 	const { orgId } = message;
 	const api = await ClaudeAPI.create(sender.tab?.cookieStoreId);
@@ -1153,12 +1147,12 @@ async function handleMessageFromContent(message, sender) {
 					}
 				}
 				if (conversationId) {
-					debugLog("Requested length for conversation:", conversationId);
+					await Log("Requested length for conversation:", conversationId);
 					const key = `${orgId}:${conversationId}`;
 
 					//Fetch it only if missing...
 					if (!conversationLengthCache.has(key)) {
-						debugLog("Conversation length not found, fetching...");
+						await Log("Conversation length not found, fetching...");
 						const conversationTokens = await api.getConversationTokens(orgId, conversationId);
 						if (conversationTokens != undefined) {
 							const profileTokens = await api.getProfileTokens();
@@ -1186,13 +1180,13 @@ async function handleMessageFromContent(message, sender) {
 				return await checkAndSetAPIKey(newKey);
 			case 'resetHit':
 				const { model } = message;
-				tokenStorageManager.addReset(orgId, model, api).catch(err => {
-					debugLog("error", 'Adding reset failed:', err);
+				tokenStorageManager.addReset(orgId, model, api).catch(async err => {
+					await Log("error", 'Adding reset failed:', err);
 				});
 				return true;
 		}
 	})();
-	debugLog("📤 Sending response:", response);
+	await Log("📤 Sending response:", response);
 	return response;
 }
 //#endregion
@@ -1213,7 +1207,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 
 	const profileTokens = await api.getProfileTokens();
 	let messageCost = conversationTokens + profileTokens + configManager.config.BASE_SYSTEM_PROMPT_LENGTH
-	debugLog("Current per message cost:", messageCost);
+	await Log("Current per message cost:", messageCost);
 	conversationLengthCache.set(`${orgId}:${conversationId}`, messageCost);
 
 	const isNewMessage = await pendingResponses.has(responseKey)
@@ -1223,7 +1217,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	const styleId = (await pendingResponses.get(responseKey))?.styleId;
 	const styleTokens = await api.getStyleTokens(orgId, styleId, tabId);
 	messageCost += styleTokens;
-	debugLog("Added style tokens:", styleTokens);
+	await Log("Added style tokens:", styleTokens);
 
 	if (isNewMessage) {
 		// Get model from based on conversation settings or tab
@@ -1235,7 +1229,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 			for (const modelType of modelTypes) {
 				if (modelString.includes(modelType.toLowerCase())) {
 					model = modelType;
-					debugLog("Model from conversation:", model);
+					await Log("Model from conversation:", model);
 					break;
 				}
 			}
@@ -1243,10 +1237,10 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 		// If no model found in response, ask the tab
 		if (!model) {
 			model = await browser.tabs.sendMessage(tabId, { type: 'getActiveModel' });
-			debugLog("Model from tab:", model);
+			await Log("Model from tab:", model);
 			if (!model) model = "Sonnet"
 		}
-		debugLog(`=============Adding tokens for model: ${model}, Total tokens: ${messageCost}============`);
+		await Log(`=============Adding tokens for model: ${model}, Total tokens: ${messageCost}============`);
 		await tokenStorageManager.addTokensToModel(orgId, model, messageCost);
 	}
 
@@ -1271,13 +1265,13 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 
 // Listen for message sending
 async function onBeforeRequestHandler(details) {
-	debugLog("Intercepted request:", details.url);
-	debugLog("Intercepted body:", details.requestBody);
+	await Log("Intercepted request:", details.url);
+	await Log("Intercepted body:", details.requestBody);
 	if (details.method === "POST" &&
 		(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
-		debugLog("Request sent - URL:", details.url);
+		await Log("Request sent - URL:", details.url);
 		const requestBodyJSON = JSON.parse(new TextDecoder('utf-8').decode(details.requestBody.raw[0].bytes));
-		debugLog("Request sent - Body:", requestBodyJSON);
+		await Log("Request sent - Body:", requestBodyJSON);
 		// Extract IDs from URL - we can refine these regexes
 		const urlParts = details.url.split('/');
 		const orgId = urlParts[urlParts.indexOf('organizations') + 1];
@@ -1285,9 +1279,9 @@ async function onBeforeRequestHandler(details) {
 		const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1];
 
 		const key = `${orgId}:${conversationId}`;
-		debugLog(`Message sent - Key: ${key}`);
+		await Log(`Message sent - Key: ${key}`);
 		const styleId = requestBodyJSON?.personalized_styles?.[0]?.key || requestBodyJSON?.personalized_styles?.[0]?.uuid
-		debugLog("Choosing style between:", requestBodyJSON?.personalized_styles?.[0]?.key, requestBodyJSON?.personalized_styles?.[0]?.uuid)
+		await Log("Choosing style between:", requestBodyJSON?.personalized_styles?.[0]?.key, requestBodyJSON?.personalized_styles?.[0]?.uuid)
 		// Store pending response with both orgId and tabId
 		await pendingResponses.set(key, {
 			orgId: orgId,
@@ -1298,7 +1292,7 @@ async function onBeforeRequestHandler(details) {
 	}
 
 	if (details.method === "GET" && details.url.includes("/settings/billing")) {
-		debugLog("Hit the billing page, let's make sure we get the updated subscription tier in case it was changed...")
+		await Log("Hit the billing page, let's make sure we get the updated subscription tier in case it was changed...")
 		const orgId = await requestActiveOrgId(details.tabId);
 		const api = await ClaudeAPI.create(details.cookieStoreId);
 		let subscriptionTier = await api.getSubscriptionTier(orgId)
@@ -1307,12 +1301,12 @@ async function onBeforeRequestHandler(details) {
 }
 
 async function onCompletedHandler(details) {
-	debugLog("Intercepted response:", details.url);
+	await Log("Intercepted response:", details.url);
 	if (details.method === "GET" &&
 		details.url.includes("/chat_conversations/") &&
 		details.url.includes("tree=True") &&
 		details.url.includes("render_all_tools=true")) {
-		debugLog("Response recieved - URL:", details.url);
+		await Log("Response recieved - URL:", details.url);
 		processingQueue = processingQueue.then(async () => {
 			const urlParts = details.url.split('/');
 			const orgId = urlParts[urlParts.indexOf('organizations') + 1];
@@ -1336,9 +1330,9 @@ async function addFirefoxContainerFixListener() {
 
 	//Fine to register this here, as it's only relevant for the background script's own requests. No wakeup needed.
 	if (isFirefoxContainers) {
-		debugLog("We're in firefox with containers, registering blocking listener...")
+		await Log("We're in firefox with containers, registering blocking listener...")
 		browser.webRequest.onBeforeSendHeaders.addListener(
-			(details) => {
+			async (details) => {
 				const overwriteKey = details.requestHeaders.find(h =>
 					h.name === 'X-Overwrite-SessionKey'
 				)?.value;
@@ -1355,7 +1349,7 @@ async function addFirefoxContainerFixListener() {
 							?.split('=')[1];
 
 						if (existingSessionKey != overwriteKey) {
-							debugLog("Modifying session key (request must've been made from non-default container...");
+							await Log("Modifying session key (request must've been made from non-default container...");
 						}
 
 						// Filter out existing sessionKey and add new one
@@ -1387,5 +1381,5 @@ conversationLengthCache = new Map();
 tokenStorageManager = new TokenStorageManager();
 configManager = new Config();
 configManager.initialize();
-debugLog("Done initializing.")
+await Log("Done initializing.")
 //#endregion
