@@ -2,7 +2,7 @@
 	'use strict';
 	const BLUE_HIGHLIGHT = '#3b82f6';
 	const RED_WARNING = "#ef4444";
-	function debugLog(...args) {
+	function debugLog(level = "debug", ...args) {
 		const sender = `content:${document.title.substring(0, 20)}${document.title.length > 20 ? '...' : ''}`;
 		return browser.storage.local.get('debug_mode_until')
 			.then(result => {
@@ -23,9 +23,20 @@
 				const logEntry = {
 					timestamp: timestamp,
 					sender: sender,
+					level: level,
 					message: args.map(arg => {
+						if (arg instanceof Error) {
+							return arg.stack || `${arg.name}: ${arg.message}`;
+						}
 						if (typeof arg === 'object') {
-							return JSON.stringify(arg, null, 2);
+							// Handle null case
+							if (arg === null) return 'null';
+							// For other objects, try to stringify with error handling
+							try {
+								return JSON.stringify(arg, Object.getOwnPropertyNames(arg), 2);
+							} catch (e) {
+								return String(arg);
+							}
 						}
 						return String(arg);
 					}).join(' ')
@@ -81,7 +92,7 @@
 			} catch (error) {
 				// Check if it's the specific "receiving end does not exist" error
 				if (error.message?.includes('Receiving end does not exist')) {
-					console.warn('Background script not ready, retrying...', error);
+					debugLog("warn", 'Background script not ready, retrying...', error);
 					await sleep(200);
 				} else {
 					// For any other error, throw immediately
@@ -675,14 +686,14 @@
 		// First find the nav element with the specific data-testid
 		const sidebarNav = document.querySelector('nav[data-testid="menu-sidebar"]');
 		if (!sidebarNav) {
-			console.error('Could not find sidebar nav');
+			debugLog("error", 'Could not find sidebar nav');
 			return null;
 		}
 
 		// Then find the scrollable container within it
 		const container = sidebarNav.querySelector('.overflow-y-auto.overflow-x-hidden.flex.flex-col.gap-4');
 		if (!container) {
-			console.error('Could not find sidebar container within nav');
+			debugLog("error", 'Could not find sidebar container within nav');
 			return null;
 		}
 
@@ -741,10 +752,11 @@
 			let updateTriggered = false;
 
 			// Check for message limit
-			const messageLimitElement = document.querySelector('a[href*="8325612-does-claude-pro-have-any-usage-limits"]');
+			const messageLimitElement = document.querySelector('a[href*="does-claude-pro-have-any-usage-limits"]');
+			debugLog('Message limit element:', messageLimitElement);
 			if (messageLimitElement) {
 				const limitTextElement = messageLimitElement.closest('.text-text-400');
-				if (limitTextElement && limitTextElement.textContent.includes('messages remaining')) {
+				if (limitTextElement) {
 					await sendBackgroundMessage({ type: 'resetHit', model: newModel });
 				}
 			}
@@ -1130,7 +1142,7 @@
 					styleId = styleData.styleKey;
 				} catch (e) {
 					// If JSON parsing fails, we'll return undefined
-					console.error('Failed to parse stored style:', e);
+					debugLog("error", 'Failed to parse stored style:', e);
 				}
 			}
 
@@ -1183,7 +1195,7 @@
 			const verificationLoginScreen = document.querySelector('input[data-testid="code"]');
 
 			if (!initialLoginScreen && !verificationLoginScreen) {
-				console.error('Neither user menu button nor any login screen found');
+				debugLog("error", 'Neither user menu button nor any login screen found');
 				return;
 			}
 
@@ -1213,7 +1225,7 @@
 		try {
 			await initialize();
 		} catch (error) {
-			console.error('Failed to initialize Chat Token Counter:', error);
+			debugLog("error", 'Failed to initialize Chat Token Counter:', error);
 		}
 	})();
 })();

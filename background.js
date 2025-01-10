@@ -119,7 +119,7 @@ browser.alarms.create('checkExpiredData', {
 });
 
 browser.alarms.create('firebaseSync', { periodInMinutes: 5 });
-browser.alarms.create('resetTimesSync', { periodInMinutes: 10 });
+browser.alarms.create('resetTimesSync', { periodInMinutes: 1 });
 debugLog("Firebase alarms created.");
 
 debugLog("Initializing config refresh...");
@@ -134,7 +134,7 @@ debugLog("Config refresh alarm created.");
 //#region Utility functions
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-function debugLog(...args) {
+function debugLog(level = "debug", ...args) {
 	const sender = "background"
 	return browser.storage.local.get('debug_mode_until')
 		.then(result => {
@@ -157,9 +157,20 @@ function debugLog(...args) {
 			const logEntry = {
 				timestamp: timestamp,
 				sender: sender,
+				level: level,
 				message: args.map(arg => {
+					if (arg instanceof Error) {
+						return arg.stack || `${arg.name}: ${arg.message}`;
+					}
 					if (typeof arg === 'object') {
-						return JSON.stringify(arg, null, 2);
+						// Handle null case
+						if (arg === null) return 'null';
+						// For other objects, try to stringify with error handling
+						try {
+							return JSON.stringify(arg, Object.getOwnPropertyNames(arg), 2);
+						} catch (e) {
+							return String(arg);
+						}
 					}
 					return String(arg);
 				}).join(' ')
@@ -200,7 +211,7 @@ async function checkAndSetAPIKey(newKey) {
 			return true;
 		}
 	} catch (error) {
-		console.error("Error setting API key:", error);
+		debugLog("error", "Error setting API key:", error);
 		return false;
 	}
 }
@@ -293,12 +304,12 @@ async function countTokensViaAPI(userMessages = [], assistantMessages = [], file
 		const data = await response.json();
 		debugLog("API response:", data);
 		if (data.error) {
-			console.error("API error:", data.error);
+			debugLog("error", "API error:", data.error);
 			return 0
 		}
 		return data.input_tokens;
 	} catch (error) {
-		console.error("Error counting tokens via API:", error);
+		debugLog("error", "Error counting tokens via API:", error);
 		return 0
 	}
 }
@@ -329,7 +340,7 @@ class Config {
 		try {
 			const response = await fetch(Config.CONFIG_URL);
 			if (!response.ok) {
-				console.warn('Using default config');
+				debugLog("warn", 'Using default config');
 				return this.defaultConfig;
 			}
 
@@ -339,7 +350,7 @@ class Config {
 				.filter(key => key !== 'default');
 			return mergedConfig;
 		} catch (error) {
-			console.warn('Error loading remote config:', error);
+			debugLog("warn", 'Error loading remote config:', error);
 			return this.defaultConfig;
 		}
 	}
@@ -435,9 +446,9 @@ class TokenStorageManager {
 				debugLog("=== SYNC COMPLETED SUCCESSFULLY ===");
 			}
 		} catch (error) {
-			console.error('=== SYNC FAILED ===');
-			console.error('Error details:', error);
-			console.error('Stack:', error.stack);
+			debugLog("error", '=== SYNC FAILED ===');
+			debugLog("error", 'Error details:', error);
+			debugLog("error", 'Stack:', error.stack);
 		} finally {
 			this.isSyncingFirebase = false;
 		}
@@ -608,7 +619,7 @@ class TokenStorageManager {
 					await this.filesTokenCache.set(`${orgId}:${file.file_uuid}`, fileTokens)
 					return fileTokens
 				} catch (error) {
-					console.error("Error fetching file tokens:", error)
+					debugLog("error", "Error fetching file tokens:", error)
 					debugLog("Falling back to estimate...")
 					return this.getUploadedFileTokens(orgId, file, true)
 				}
@@ -626,19 +637,22 @@ class TokenStorageManager {
 		return 0;
 	}
 
-	async addReset(orgId, model) {
-		await sleep(1000); //We want to ensure we get the latest data, which can take a second - so we wait.
+	async addReset(orgId, model, api) {
+		await sleep(3000); //We want to ensure we get the latest data, which can take a second - so we wait.
 		const modelData = await this.getModelData(orgId, model);
 		if (!modelData) return;
 
 		const key = `${orgId}:${modelData.resetTimestamp}`;
-
+		const cap = (await tokenStorageManager.getCaps(orgId, api))[model]
+		const tier = await tokenStorageManager.subscriptionTiers.get(orgId)
 		// Only add if not already present
+		debugLog("Checking if we've already hit the reset of key ", key)
 		if (!(await this.resetsHit.has(key))) {
 			await this.resetsHit.set(key, {
-				total: modelData.total,
+				total: `${modelData.total}/${cap}`,
 				model: model,
-				timestamp: modelData.resetTimestamp
+				timestamp: modelData.resetTimestamp,
+				tier: tier
 			});
 		}
 	}
@@ -655,14 +669,15 @@ class TokenStorageManager {
 		try {
 			// Group all entries by orgId
 			const groupedResets = {};
-			for (const [key, value] of await this.resetsHit.entries()) {
+			debugLog("Resets:", await this.resetsHit.entries())
+			for (const [key, value] of (await this.resetsHit.entries())) {
 				const orgId = key.split(':')[0];
 				if (!groupedResets[orgId]) {
 					groupedResets[orgId] = {};
 				}
 				groupedResets[orgId][key] = value;
 			}
-
+			debugLog("Grouped resets:", groupedResets)
 			// Sync each orgId's data to Firebase
 			for (const [orgId, resets] of Object.entries(groupedResets)) {
 				// Transform the data to use model:timestamp as keys
@@ -672,9 +687,11 @@ class TokenStorageManager {
 					transformedResets[newKey] = {
 						total: resetData.total,
 						timestamp: resetData.timestamp,
-						model: resetData.model
+						model: resetData.model,
+						tier: resetData.tier
 					};
 				}
+				debugLog("Transformed resets:", transformedResets)
 
 				const url = `${this.firebase_base_url}/users/${orgId}/resets.json`;
 				debugLog("Writing reset times for orgId:", orgId);
@@ -689,8 +706,8 @@ class TokenStorageManager {
 			}
 			debugLog("=== RESET TIMES SYNC COMPLETED SUCCESSFULLY ===");
 		} catch (error) {
-			console.error('=== RESET TIMES SYNC FAILED ===');
-			console.error('Error details:', error);
+			debugLog("error", '=== RESET TIMES SYNC FAILED ===');
+			debugLog("error", 'Error details:', error);
 		} finally {
 			this.isSyncingResetTimes = false;
 		}
@@ -746,7 +763,7 @@ class ClaudeAPI {
 			});
 
 			if (!response.ok) {
-				console.error('Fetch failed:', response.status, response.statusText);
+				debugLog("error", 'Fetch failed:', response.status, response.statusText);
 				return null;
 			}
 
@@ -765,7 +782,7 @@ class ClaudeAPI {
 			});
 
 		} catch (e) {
-			console.error('Download error:', e);
+			debugLog("error", 'Download error:', e);
 			return null;
 		}
 	}
@@ -975,7 +992,7 @@ async function requestActiveOrgId(tab) {
 		});
 		return response?.orgId;
 	} catch (error) {
-		console.error("Error getting org ID:", error);
+		debugLog("error", "Error getting org ID:", error);
 		return null;
 	}
 }
@@ -1003,6 +1020,7 @@ class StoredMap {
 			value,
 			expires: Date.now() + lifetime
 		} : value;
+		debugLog("Setting value:", key, storedValue);
 		this.map.set(key, storedValue);
 		await browser.storage.local.set({
 			[this.storageKey]: Array.from(this.map)
@@ -1056,14 +1074,15 @@ class StoredMap {
 	async entries() {
 		await this.ensureInitialized();
 		const entries = [];
-
+		debugLog("Entries:", this.map.entries())
 		for (const [key, storedValue] of this.map.entries()) {
 			// Skip expired entries
+			debugLog("Checking entry:", key, storedValue);
 			if (storedValue.expires && Date.now() > storedValue.expires) {
 				await this.delete(key);
 				continue;
 			}
-
+			debugLog("Entry is valid, adding to list");
 			// Add the entry with the actual value for timed entries
 			entries.push([
 				key,
@@ -1167,8 +1186,8 @@ async function handleMessageFromContent(message, sender) {
 				return await checkAndSetAPIKey(newKey);
 			case 'resetHit':
 				const { model } = message;
-				tokenStorageManager.addReset(orgId, model).catch(err => {
-					console.error('Adding reset failed:', err);
+				tokenStorageManager.addReset(orgId, model, api).catch(err => {
+					debugLog("error", 'Adding reset failed:', err);
 				});
 				return true;
 		}

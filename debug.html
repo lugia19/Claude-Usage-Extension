@@ -72,6 +72,14 @@
 			background: rgba(152, 195, 121, 0.1);
 		}
 
+		.log-line[data-level="warn"] {
+			background: rgba(229, 192, 123, 0.1);
+		}
+
+		.log-line[data-level="error"] {
+			background: rgba(224, 108, 117, 0.1);
+		}
+
 		.log-message {
 			color: var(--text-primary);
 		}
@@ -135,6 +143,7 @@
 		<button id="refresh">Refresh Logs</button>
 		<button id="clear">Clear Logs</button>
 		<button id="enableDebug">Enable Debug Mode (1 hour)</button>
+		<button id="enablePermanentDebug">Enable Debug Mode (Permanent)</button>
 		<span id="debugStatus"></span>
 	</div>
 	<script src="lib/browser-polyfill.min.js"></script>

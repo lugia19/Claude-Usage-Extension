@@ -1,9 +1,11 @@
 // debug.js
 let autoRefreshInterval;
+const PERMANENT_DEBUG = 8640000000000000; // Maximum safe timestamp in JavaScript
 
 document.getElementById('refresh').addEventListener('click', showLogs);
 document.getElementById('clear').addEventListener('click', clearLogs);
 document.getElementById('enableDebug').addEventListener('click', toggleDebugMode);
+document.getElementById('enablePermanentDebug').addEventListener('click', enablePermanentDebug);
 
 function showLogs() {
 	browser.storage.local.get('debug_logs')
@@ -16,6 +18,7 @@ function showLogs() {
 			logs.forEach(log => {
 				const logLine = document.createElement('div');
 				logLine.className = 'log-line';
+				logLine.dataset.level = log.level || 'debug'; // Add level to the log line
 
 				const timestamp = document.createElement('span');
 				timestamp.className = 'log-timestamp';
@@ -23,7 +26,7 @@ function showLogs() {
 
 				const sender = document.createElement('span');
 				sender.className = 'log-sender';
-				sender.dataset.sender = log.sender; // Add data attribute for CSS targeting
+				sender.dataset.sender = log.sender;
 				sender.textContent = log.sender;
 
 				const message = document.createElement('span');
@@ -56,17 +59,28 @@ function updateDebugStatus() {
 			const debugUntil = result.debug_mode_until;
 			const now = Date.now();
 			const isEnabled = debugUntil && debugUntil > now;
-			const timeLeft = isEnabled ? Math.ceil((debugUntil - now) / 60000) : 0;
+			const isPermanent = debugUntil === PERMANENT_DEBUG;
+			const timeLeft = isEnabled && !isPermanent ? Math.ceil((debugUntil - now) / 60000) : 0;
 
 			// Update status text
 			const statusElement = document.getElementById('debugStatus');
-			statusElement.textContent = isEnabled
-				? `Debug mode enabled (${timeLeft} minutes remaining)`
-				: 'Debug mode disabled';
+			statusElement.textContent = isPermanent
+				? 'Debug mode enabled (permanent)'
+				: isEnabled
+					? `Debug mode enabled (${timeLeft} minutes remaining)`
+					: 'Debug mode disabled';
 
-			// Update button text and onclick handler
+			// Update buttons visibility and text
 			const debugButton = document.getElementById('enableDebug');
-			debugButton.textContent = isEnabled ? 'Disable Debug Mode' : 'Enable Debug Mode (1 hour)';
+			const permanentDebugButton = document.getElementById('enablePermanentDebug');
+
+			if (isEnabled) {
+				debugButton.textContent = 'Disable Debug Mode';
+				permanentDebugButton.style.display = 'none';
+			} else {
+				debugButton.textContent = 'Enable Debug Mode (1 hour)';
+				permanentDebugButton.style.display = 'inline-block';
+			}
 
 			if (!isEnabled && autoRefreshInterval) {
 				stopAutoRefresh();
@@ -92,6 +106,13 @@ function toggleDebugMode() {
 				return browser.storage.local.set({ debug_mode_until: oneHourFromNow });
 			}
 		})
+		.then(() => {
+			updateDebugStatus();
+		});
+}
+
+function enablePermanentDebug() {
+	browser.storage.local.set({ debug_mode_until: PERMANENT_DEBUG })
 		.then(() => {
 			updateDebugStatus();
 		});
