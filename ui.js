@@ -1105,7 +1105,7 @@
 	// Listen for messages from background
 	browser.runtime.onMessage.addListener(async (message) => {
 		if (message.type === 'updateUsage') {
-			await ui.updateUI(message.data);
+			if (ui) await ui.updateUI(message.data);
 		}
 
 		if (message.type === 'getActiveModel') {
@@ -1118,6 +1118,23 @@
 				.find(row => row.startsWith('lastActiveOrg='))
 				?.split('=')[1];
 			return Promise.resolve({ orgId });
+		}
+
+		if (message.action === "getStyleId") {
+			const storedStyle = localStorage.getItem('LSS-claude_personalized_style');
+			let styleId;
+
+			if (storedStyle) {
+				try {
+					const styleData = JSON.parse(storedStyle);
+					styleId = styleData.styleKey;
+				} catch (e) {
+					// If JSON parsing fails, we'll return undefined
+					console.error('Failed to parse stored style:', e);
+				}
+			}
+
+			return Promise.resolve({ styleId });
 		}
 	});
 	//#endregion

@@ -60,7 +60,8 @@ browser.webRequest.onBeforeRequest.addListener(
 			"*://claude.ai/api/organizations/*/retry_completion",
 			"*://claude.ai/api/settings/billing*"
 		]
-	}
+	},
+	["requestBody"]
 );
 
 browser.webRequest.onCompleted.addListener(
@@ -777,6 +778,31 @@ class ClaudeAPI {
 		return syncText || "";
 	}
 
+	async getStyleTokens(orgId, styleId, tabId) {
+		if (!styleId) {
+			//Ask the tabId to fetch it from localStorage.
+			debugLog("Fetching styleId from tab:", tabId);
+			const response = await browser.tabs.sendMessage(tabId, {
+				action: "getStyleId"
+			});
+			styleId = response?.styleId;
+
+			// If we still don't have a styleId, return 0
+			if (!styleId) return 0;
+		}
+		const styleData = await this.getRequest(`/organizations/${orgId}/list_styles`);
+		let style = styleData?.defaultStyles?.find(style => style.key === styleId);
+		if (!style) {
+			style = styleData?.customStyles?.find(style => style.uuid === styleId);
+		}
+		debugLog("Got style:", style);
+		if (style) {
+			return await getTextTokens(style.prompt);
+		} else {
+			return 0;
+		}
+	}
+
 	async getProjectTokens(orgId, projectId) {
 		//These are all text. No point in employing caching as it'll only take up one request anyway.
 		let project_text = "";
@@ -1155,7 +1181,7 @@ async function handleMessageFromContent(message, sender) {
 
 
 //#region Network handling
-async function processResponse(orgId, conversationId, isNewMessage, details) {
+async function processResponse(orgId, conversationId, responseKey, details) {
 	const tabId = details.tabId;
 	const api = await ClaudeAPI.create(details.cookieStoreId);
 
@@ -1167,9 +1193,18 @@ async function processResponse(orgId, conversationId, isNewMessage, details) {
 
 
 	const profileTokens = await api.getProfileTokens();
-	const messageCost = conversationTokens + profileTokens + configManager.config.BASE_SYSTEM_PROMPT_LENGTH
+	let messageCost = conversationTokens + profileTokens + configManager.config.BASE_SYSTEM_PROMPT_LENGTH
 	debugLog("Current per message cost:", messageCost);
 	conversationLengthCache.set(`${orgId}:${conversationId}`, messageCost);
+
+	const isNewMessage = await pendingResponses.has(responseKey)
+	// The style is procesed _after_ we set the conversationLengthCache, as it can vary.
+	// Yes, this means the length display won't update when you change the style. Too bad!
+
+	const styleId = (await pendingResponses.get(responseKey))?.styleId;
+	const styleTokens = await api.getStyleTokens(orgId, styleId, tabId);
+	messageCost += styleTokens;
+	debugLog("Added style tokens:", styleTokens);
 
 	if (isNewMessage) {
 		// Get model from based on conversation settings or tab
@@ -1218,9 +1253,12 @@ async function processResponse(orgId, conversationId, isNewMessage, details) {
 // Listen for message sending
 async function onBeforeRequestHandler(details) {
 	debugLog("Intercepted request:", details.url);
+	debugLog("Intercepted body:", details.requestBody);
 	if (details.method === "POST" &&
 		(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
 		debugLog("Request sent - URL:", details.url);
+		const requestBodyJSON = JSON.parse(new TextDecoder('utf-8').decode(details.requestBody.raw[0].bytes));
+		debugLog("Request sent - Body:", requestBodyJSON);
 		// Extract IDs from URL - we can refine these regexes
 		const urlParts = details.url.split('/');
 		const orgId = urlParts[urlParts.indexOf('organizations') + 1];
@@ -1229,11 +1267,14 @@ async function onBeforeRequestHandler(details) {
 
 		const key = `${orgId}:${conversationId}`;
 		debugLog(`Message sent - Key: ${key}`);
+		const styleId = requestBodyJSON?.personalized_styles?.[0]?.key || requestBodyJSON?.personalized_styles?.[0]?.uuid
+		debugLog("Choosing style between:", requestBodyJSON?.personalized_styles?.[0]?.key, requestBodyJSON?.personalized_styles?.[0]?.uuid)
 		// Store pending response with both orgId and tabId
 		await pendingResponses.set(key, {
 			orgId: orgId,
 			conversationId: conversationId,
-			tabId: details.tabId
+			tabId: details.tabId,
+			styleId: requestBodyJSON?.personalized_styles?.[0]?.key || requestBodyJSON?.personalized_styles?.[0]?.uuid
 		});
 	}
 
@@ -1260,7 +1301,7 @@ async function onCompletedHandler(details) {
 			const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
 
 			const key = `${orgId}:${conversationId}`;
-			const result = await processResponse(orgId, conversationId, await pendingResponses.has(key), details);
+			const result = await processResponse(orgId, conversationId, key, details);
 
 			if (result && await pendingResponses.has(key)) {
 				await pendingResponses.delete(key);
