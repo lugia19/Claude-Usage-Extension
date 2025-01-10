@@ -1149,7 +1149,13 @@
 
 		// Load and assign configuration to global variables
 		debugLog("Calling browser message...")
-		config = await sendBackgroundMessage({ type: 'getConfig' });
+		let timeLeft = 5000; // 5 seconds in ms, how long to retry getting the config
+		while (timeLeft > 0) {
+			config = await sendBackgroundMessage({ type: 'getConfig' });
+			if (config) break;
+			await sleep(100);
+			timeLeft -= 100;
+		}
 		debugLog("Config received...")
 		debugLog(config)
 		let userMenuButton = null;
