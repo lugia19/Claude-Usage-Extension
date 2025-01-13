@@ -3,20 +3,31 @@ import './lib/o200k_base.js';
 
 const tokenizer = GPTTokenizer_o200k_base;
 const STORAGE_KEY = "claudeUsageTracker_v5"
-const DEBUG_MODE = true
+
 //#region Variable declarations
 let processingQueue = Promise.resolve();
 let pendingResponses;
 let conversationLengthCache;
 let tokenStorageManager;
 let configManager;
+
+let isInitialized = false;
+let pendingHandlers = [];
+
+function queueOrExecute(fn, args) {
+	if (!isInitialized) {
+		pendingHandlers.push({ fn, args });
+		return;
+	}
+	return fn(...args);
+}
 //#endregion
 
 //#region Listener setup (I hate MV3 - listeners must be initialized here)
 //Extension-related listeners:
 browser.runtime.onMessage.addListener(async (message, sender) => {
 	await Log("Background received message:", message);
-	return handleMessageFromContent(message, sender);
+	return queueOrExecute(handleMessageFromContent, [message, sender]);
 });
 
 browser.action.onClicked.addListener(() => {
@@ -53,7 +64,7 @@ if (browser.contextMenus) {
 
 // WebRequest listeners with specific URL patterns
 browser.webRequest.onBeforeRequest.addListener(
-	onBeforeRequestHandler,
+	(details) => queueOrExecute(onBeforeRequestHandler, [details]),
 	{
 		urls: [
 			"*://claude.ai/api/organizations/*/completion",
@@ -65,13 +76,14 @@ browser.webRequest.onBeforeRequest.addListener(
 );
 
 browser.webRequest.onCompleted.addListener(
-	onCompletedHandler,
+	(details) => queueOrExecute(onCompletedHandler, [details]),
 	{
 		urls: [
 			"*://claude.ai/api/organizations/*/chat_conversations/*"
 		]
 	},
 	["responseHeaders"]);
+
 
 addFirefoxContainerFixListener();
 
@@ -1381,5 +1393,12 @@ conversationLengthCache = new Map();
 tokenStorageManager = new TokenStorageManager();
 configManager = new Config();
 configManager.initialize();
+
+isInitialized = true;
+for (const handler of pendingHandlers) {
+	handler.fn(...handler.args);
+}
+pendingHandlers = [];
+
 await Log("Done initializing.")
 //#endregion
