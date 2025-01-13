@@ -790,6 +790,8 @@
 		}
 
 		async updateUI(data) {
+			await Log("Updating UI with data", data);
+			if (!data) return;
 			const { conversationLength, modelData } = data;
 
 			if (conversationLength) this.conversationLength = conversationLength;
