@@ -71,12 +71,6 @@
 	let ui;
 
 	//State variables
-	let currentlyDisplayedModel = 'default';
-	let currentConversation = -1;
-	let modelSections = {};
-	let uiReady = false;
-	const pendingUpdates = [];
-
 
 	//#region Utils
 	const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -124,24 +118,12 @@
 		return null;
 	}
 
-	async function getCurrentModel() {
-		const overrideSelector = await waitForElement(document, config.SELECTORS.MODEL_OVERRIDE, 1000);
-		if (overrideSelector) {
-			const overrideModel = overrideSelector.options[overrideSelector.selectedIndex].text
-			let overrideModelName = overrideModel.toLowerCase();
-			const modelTypes = Object.keys(config.MODEL_CAPS.pro).filter(key => key !== 'default');
-
-			for (const modelType of modelTypes) {
-				if (overrideModelName.includes(modelType.toLowerCase())) {
-					return modelType;
-				}
-			}
-		}
-		const modelSelector = await waitForElement(document, config.SELECTORS.MODEL_PICKER, 3000);
-		if (!modelSelector) return 'default';
+	async function getCurrentModel(maxWait = 3000) {
+		const modelSelector = await waitForElement(document, config.SELECTORS.MODEL_PICKER, maxWait);
+		if (!modelSelector) return undefined;
 
 		let fullModelName = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim() || 'default';
-		if (!fullModelName || fullModelName === 'default') return 'default';
+		if (!fullModelName || fullModelName === 'default') return undefined;
 
 		fullModelName = fullModelName.toLowerCase();
 		const modelTypes = Object.keys(config.MODEL_CAPS.pro).filter(key => key !== 'default');
@@ -151,8 +133,8 @@
 				return modelType;
 			}
 		}
-		await Log("Could not find matching model, returning default")
-		return 'default';
+		await Log("Could not find matching model, returning undefined")
+		return undefined;
 	}
 
 	function isMobileView() {
@@ -708,10 +690,10 @@
 	}
 
 	class UIManager {
-		constructor() {
-			this.sidebarUI = new SidebarUI();
+		constructor(currModel) {
+			this.currentlyDisplayedModel = currModel;
+			this.sidebarUI = new SidebarUI(this);
 			this.chatUI = new ChatUI();
-			this.currentlyDisplayedModel = 'default';
 			this.currentConversation = -1;
 			this.conversationLength = null;
 		}
@@ -724,10 +706,87 @@
 			await this.updateUI(await sendBackgroundMessage({ type: 'requestData' }));
 			await sendBackgroundMessage({ type: 'initOrg' });
 
-			// Start periodic updates
-			setInterval(() => {
-				this.periodicUIUpdate();
-			}, config.UI_UPDATE_INTERVAL_MS);
+			// Start animation frame loop
+			this.lastFullUpdate = 0;
+			this.lastMediumUpdate = 0;
+			this.lastHighUpdate = 0;
+			this.highUpdateFrequency = Math.round(config.UI_UPDATE_INTERVAL_MS / 4);	//750
+			this.mediumUpdateFrequency = Math.round(config.UI_UPDATE_INTERVAL_MS / 2);	//1500
+			this.fullUpdateFrequency = config.UI_UPDATE_INTERVAL_MS;	//3000
+			this.scheduleNextFrame();
+		}
+
+		scheduleNextFrame() {
+			requestAnimationFrame((timestamp) => this.frameUpdate(timestamp));
+		}
+
+		async frameUpdate(timestamp) {
+			if (!this.lastHighUpdate || timestamp - this.lastHighUpdate >= this.highUpdateFrequency) {
+				await this.highFrequencyUpdates();
+				this.lastHighUpdate = timestamp;
+			}
+
+			if (!this.lastMediumUpdate || timestamp - this.lastMediumUpdate >= this.mediumUpdateFrequency) {
+				await this.mediumFrequencyUpdates();
+				this.lastMediumUpdate = timestamp;
+			}
+
+			if (!this.lastFullUpdate || timestamp - this.lastFullUpdate >= this.fullUpdateFrequency) {
+				await this.lowFrequencyUpdates();
+				this.lastFullUpdate = timestamp;
+			}
+
+			this.scheduleNextFrame();
+		}
+
+		async highFrequencyUpdates() {
+			const newModel = await getCurrentModel(200);
+			if (newModel !== this.currentlyDisplayedModel) {
+				await this.updateUI(await sendBackgroundMessage({ type: 'requestData' }));
+				this.currentlyDisplayedModel = newModel;
+			}
+
+			//UI presence checks
+			const sidebarContainer = await findSidebarContainer();
+			await this.sidebarUI.checkAndReinject(sidebarContainer);
+			await this.chatUI.checkAndReinject();
+
+			this.sidebarUI.updateModelStates(this.currentlyDisplayedModel);
+		}
+
+		async mediumFrequencyUpdates() {
+			// Check for conversation changes
+			const newConversation = getConversationId();
+			const isHomePage = newConversation === null;
+
+			if (this.currentConversation !== newConversation && !isHomePage) {
+				await this.updateUI(await sendBackgroundMessage({
+					type: 'requestData',
+					conversationId: newConversation
+				}));
+				this.currentConversation = newConversation;
+			}
+
+			// Update home page state if needed
+			if (isHomePage && this.conversationLength !== null) {
+				this.conversationLength = null;
+				this.chatUI.updateEstimate(null, null, null, null, true);
+			}
+		}
+
+		async lowFrequencyUpdates() {
+			// Check for message limits
+			const messageLimitElement = document.querySelector('a[href*="does-claude-pro-have-any-usage-limits"]');
+			if (messageLimitElement) {
+				const limitTextElement = messageLimitElement.closest('.text-text-400');
+				if (limitTextElement) {
+					await sendBackgroundMessage({
+						type: 'resetHit',
+						model: this.currentlyDisplayedModel
+					});
+				}
+			}
+			this.chatUI.updateResetTimeDisplay();
 		}
 
 		async updateUI(data) {
@@ -736,7 +795,7 @@
 			if (conversationLength) this.conversationLength = conversationLength;
 
 			// Update current model
-			this.currentlyDisplayedModel = await getCurrentModel();
+			this.currentlyDisplayedModel = await getCurrentModel() || this.currentlyDisplayedModel
 
 			// Get the token cap for current model
 			const modelCaps = await sendBackgroundMessage({ type: 'getCaps' });
@@ -746,53 +805,6 @@
 			this.chatUI.updateChatUI(data, this.currentlyDisplayedModel, modelCaps);
 		}
 
-		async periodicUIUpdate() {
-			const sidebarContainer = await findSidebarContainer();
-			const newModel = await getCurrentModel();
-			const isHomePage = getConversationId() === null;
-			const newConversation = getConversationId();
-
-			// Check if UIs need to be re-injected
-			await this.sidebarUI.checkAndReinject(sidebarContainer);
-			await this.chatUI.checkAndReinject();
-
-			let updateTriggered = false;
-
-			// Check for message limit
-			const messageLimitElement = document.querySelector('a[href*="does-claude-pro-have-any-usage-limits"]');
-			await Log('Message limit element found?', (messageLimitElement != null));
-			if (messageLimitElement) {
-				const limitTextElement = messageLimitElement.closest('.text-text-400');
-				if (limitTextElement) {
-					await sendBackgroundMessage({ type: 'resetHit', model: newModel });
-				}
-			}
-
-			// Check for conversation change
-			if (this.currentConversation !== newConversation && !isHomePage) {
-				await this.updateUI(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
-				this.currentConversation = newConversation;
-				updateTriggered = true;
-			}
-
-			// Check for model change
-			if (newModel !== this.currentlyDisplayedModel && !updateTriggered) {
-				await this.updateUI(await sendBackgroundMessage({ type: 'requestData', conversationId: newConversation }));
-				updateTriggered = true;
-			}
-
-			this.currentlyDisplayedModel = newModel;
-			this.currentConversation = newConversation;
-
-			if (isHomePage) {
-				this.conversationLength = null;
-				this.chatUI.updateEstimate(null, null, null, null, true);
-			}
-
-			// Update UI states
-			this.sidebarUI.updateModelStates(this.currentlyDisplayedModel);
-			this.chatUI.updateLength(this.conversationLength);
-		}
 	}
 
 	class ChatUI {
@@ -802,6 +814,7 @@
 			this.resetDisplay = null;
 			this.statLine = null;
 			this.progressBar = null;
+			this.lastResetTimestamp = null;
 		}
 
 		initialize() {
@@ -913,7 +926,7 @@
 			const remainingTokens = maxTokens - modelTotal;
 
 			let estimate;
-			if (conversationLength > 0 && currentModel != "default") {
+			if (conversationLength > 0 && currentModel) {
 				estimate = Math.max(0, remainingTokens / conversationLength);
 				estimate = estimate.toFixed(1);
 			} else {
@@ -927,15 +940,20 @@
 			if (!this.resetDisplay) return;
 
 			const currentModelInfo = modelData[currentModel];
-			const resetTimestamp = currentModelInfo?.resetTimestamp;
+			this.lastResetTimestamp = currentModelInfo?.resetTimestamp || null;
+			this.updateResetTimeDisplay();
+		}
 
-			if (!resetTimestamp) {
+		updateResetTimeDisplay() {
+			if (!this.resetDisplay) return;
+
+			if (!this.lastResetTimestamp) {
 				this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">Not set</span>`;
 				return;
 			}
 
-			const now = new Date();
-			const diff = resetTimestamp - now;
+			const now = Date.now();
+			const diff = this.lastResetTimestamp - now;
 
 			if (diff <= 0) {
 				this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">pending...</span>`;
@@ -949,10 +967,11 @@
 	}
 
 	class SidebarUI {
-		constructor() {
+		constructor(ui) {
 			this.container = null;
 			this.modelSections = {};
 			this.uiReady = false;
+			this.parentUI = ui;
 			this.pendingUpdates = [];
 		}
 
@@ -986,7 +1005,7 @@
 			config.MODELS.forEach(modelName => {
 				const section = this.modelSections[modelName];
 				if (section) {
-					const isActiveModel = modelName === currentlyDisplayedModel;
+					const isActiveModel = modelName === this.parentUI.currentlyDisplayedModel;
 					section.setActive(isActiveModel);
 				}
 			});
@@ -1128,7 +1147,9 @@
 		}
 
 		if (message.type === 'getActiveModel') {
-			return await getCurrentModel();
+			const currModel = await getCurrentModel();
+			if (!currModel && ui) return ui.currentlyDisplayedModel;
+			return "Sonnet";
 		}
 
 		if (message.action === "getOrgID") {
@@ -1218,9 +1239,8 @@
 		}
 		userMenuButton.setAttribute('data-script-loaded', true);
 		await Log('We\'re unique, initializing Chat Token Counter...');
-		currentlyDisplayedModel = await getCurrentModel();
 
-		ui = new UIManager();
+		ui = new UIManager(await getCurrentModel());
 		await ui.initialize();
 
 		await ui.updateUI(await sendBackgroundMessage({ type: 'requestData' }));
