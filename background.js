@@ -370,6 +370,13 @@ class Config {
 			return this.defaultConfig;
 		}
 	}
+
+	async getConfig() {
+		if (!this.config) {
+			this.config = await this.getFreshConfig();
+		}
+		return this.config;
+	}
 }
 
 // Token storage manager
@@ -530,7 +537,7 @@ class TokenStorageManager {
 			//await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 1000)	//5 seconds (for testing only)
 			await this.subscriptionTiers.set(orgId, subscriptionTier, 1 * 60 * 60 * 1000)	//1 hour
 		}
-		return configManager.config.MODEL_CAPS[subscriptionTier]
+		return (await configManager.getConfig()).MODEL_CAPS[subscriptionTier]
 	}
 
 	async getCollapsedState() {
@@ -891,8 +898,8 @@ class ClaudeAPI {
 		// Add settings costs
 		for (const [setting, enabled] of Object.entries(conversationData.settings)) {
 			await Log("Setting:", setting, enabled);
-			if (enabled && configManager.config.FEATURE_COSTS[setting]) {
-				totalTokens += configManager.config.FEATURE_COSTS[setting];
+			if (enabled && (await configManager.getConfig()).FEATURE_COSTS[setting]) {
+				totalTokens += (await configManager.getConfig()).FEATURE_COSTS[setting];
 			}
 		}
 
@@ -937,7 +944,7 @@ class ClaudeAPI {
 			}
 
 			if (message === lastMessage) {
-				totalTokens += await getTextTokens(messageContent.join(' ')) * (configManager.config.OUTPUT_TOKEN_MULTIPLIER - 1);
+				totalTokens += await getTextTokens(messageContent.join(' ')) * ((await configManager.getConfig()).OUTPUT_TOKEN_MULTIPLIER - 1);
 			}
 
 			if (message.sender === "human") {
@@ -1114,7 +1121,7 @@ async function updateAllTabs(currentLength = undefined, lengthTabId = undefined)
 			modelData: {}
 		};
 
-		for (const model of configManager.config.MODELS) {
+		for (const model of (await configManager.getConfig()).MODELS) {
 			const modelData = await tokenStorageManager.getModelData(orgId, model);
 			if (modelData) {
 				tabData.modelData[model] = modelData;
@@ -1145,14 +1152,13 @@ async function handleMessageFromContent(message, sender) {
 			case 'setCollapsedState':
 				return await tokenStorageManager.setCollapsedState(message.isCollapsed);
 			case 'getConfig':
-				let config = await configManager.config;
-				if (!config) config = await configManager.getFreshConfig();
+				let config = (await configManager.getConfig());
 				return config;
 			case 'requestData':
 				const baseData = { modelData: {} };
 				const { conversationId } = message ?? undefined;
 				// Get data for all models
-				for (const model of configManager.config.MODELS) {
+				for (const model of (await configManager.getConfig()).MODELS) {
 					const modelData = await tokenStorageManager.getModelData(orgId, model);
 					if (modelData) {
 						baseData.modelData[model] = modelData;
@@ -1168,7 +1174,7 @@ async function handleMessageFromContent(message, sender) {
 						const conversationTokens = await api.getConversationTokens(orgId, conversationId);
 						if (conversationTokens != undefined) {
 							const profileTokens = await api.getProfileTokens();
-							const messageCost = conversationTokens + profileTokens + configManager.config.BASE_SYSTEM_PROMPT_LENGTH;
+							const messageCost = conversationTokens + profileTokens + (await configManager.getConfig()).BASE_SYSTEM_PROMPT_LENGTH;
 							conversationLengthCache.set(key, messageCost);
 						}
 					}
@@ -1218,7 +1224,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 
 
 	const profileTokens = await api.getProfileTokens();
-	let messageCost = conversationTokens + profileTokens + configManager.config.BASE_SYSTEM_PROMPT_LENGTH
+	let messageCost = conversationTokens + profileTokens + (await configManager.getConfig()).BASE_SYSTEM_PROMPT_LENGTH
 	await Log("Current per message cost:", messageCost);
 	conversationLengthCache.set(`${orgId}:${conversationId}`, messageCost);
 
@@ -1237,7 +1243,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 		let model;
 		if (conversationData.model) {
 			const modelString = conversationData.model.toLowerCase();
-			const modelTypes = Object.keys(configManager.config.MODEL_CAPS.pro).filter(key => key !== 'default');
+			const modelTypes = Object.keys((await configManager.getConfig()).MODEL_CAPS.pro).filter(key => key !== 'default');
 			for (const modelType of modelTypes) {
 				if (modelString.includes(modelType.toLowerCase())) {
 					model = modelType;
@@ -1262,7 +1268,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	};
 
 	// Get data for all models
-	for (const model of configManager.config.MODELS) {
+	for (const model of (await configManager.getConfig()).MODELS) {
 		const modelData = await tokenStorageManager.getModelData(orgId, model);
 		if (modelData) {
 			baseData.modelData[model] = modelData;
