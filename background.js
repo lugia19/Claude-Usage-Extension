@@ -124,7 +124,7 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 //#region Alarms
 const nextAlarm = new Date();
 nextAlarm.setHours(nextAlarm.getHours() + 1, 1, 0, 0);
-await Log("Creating firebase alarms...");
+Log("Creating firebase alarms...");
 browser.alarms.create('checkExpiredData', {
 	when: nextAlarm.getTime(),
 	periodInMinutes: 60
@@ -132,13 +132,13 @@ browser.alarms.create('checkExpiredData', {
 
 browser.alarms.create('firebaseSync', { periodInMinutes: 5 });
 browser.alarms.create('resetTimesSync', { periodInMinutes: 10 });
-await Log("Firebase alarms created.");
+Log("Firebase alarms created.");
 
-await Log("Initializing config refresh...");
+Log("Initializing config refresh...");
 browser.alarms.create('refreshConfig', {
 	periodInMinutes: 15
 });
-await Log("Config refresh alarm created.");
+Log("Config refresh alarm created.");
 //#endregion
 
 
@@ -1400,5 +1400,5 @@ for (const handler of pendingHandlers) {
 }
 pendingHandlers = [];
 
-await Log("Done initializing.")
+Log("Done initializing.")
 //#endregion
