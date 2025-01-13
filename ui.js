@@ -740,9 +740,10 @@
 		}
 
 		async highFrequencyUpdates() {
+			const currConversation = getConversationId();
 			const newModel = await getCurrentModel(200);
 			if (newModel !== this.currentlyDisplayedModel) {
-				await this.updateUI(await sendBackgroundMessage({ type: 'requestData' }));
+				await this.updateUI(await sendBackgroundMessage({ type: 'requestData', conversationId: currConversation }));
 				this.currentlyDisplayedModel = newModel;
 			}
 
@@ -1151,7 +1152,7 @@
 		if (message.type === 'getActiveModel') {
 			const currModel = await getCurrentModel();
 			if (!currModel && ui) return ui.currentlyDisplayedModel;
-			return "Sonnet";
+			return currModel || "Sonnet";
 		}
 
 		if (message.action === "getOrgID") {
