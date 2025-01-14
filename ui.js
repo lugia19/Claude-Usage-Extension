@@ -566,7 +566,46 @@
 
 			this.element.appendChild(label);
 			this.element.appendChild(input);
-			this.element.appendChild(saveButton);
+
+			// Create a container for the buttons
+			const buttonContainer = document.createElement('div');
+			buttonContainer.style.cssText = `
+				display: flex;
+				gap: 8px;
+				align-items: center;
+			`;
+
+			// Move the save button into the container
+			buttonContainer.appendChild(saveButton);
+
+			// Create and add debug button to container
+			const debugButton = document.createElement('button');
+			debugButton.textContent = 'Debug Logs';
+			debugButton.style.cssText = `
+				background: #3B3B3B;
+				border: 1px solid #4B4B4B;
+				border-radius: 4px;
+				color: #888;
+				cursor: pointer;
+				padding: 6px 12px;
+				font-size: 12px;
+			`;
+
+			debugButton.addEventListener('click', async () => {
+				const result = await sendBackgroundMessage({
+					type: 'openDebugPage'
+				});
+
+				if (result === 'fallback') {
+					window.location.href = chrome.runtime.getURL('debug.html');
+				}
+			});
+
+			buttonContainer.appendChild(debugButton);
+
+			// Add the container instead of just the save button
+			this.element.appendChild(buttonContainer);
+
 			this.addCloseButton();
 
 			// Make the card draggable by the label area

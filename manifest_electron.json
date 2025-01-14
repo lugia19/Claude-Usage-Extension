@@ -1,0 +1,52 @@
+{
+    "manifest_version": 2,
+    "name": "Claude Usage Tracker",
+    "version": "3.3.4",
+    "description": "Helps you track your claude.ai usage caps based on tokens sent, and syncs across devices using firebase.",
+    "author": "lugia19",
+    "browser_specific_settings": {
+        "gecko": {
+            "id": "claude_usage_tracker@lugia19.com"
+        }
+    },
+    "background": {
+        "scripts": [
+            "lib/browser-polyfill.min.js",
+            "lib/o200k_base.js",
+            "background_mv2.js"
+        ],
+        "persistent": true
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "https://claude.ai/*"
+            ],
+            "js": [
+                "lib/browser-polyfill.min.js",
+                "lib/o200k_base.js",
+                "ui.js"
+            ]
+        }
+    ],
+    "permissions": [
+        "storage",
+        "alarms",
+        "webRequest",
+        "tabs",
+        "*://claude.ai/*",
+        "https://raw.githubusercontent.com/*",
+        "https://api.anthropic.com/*"
+    ],
+    "web_accessible_resources": [
+        "default-config.json",
+        "lib/browser-polyfill.min.js",
+        "lib/o200k_base.js",
+        "kofi-button.png",
+        "debug.html"
+    ],
+    "icons": {
+        "512": "icon512.png",
+        "128": "icon128.png"
+    }
+}

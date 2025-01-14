@@ -1,5 +1,5 @@
-import './lib/browser-polyfill.min.js';
-import './lib/o200k_base.js';
+//import './lib/browser-polyfill.min.js';
+//import './lib/o200k_base.js';
 
 const tokenizer = GPTTokenizer_o200k_base;
 const STORAGE_KEY = "claudeUsageTracker_v5"

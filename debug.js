@@ -139,5 +139,13 @@ showLogs();
 updateDebugStatus();
 startAutoRefresh();
 
+if (!chrome.tabs?.create) {
+	const returnButton = document.getElementById('returnToClaude');
+	returnButton.style.display = 'inline-block';
+	returnButton.addEventListener('click', () => {
+		window.location.href = 'https://claude.ai';
+	});
+}
+
 // Clean up when the page is closed
 window.addEventListener('beforeunload', stopAutoRefresh);
