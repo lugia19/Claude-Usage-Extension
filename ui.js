@@ -1230,38 +1230,98 @@
 
 		if (!patterns) return;
 
-		const originalFetch = window.fetch;
-		window.fetch = async function (resource, options) {
-			const url = resource instanceof Request ? resource.url : resource;
+		// Set up event listeners in content script context
+		window.addEventListener('interceptedRequest', async (event) => {
+			await Log("Intercepted request", event.detail);
+			browser.runtime.sendMessage({
+				type: 'interceptedRequest',
+				details: event.detail
+			});
+		});
 
-			const details = {
-				url: url,
-				method: options?.method || 'GET',
-				requestBody: options?.body ? { raw: [{ bytes: options.body }] } : null
+		window.addEventListener('interceptedResponse', async (event) => {
+			await Log("Intercepted response", event.detail);
+			browser.runtime.sendMessage({
+				type: 'interceptedResponse',
+				details: event.detail
+			});
+		});
+
+		const setupScript = document.createElement('script');
+		setupScript.textContent = `
+			window.__interceptPatterns = ${JSON.stringify(patterns)};
+			const originalFetch = window.fetch;
+
+			async function getBodyDetails(body) {
+				if (!body) return null;
+				
+				// If it's already a string (like JSON), just pass it through
+				if (typeof body === 'string') {
+					return { raw: [{ bytes: body }], fromMonkeypatch: true };
+				}
+				
+				// Handle FormData and other complex types
+				if (body instanceof FormData) {
+					const text = Array.from(body.entries())
+						.map(entry => entry[0] + '=' + entry[1])
+						.join('&');
+					return { raw: [{ bytes: text }], fromMonkeypatch: true };
+				}
+				
+				// For everything else, try to stringify
+				try {
+					return { raw: [{ bytes: JSON.stringify(body) }], fromMonkeypatch: true };
+				} catch (e) {
+					console.error('Failed to serialize body:', e);
+					return null;
+				}
+			}
+
+			window.fetch = async (...args) => {
+				const patterns = window.__interceptPatterns;
+				if (!patterns) return originalFetch(...args);
+				
+				const [input, config] = args;
+				
+				let url;
+				if (input instanceof URL) {
+					url = input.href;
+				} else if (typeof input === 'string') {
+					url = input;
+				} else if (input instanceof Request) {
+					url = input.url;
+				}
+				if (url.startsWith('/')) {
+					url = 'https://claude.ai' + url;
+				}
+	
+				const details = {
+					url: url,
+					method: config?.method || 'GET',
+					requestBody: config?.body ? await getBodyDetails(config.body) : null
+				};
+				
+				if (patterns.onBeforeRequest.regexes.some(pattern => new RegExp(pattern).test(url))) {
+					window.dispatchEvent(new CustomEvent('interceptedRequest', { detail: details }));
+				}
+	
+				const response = await originalFetch(...args);
+				
+				if (patterns.onCompleted.regexes.some(pattern => new RegExp(pattern).test(url))) {
+					window.dispatchEvent(new CustomEvent('interceptedResponse', { 
+						detail: {
+							...details,
+							status: response.status,
+							statusText: response.statusText
+						}
+					}));
+				}
+	
+				return response;
 			};
-
-			if (patterns.onBeforeRequest.urls.some(pattern => url.includes(pattern))) {
-				browser.runtime.sendMessage({
-					type: 'interceptedRequest',
-					details: details
-				});
-			}
-
-			const response = await originalFetch(resource, options);
-
-			if (patterns.onCompleted.urls.some(pattern => url.includes(pattern))) {
-				browser.runtime.sendMessage({
-					type: 'interceptedResponse',
-					details: {
-						...details,
-						status: response.status,
-						statusText: response.statusText
-					}
-				});
-			}
-
-			return response;
-		};
+		`;
+		(document.head || document.documentElement).appendChild(setupScript);
+		setupScript.remove();
 	}
 	//#endregion
 

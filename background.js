@@ -9,11 +9,19 @@ const INTERCEPT_PATTERNS = {
 			"*://claude.ai/api/organizations/*/completion",
 			"*://claude.ai/api/organizations/*/retry_completion",
 			"*://claude.ai/api/settings/billing*"
+		],
+		regexes: [
+			"^https?://claude\\.ai/api/organizations/[^/]*/chat_conversations/[^/]*/completion$",
+			"^https?://claude\\.ai/api/organizations/[^/]*/chat_conversations/[^/]*/retry_completion$",
+			"^https?://claude\\.ai/api/settings/billing"
 		]
 	},
 	onCompleted: {
 		urls: [
 			"*://claude.ai/api/organizations/*/chat_conversations/*"
+		],
+		regexes: [
+			"^https?://claude\\.ai/api/organizations/[^/]*/chat_conversations/[^/]*$"
 		]
 	}
 };
@@ -1226,12 +1234,14 @@ async function handleMessageFromContent(message, sender) {
 			case 'needsMonkeypatching':
 				return isElectron ? INTERCEPT_PATTERNS : false;
 			case 'interceptedRequest':
+				await Log("Got intercepted request, are we in electron?", isElectron);
 				if (!isElectron) return false;
 				message.details.tabId = sender.tab.id;
 				message.details.cookieStoreId = sender.tab.cookieStoreId;
 				onBeforeRequestHandler(message.details);
 				return true;
 			case 'interceptedResponse':
+				await Log("Got intercepted response, are we in electron?", isElectron);
 				if (!isElectron) return false;
 				message.details.tabId = sender.tab.id;
 				message.details.cookieStoreId = sender.tab.cookieStoreId;
@@ -1247,6 +1257,37 @@ async function handleMessageFromContent(message, sender) {
 
 
 //#region Network handling
+async function parseRequestBody(requestBody) {
+	if (!requestBody?.raw?.[0]?.bytes) return undefined;
+
+	// Handle differently based on source
+	if (requestBody.fromMonkeypatch) {
+		const body = requestBody.raw[0].bytes;
+		try {
+			return JSON.parse(body);
+		} catch (e) {
+			try {
+				const params = new URLSearchParams(body);
+				const formData = {};
+				for (const [key, value] of params) {
+					formData[key] = value;
+				}
+				return formData;
+			} catch (e) {
+				return undefined;
+			}
+		}
+	} else {
+		// Original webRequest handling
+		try {
+			const text = new TextDecoder().decode(requestBody.raw[0].bytes);
+			return JSON.parse(text);
+		} catch (e) {
+			return undefined;
+		}
+	}
+}
+
 async function processResponse(orgId, conversationId, responseKey, details) {
 	const tabId = details.tabId;
 	const api = await ClaudeAPI.create(details.cookieStoreId);
@@ -1323,7 +1364,7 @@ async function onBeforeRequestHandler(details) {
 	if (details.method === "POST" &&
 		(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
 		await Log("Request sent - URL:", details.url);
-		const requestBodyJSON = JSON.parse(new TextDecoder('utf-8').decode(details.requestBody.raw[0].bytes));
+		const requestBodyJSON = await parseRequestBody(details.requestBody);
 		await Log("Request sent - Body:", requestBodyJSON);
 		// Extract IDs from URL - we can refine these regexes
 		const urlParts = details.url.split('/');
