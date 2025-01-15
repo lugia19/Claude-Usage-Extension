@@ -3,6 +3,20 @@ import './lib/o200k_base.js';
 
 const tokenizer = GPTTokenizer_o200k_base;
 const STORAGE_KEY = "claudeUsageTracker_v5"
+const INTERCEPT_PATTERNS = {
+	onBeforeRequest: {
+		urls: [
+			"*://claude.ai/api/organizations/*/completion",
+			"*://claude.ai/api/organizations/*/retry_completion",
+			"*://claude.ai/api/settings/billing*"
+		]
+	},
+	onCompleted: {
+		urls: [
+			"*://claude.ai/api/organizations/*/chat_conversations/*"
+		]
+	}
+};
 
 //#region Variable declarations
 let processingQueue = Promise.resolve();
@@ -67,29 +81,23 @@ if (browser.contextMenus) {
 }
 
 // WebRequest listeners with specific URL patterns
-browser.webRequest.onBeforeRequest.addListener(
-	(details) => queueOrExecute(onBeforeRequestHandler, [details]),
-	{
-		urls: [
-			"*://claude.ai/api/organizations/*/completion",
-			"*://claude.ai/api/organizations/*/retry_completion",
-			"*://claude.ai/api/settings/billing*"
-		]
-	},
-	["requestBody"]
-);
+if (!isElectron) {
+	browser.webRequest.onBeforeRequest.addListener(
+		(details) => queueOrExecute(onBeforeRequestHandler, [details]),
+		{ urls: INTERCEPT_PATTERNS.onBeforeRequest.urls },
+		["requestBody"]
+	);
 
-browser.webRequest.onCompleted.addListener(
-	(details) => queueOrExecute(onCompletedHandler, [details]),
-	{
-		urls: [
-			"*://claude.ai/api/organizations/*/chat_conversations/*"
-		]
-	},
-	["responseHeaders"]);
+	browser.webRequest.onCompleted.addListener(
+		(details) => queueOrExecute(onCompletedHandler, [details]),
+		{ urls: INTERCEPT_PATTERNS.onCompleted.urls },
+		["responseHeaders"]
+	);
 
 
-addFirefoxContainerFixListener();
+	addFirefoxContainerFixListener();
+}
+
 
 //Alarm listeners
 browser.alarms.onAlarm.addListener(async (alarm) => {
@@ -1215,6 +1223,20 @@ async function handleMessageFromContent(message, sender) {
 					return true;
 				}
 				return 'fallback';
+			case 'needsMonkeypatching':
+				return isElectron ? INTERCEPT_PATTERNS : false;
+			case 'interceptedRequest':
+				if (!isElectron) return false;
+				message.details.tabId = sender.tab.id;
+				message.details.cookieStoreId = sender.tab.cookieStoreId;
+				onBeforeRequestHandler(message.details);
+				return true;
+			case 'interceptedResponse':
+				if (!isElectron) return false;
+				message.details.tabId = sender.tab.id;
+				message.details.cookieStoreId = sender.tab.cookieStoreId;
+				onCompletedHandler(message.details);
+				return true;
 		}
 	})();
 	await Log("📤 Sending response:", response);

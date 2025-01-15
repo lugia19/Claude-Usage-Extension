@@ -1181,7 +1181,9 @@
 
 		return hours > 0 ? `Reset in: ${hours}h ${minutes}m` : `Reset in: ${minutes}m`;
 	}
+	//#endregion
 
+	//#region Event Handlers
 	// Listen for messages from background
 	browser.runtime.onMessage.addListener(async (message) => {
 		if (message.type === 'updateUsage') {
@@ -1219,11 +1221,50 @@
 			return Promise.resolve({ styleId });
 		}
 	});
+
+	// Monkeypatch fetching if required
+	async function initializeFetch() {
+		const patterns = await browser.runtime.sendMessage({
+			type: 'needsMonkeypatching'
+		});
+
+		if (!patterns) return;
+
+		const originalFetch = window.fetch;
+		window.fetch = async function (resource, options) {
+			const url = resource instanceof Request ? resource.url : resource;
+
+			const details = {
+				url: url,
+				method: options?.method || 'GET',
+				requestBody: options?.body ? { raw: [{ bytes: options.body }] } : null
+			};
+
+			if (patterns.onBeforeRequest.urls.some(pattern => url.includes(pattern))) {
+				browser.runtime.sendMessage({
+					type: 'interceptedRequest',
+					details: details
+				});
+			}
+
+			const response = await originalFetch(resource, options);
+
+			if (patterns.onCompleted.urls.some(pattern => url.includes(pattern))) {
+				browser.runtime.sendMessage({
+					type: 'interceptedResponse',
+					details: {
+						...details,
+						status: response.status,
+						statusText: response.statusText
+					}
+				});
+			}
+
+			return response;
+		};
+	}
 	//#endregion
 
-	//#region Event Handlers
-
-	//#endregion
 	async function initialize() {
 		const MAX_RETRIES = 15;
 		const RETRY_DELAY = 200;
@@ -1273,14 +1314,14 @@
 			await sleep(LOGIN_CHECK_DELAY);
 		}
 
-
-
 		if (userMenuButton.getAttribute('data-script-loaded')) {
 			await Log('Script already running, stopping duplicate');
 			return;
 		}
 		userMenuButton.setAttribute('data-script-loaded', true);
 		await Log('We\'re unique, initializing Chat Token Counter...');
+		await Log("Initializing fetch...")
+		await initializeFetch();
 
 		ui = new UIManager(await getCurrentModel());
 		await ui.initialize();
