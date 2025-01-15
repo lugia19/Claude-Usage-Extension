@@ -1,5 +1,9 @@
 @echo off
 
+REM Create MV2 background script
+echo Creating MV2 background script...
+powershell -Command "(Get-Content background.js | Select-Object -Skip 2) | Set-Content background_mv2.js"
+
 REM Chrome build
 echo Starting Chrome build...
 if exist manifest_chrome.json (
@@ -18,4 +22,15 @@ if exist manifest_firefox.json (
     echo Firefox build complete.
 )
 
+REM Electron build
+echo Starting Electron build...
+if exist manifest_electron.json (
+    copy manifest_electron.json manifest.json    
+    call web-ext build --filename "{name}-{version}-electron.zip" -o
+    del manifest.json
+    echo Electron build complete.
+)
+
+REM Clean up
+del background_mv2.js
 echo All builds completed.
