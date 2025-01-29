@@ -1338,8 +1338,15 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 
 	if (isNewMessage) {
 		const model = pendingResponse.model;
-		await Log(`=============Adding tokens for model: ${model}, Total tokens: ${messageCost}============`);
-		await tokenStorageManager.addTokensToModel(orgId, model, messageCost);
+		const requestTime = pendingResponse.requestTimestamp;
+		const conversationData = await api.getConversation(orgId, conversationId);
+		const latestMessageTime = new Date(conversationData.chat_messages[conversationData.chat_messages.length - 1].created_at).getTime();
+		if (latestMessageTime < requestTime - 5000) {
+			await Log("Message appears to be older than our request, likely an error");
+		} else {
+			await Log(`=============Adding tokens for model: ${model}, Total tokens: ${messageCost}============`);
+			await tokenStorageManager.addTokensToModel(orgId, model, messageCost);
+		}
 	}
 
 	// Prep base data that goes to all tabs
@@ -1399,7 +1406,8 @@ async function onBeforeRequestHandler(details) {
 			conversationId: conversationId,
 			tabId: details.tabId,
 			styleId: requestBodyJSON?.personalized_styles?.[0]?.key || requestBodyJSON?.personalized_styles?.[0]?.uuid,
-			model: model
+			model: model,
+			requestTimestamp: Date.now()
 		});
 	}
 
