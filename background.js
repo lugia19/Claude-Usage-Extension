@@ -915,12 +915,14 @@ class ClaudeAPI {
 			return undefined;
 		}
 
-		let totalTokens = 0;
+		let baseTokens = 0;
+		let lastMessageTokens = 0;
+
 		// Add settings costs
 		for (const [setting, enabled] of Object.entries(conversationData.settings)) {
 			await Log("Setting:", setting, enabled);
 			if (enabled && (await configManager.getConfig()).FEATURE_COSTS[setting]) {
-				totalTokens += (await configManager.getConfig()).FEATURE_COSTS[setting];
+				baseTokens += (await configManager.getConfig()).FEATURE_COSTS[setting];
 			}
 		}
 
@@ -932,7 +934,7 @@ class ClaudeAPI {
 			// Files_v2 tokens (handle separately)
 			for (const file of message.files_v2) {
 				await Log("File_v2:", file.file_name, file.file_uuid)
-				totalTokens += await tokenStorageManager.getUploadedFileTokens(orgId, file, false, this)
+				baseTokens += await tokenStorageManager.getUploadedFileTokens(orgId, file, false, this)
 			}
 
 			let messageContent = [];
@@ -965,7 +967,7 @@ class ClaudeAPI {
 			}
 
 			if (message === lastMessage) {
-				totalTokens += await getTextTokens(messageContent.join(' ')) * ((await configManager.getConfig()).OUTPUT_TOKEN_MULTIPLIER - 1);
+				lastMessageTokens = await getTextTokens(messageContent.join(' ')) * ((await configManager.getConfig()).OUTPUT_TOKEN_MULTIPLIER - 1);
 			}
 
 			if (message.sender === "human") {
@@ -979,20 +981,23 @@ class ClaudeAPI {
 		if (api_key) {
 			const tempTokens = await countTokensViaAPI(humanMessages, assistantMessages);
 			if (tempTokens === 0) {
-				totalTokens += await getTextTokens(humanMessages.join(' ')) + await getTextTokens(assistantMessages.join(' '));
+				baseTokens += await getTextTokens(humanMessages.join(' ')) + await getTextTokens(assistantMessages.join(' '));
 			} else {
-				totalTokens += tempTokens
+				baseTokens += tempTokens
 			}
 		} else {
-			totalTokens += await getTextTokens(humanMessages.join(' ')) + await getTextTokens(assistantMessages.join(' '));
+			baseTokens += await getTextTokens(humanMessages.join(' ')) + await getTextTokens(assistantMessages.join(' '));
 		}
 
 		// If part of a project, get project data
 		if (conversationData.project_uuid) {
-			totalTokens += await this.getProjectTokens(orgId, conversationData.project_uuid);
+			baseTokens += await this.getProjectTokens(orgId, conversationData.project_uuid);
 		}
-		await Log(`Total tokens for conversation ${conversationId}: ${totalTokens}`);
-		return totalTokens;
+		await Log(`Total tokens for conversation ${conversationId}: ${baseTokens}`);
+		return {
+			length: baseTokens,
+			cost: baseTokens + lastMessageTokens
+		};
 	}
 
 	async getProfileTokens() {
@@ -1134,7 +1139,7 @@ class StoredMap {
 //#region Messaging
 
 //Updates each tab with its own data
-async function updateAllTabs(currentLength = undefined, lengthTabId = undefined) {
+async function updateAllTabs(currentCost = undefined, currentLength = undefined, lengthTabId = undefined) {
 	const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 	for (const tab of tabs) {
 		const orgId = await requestActiveOrgId(tab);
@@ -1149,8 +1154,11 @@ async function updateAllTabs(currentLength = undefined, lengthTabId = undefined)
 			}
 		}
 
-		if (currentLength && lengthTabId && tab.id === lengthTabId) {
-			tabData.conversationLength = currentLength;
+		if (currentCost && currentLength && lengthTabId && tab.id === lengthTabId) {
+			tabData.conversationMetrics = {
+				cost: currentCost,
+				length: currentLength
+			};
 		}
 
 		browser.tabs.sendMessage(tab.id, {
@@ -1178,6 +1186,7 @@ async function handleMessageFromContent(message, sender) {
 			case 'requestData':
 				const baseData = { modelData: {} };
 				const { conversationId } = message ?? undefined;
+
 				// Get data for all models
 				for (const model of (await configManager.getConfig()).MODELS) {
 					const modelData = await tokenStorageManager.getModelData(orgId, model);
@@ -1185,22 +1194,29 @@ async function handleMessageFromContent(message, sender) {
 						baseData.modelData[model] = modelData;
 					}
 				}
-				if (conversationId) {
-					await Log("Requested length for conversation:", conversationId);
-					const key = `${orgId}:${conversationId}`;
 
-					//Fetch it only if missing...
+				if (conversationId) {
+					await Log("Requested metrics for conversation:", conversationId);
+					const key = `${orgId}:${conversationId}:metrics`;
+
 					if (!conversationLengthCache.has(key)) {
-						await Log("Conversation length not found, fetching...");
-						const conversationTokens = await api.getConversationTokens(orgId, conversationId);
-						if (conversationTokens != undefined) {
+						await Log("Conversation metrics not found, fetching...");
+						const tokens = await api.getConversationTokens(orgId, conversationId);
+						if (tokens) {
 							const profileTokens = await api.getProfileTokens();
-							const messageCost = conversationTokens + profileTokens + (await configManager.getConfig()).BASE_SYSTEM_PROMPT_LENGTH;
-							conversationLengthCache.set(key, messageCost);
+							const baseLength = tokens.length + profileTokens + (await configManager.getConfig()).BASE_SYSTEM_PROMPT_LENGTH;
+							const messageCost = tokens.cost + profileTokens + (await configManager.getConfig()).BASE_SYSTEM_PROMPT_LENGTH;
+
+							conversationLengthCache.set(key, {
+								length: baseLength,
+								cost: messageCost
+							});
 						}
 					}
 
-					if (conversationLengthCache.has(key)) baseData.conversationLength = conversationLengthCache.get(key)
+					if (conversationLengthCache.has(key)) {
+						baseData.conversationMetrics = conversationLengthCache.get(key);
+					}
 				}
 				return baseData;
 			case 'initOrg':
@@ -1292,22 +1308,29 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	const tabId = details.tabId;
 	const api = await ClaudeAPI.create(details.cookieStoreId);
 
-	const conversationTokens = await api.getConversationTokens(orgId, conversationId);
-	if (conversationTokens === undefined) {
+	const tokens = await api.getConversationTokens(orgId, conversationId);
+	if (!tokens) {
 		return false;
 	}
 
 
 
 	const profileTokens = await api.getProfileTokens();
-	let messageCost = conversationTokens + profileTokens + (await configManager.getConfig()).BASE_SYSTEM_PROMPT_LENGTH
-	await Log("Current per message cost:", messageCost);
-	conversationLengthCache.set(`${orgId}:${conversationId}`, messageCost);
+	let baseLength = tokens.length + (await configManager.getConfig()).BASE_SYSTEM_PROMPT_LENGTH;
+	let messageCost = tokens.cost + profileTokens + (await configManager.getConfig()).BASE_SYSTEM_PROMPT_LENGTH;
+
+	await Log("Current base length:", baseLength);
+	await Log("Current message cost:", messageCost);
+
+	conversationLengthCache.set(`${orgId}:${conversationId}:metrics`, {
+		length: baseLength,
+		cost: messageCost
+	});
 
 	const isNewMessage = await pendingResponses.has(responseKey)
+
 	// The style is procesed _after_ we set the conversationLengthCache, as it can vary.
 	// Yes, this means the length display won't update when you change the style. Too bad!
-
 	const styleId = (await pendingResponses.get(responseKey))?.styleId;
 	const styleTokens = await api.getStyleTokens(orgId, styleId, tabId);
 	messageCost += styleTokens;
@@ -1351,7 +1374,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 		}
 	}
 
-	await updateAllTabs(messageCost, tabId);
+	await updateAllTabs(messageCost, baseLength, tabId);
 
 	return true;
 }

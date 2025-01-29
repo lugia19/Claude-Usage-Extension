@@ -734,7 +734,7 @@
 			this.sidebarUI = new SidebarUI(this);
 			this.chatUI = new ChatUI();
 			this.currentConversation = -1;
-			this.conversationLength = null;
+			this.conversationMetrics = null;
 		}
 
 		async initialize() {
@@ -808,8 +808,8 @@
 			}
 
 			// Update home page state if needed
-			if (isHomePage && this.conversationLength !== null) {
-				this.conversationLength = null;
+			if (isHomePage && this.conversationMetrics !== null) {
+				this.conversationMetrics = null;
 				this.chatUI.updateEstimate(null, null, null, null, true);
 			}
 		}
@@ -832,9 +832,9 @@
 		async updateUI(data) {
 			await Log("Updating UI with data", data);
 			if (!data) return;
-			const { conversationLength, modelData } = data;
+			const { conversationMetrics, modelData } = data;
 
-			if (conversationLength) this.conversationLength = conversationLength;
+			if (conversationMetrics) this.conversationMetrics = conversationMetrics.length;
 
 			// Update current model
 			this.currentlyDisplayedModel = await getCurrentModel() || this.currentlyDisplayedModel
@@ -851,18 +851,19 @@
 
 	class ChatUI {
 		constructor() {
-			this.lengthDisplay = null;
+			this.costAndLengthDisplay = null;
 			this.estimateDisplay = null;
 			this.resetDisplay = null;
 			this.statLine = null;
 			this.progressBar = null;
 			this.lastResetTimestamp = null;
+			this.lastMessageCost = null;
 		}
 
 		initialize() {
-			this.lengthDisplay = document.createElement('div');
-			this.lengthDisplay.className = 'text-text-500 text-xs';
-			this.lengthDisplay.style.cssText = "margin-top: 2px; font-size: 11px;";
+			this.costAndLengthDisplay = document.createElement('div');
+			this.costAndLengthDisplay.className = 'text-text-500 text-xs';
+			this.costAndLengthDisplay.style.cssText = "margin-top: 2px; font-size: 11px;";
 
 			// Create container for estimate and reset time
 			this.statLine = document.createElement('div');
@@ -914,8 +915,8 @@
 					titleLine.classList.remove('md:flex-row');
 					titleLine.classList.add('md:flex-col');
 
-					if (chatMenu.parentElement.nextElementSibling !== this.lengthDisplay) {
-						chatMenu.parentElement.after(this.lengthDisplay);
+					if (chatMenu.parentElement.nextElementSibling !== this.costAndLengthDisplay) {
+						chatMenu.parentElement.after(this.costAndLengthDisplay);
 					}
 				}
 			}
@@ -932,9 +933,14 @@
 		}
 
 		updateChatUI(data, currentModel, modelCaps) {
-			if (data.conversationLength) this.updateLength(data.conversationLength);
+			if (data.conversationMetrics) {
+				this.updateCostAndLength(data.conversationMetrics);
+				this.lastMessageCost = data.conversationMetrics.cost;
+				this.updateEstimate(data.modelData, currentModel, modelCaps, data.conversationMetrics.cost);
+			} else if (this.lastMessageCost) {
+				this.updateEstimate(data.modelData, currentModel, modelCaps, this.lastMessageCost);
+			}
 			this.updateProgressBar(data.modelData, currentModel, modelCaps);
-			if (data.conversationLength) this.updateEstimate(data.modelData, currentModel, modelCaps, data.conversationLength, false);
 			this.updateResetTime(data.modelData, currentModel);
 		}
 
@@ -948,15 +954,23 @@
 			this.progressBar.updateProgress(modelTotal, maxTokens);
 		}
 
-		updateLength(length) {
-			if (this.lengthDisplay) {
-				this.lengthDisplay.textContent = length ?
-					`Current cost: ${length.toLocaleString()} tokens` :
-					'Current cost: N/A tokens';
+		updateCostAndLength(metrics) {
+			if (this.costAndLengthDisplay) {
+				if (!metrics) {
+					this.costAndLengthDisplay.innerHTML = 'Length: N/A tokens | Cost: N/A tokens';
+					return;
+				}
+
+				const lengthColor = metrics.length >= 50000 ? RED_WARNING : BLUE_HIGHLIGHT;
+				const costColor = metrics.cost >= 50000 ? RED_WARNING : BLUE_HIGHLIGHT;
+
+				this.costAndLengthDisplay.innerHTML =
+					`Length: <span style="color: ${lengthColor}">${metrics.length.toLocaleString()}</span> tokens | ` +
+					`Cost: <span style="color: ${costColor}">${metrics.cost.toLocaleString()}</span> tokens`;
 			}
 		}
 
-		updateEstimate(modelData, currentModel, modelCaps, conversationLength, overrideNone) {
+		updateEstimate(modelData, currentModel, modelCaps, messageCost, overrideNone) {
 			if (!this.estimateDisplay) return;
 			if (overrideNone) {
 				this.estimateDisplay.innerHTML = `Est. messages left: <span>N/A</span>`;
@@ -968,14 +982,15 @@
 			const remainingTokens = maxTokens - modelTotal;
 
 			let estimate;
-			if (conversationLength > 0 && currentModel) {
-				estimate = Math.max(0, remainingTokens / conversationLength);
+			if (messageCost > 0 && currentModel) {
+				estimate = Math.max(0, remainingTokens / messageCost);
 				estimate = estimate.toFixed(1);
 			} else {
 				estimate = "N/A";
 			}
 
-			this.estimateDisplay.innerHTML = `Est. messages left: <span style="color: ${BLUE_HIGHLIGHT}">${estimate}</span>`;
+			const color = estimate !== "N/A" && parseFloat(estimate) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
+			this.estimateDisplay.innerHTML = `Est. messages left: <span style="color: ${color}">${estimate}</span>`;
 		}
 
 		updateResetTime(modelData, currentModel) {
@@ -991,6 +1006,7 @@
 
 			if (!this.lastResetTimestamp) {
 				this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">Not set</span>`;
+				this.updateEstimate(null, null, null, null, true);
 				return;
 			}
 
@@ -999,6 +1015,7 @@
 
 			if (diff <= 0) {
 				this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">pending...</span>`;
+				this.updateEstimate(null, null, null, null, true);
 			} else {
 				const hours = Math.floor(diff / (1000 * 60 * 60));
 				const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
