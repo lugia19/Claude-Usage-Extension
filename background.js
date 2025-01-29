@@ -151,7 +151,7 @@ browser.alarms.create('checkExpiredData', {
 });
 
 browser.alarms.create('firebaseSync', { periodInMinutes: 3 });
-browser.alarms.create('capHitsSync', { periodInMinutes: 1 });
+browser.alarms.create('capHitsSync', { periodInMinutes: 10 });
 Log("Firebase alarms created.");
 
 Log("Initializing config refresh...");
