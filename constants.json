@@ -17,7 +17,7 @@
 			"default": 1
 		},
 		"pro": {
-			"Opus": 250000,
+			"Opus": 500000,
 			"Sonnet": 1600000,
 			"Haiku": 3000000,
 			"default": 1
