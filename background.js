@@ -150,7 +150,7 @@ browser.alarms.create('checkExpiredData', {
 	periodInMinutes: 60
 });
 
-browser.alarms.create('firebaseSync', { periodInMinutes: 5 });
+browser.alarms.create('firebaseSync', { periodInMinutes: 3 });
 browser.alarms.create('resetTimesSync', { periodInMinutes: 10 });
 Log("Firebase alarms created.");
 
@@ -455,39 +455,78 @@ class TokenStorageManager {
 		await this.ensureOrgIds();
 		try {
 			for (const orgId of this.orgIds) {
-				// Get local data
-				const localModels = await this.#getValue(this.#getStorageKey(orgId, 'models')) || {};
-				await Log("Local models:", localModels);
-
-				// Get remote data
-				const url = `${this.firebase_base_url}/users/${orgId}/models.json`;
-				await Log("Fetching from:", url);
-
-				const response = await fetch(url);
+				const timestampUrl = `${this.firebase_base_url}/users/${orgId}/last_update.json`;
+				const response = await fetch(timestampUrl);
 				if (!response.ok) {
 					throw new Error(`HTTP error! status: ${response.status}`);
 				}
-				const firebaseModels = await response.json() || {};
-				await Log("Firebase models:", firebaseModels);
+				const remoteTimestamp = (await response.json())?.timestamp;
+				const localTimestamp = await this.#getValue(this.#getStorageKey(orgId, 'lastUpdate'));
+				const currentTime = Date.now();
 
-				const mergedModels = await this.#mergeModelData(localModels, firebaseModels);
-				await Log("Merged result:", mergedModels);
+				// No remote data at all - first sync
+				if (!remoteTimestamp) {
+					await Log("No remote data, uploading local data");
+					const localModels = await this.#getValue(this.#getStorageKey(orgId, 'models')) || {};
 
-				// Write merged data back
-				await Log("Writing merged data back to Firebase...");
-				const writeResponse = await fetch(url, {
-					method: 'PUT',
-					body: JSON.stringify(mergedModels)
-				});
-				if (!writeResponse.ok) {
-					throw new Error(`Write failed! status: ${writeResponse.status}`);
+					const modelsUrl = `${this.firebase_base_url}/users/${orgId}/models.json`;
+					const writeResponse = await fetch(modelsUrl, {
+						method: 'PUT',
+						body: JSON.stringify(localModels)
+					});
+					if (!writeResponse.ok) {
+						throw new Error(`Write failed! status: ${writeResponse.status}`);
+					}
+
+					// Update timestamp
+					await fetch(timestampUrl, {
+						method: 'PUT',
+						body: JSON.stringify({ timestamp: currentTime })
+					});
+					await this.#setValue(this.#getStorageKey(orgId, 'lastUpdate'), currentTime);
 				}
+				// We have both timestamps and they match - check update time
+				else if (localTimestamp && localTimestamp === remoteTimestamp) {
+					// Only upload if it's been more than 6 minutes
+					if ((currentTime - localTimestamp) > 6 * 60 * 1000) {
+						await Log("Our update and 6+ minutes passed, uploading local data");
+						const localModels = await this.#getValue(this.#getStorageKey(orgId, 'models')) || {};
 
-				// Update local storage
-				await Log("Updating local storage...");
-				await this.#setValue(this.#getStorageKey(orgId, 'models'), mergedModels);
-				await Log("=== SYNC COMPLETED SUCCESSFULLY ===");
+						const modelsUrl = `${this.firebase_base_url}/users/${orgId}/models.json`;
+						const writeResponse = await fetch(modelsUrl, {
+							method: 'PUT',
+							body: JSON.stringify(localModels)
+						});
+						if (!writeResponse.ok) {
+							throw new Error(`Write failed! status: ${writeResponse.status}`);
+						}
+
+						// Update timestamp
+						await fetch(timestampUrl, {
+							method: 'PUT',
+							body: JSON.stringify({ timestamp: currentTime })
+						});
+						await this.#setValue(this.#getStorageKey(orgId, 'lastUpdate'), currentTime);
+					} else {
+						await Log("Our update but less than 4 minutes passed, skipping upload");
+					}
+				}
+				// Either no local timestamp or timestamps differ - need to sync
+				else {
+					await Log("Need to sync - either no local timestamp or timestamps differ");
+					const modelsUrl = `${this.firebase_base_url}/users/${orgId}/models.json`;
+					const modelsResponse = await fetch(modelsUrl);
+					const remoteModels = await modelsResponse.json() || {};
+
+					const localModels = await this.#getValue(this.#getStorageKey(orgId, 'models')) || {};
+					const mergedModels = await this.#mergeModelData(localModels, remoteModels);
+
+					// Save merged result locally
+					await this.#setValue(this.#getStorageKey(orgId, 'models'), mergedModels);
+					await this.#setValue(this.#getStorageKey(orgId, 'lastUpdate'), remoteTimestamp);
+				}
 			}
+			await Log("=== SYNC COMPLETED SUCCESSFULLY ===");
 		} catch (error) {
 			await Log("error", '=== SYNC FAILED ===');
 			await Log("error", 'Error details:', error);
