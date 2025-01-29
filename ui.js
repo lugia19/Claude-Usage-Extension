@@ -956,9 +956,10 @@
 		}
 
 		updateCostAndLength(metrics) {
+			const separator = isMobileView() ? '<br>' : ' | ';
 			if (this.costAndLengthDisplay) {
 				if (!metrics) {
-					this.costAndLengthDisplay.innerHTML = 'Length: N/A tokens | Cost: N/A tokens';
+					this.costAndLengthDisplay.innerHTML = `Length: N/A tokens${separator}Cost: N/A tokens`;
 					return;
 				}
 
@@ -966,7 +967,7 @@
 				const costColor = metrics.cost >= 50000 ? RED_WARNING : BLUE_HIGHLIGHT;
 
 				this.costAndLengthDisplay.innerHTML =
-					`Length: <span style="color: ${lengthColor}">${metrics.length.toLocaleString()}</span> tokens | ` +
+					`Length: <span style="color: ${lengthColor}">${metrics.length.toLocaleString()}</span> tokens${separator}` +
 					`Cost: <span style="color: ${costColor}">${metrics.cost.toLocaleString()}</span> tokens`;
 			}
 		}
