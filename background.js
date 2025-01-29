@@ -681,7 +681,7 @@ class TokenStorageManager {
 	}
 
 	async addReset(orgId, model, api) {
-		await sleep(3000); //We want to ensure we get the latest data, which can take a second - so we wait.
+		await sleep(15000); //We want to ensure we get the latest data, which can take a second - so we wait 15.
 		const modelData = await this.getModelData(orgId, model);
 		if (!modelData) return;
 
@@ -1327,36 +1327,17 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 		cost: messageCost
 	});
 
-	const isNewMessage = await pendingResponses.has(responseKey)
+	const pendingResponse = await pendingResponses.get(responseKey);
+	const isNewMessage = pendingResponse !== undefined;
 
 	// The style is procesed _after_ we set the conversationLengthCache, as it can vary.
 	// Yes, this means the length display won't update when you change the style. Too bad!
-	const styleId = (await pendingResponses.get(responseKey))?.styleId;
-	const styleTokens = await api.getStyleTokens(orgId, styleId, tabId);
+	const styleTokens = await api.getStyleTokens(orgId, pendingResponse?.styleId, tabId);
 	messageCost += styleTokens;
 	await Log("Added style tokens:", styleTokens);
 
 	if (isNewMessage) {
-		// Get model from based on conversation settings or tab
-		const conversationData = await api.getConversation(orgId, conversationId);
-		let model;
-		if (conversationData.model) {
-			const modelString = conversationData.model.toLowerCase();
-			const modelTypes = Object.keys((await configManager.getConfig()).MODEL_CAPS.pro).filter(key => key !== 'default');
-			for (const modelType of modelTypes) {
-				if (modelString.includes(modelType.toLowerCase())) {
-					model = modelType;
-					await Log("Model from conversation:", model);
-					break;
-				}
-			}
-		}
-		// If no model found in response, ask the tab
-		if (!model) {
-			model = await browser.tabs.sendMessage(tabId, { type: 'getActiveModel' });
-			await Log("Model from tab:", model);
-			if (!model) model = "Sonnet"
-		}
+		const model = pendingResponse.model;
 		await Log(`=============Adding tokens for model: ${model}, Total tokens: ${messageCost}============`);
 		await tokenStorageManager.addTokensToModel(orgId, model, messageCost);
 	}
@@ -1395,6 +1376,19 @@ async function onBeforeRequestHandler(details) {
 		await tokenStorageManager.addOrgId(orgId);
 		const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1];
 
+		let model = "Sonnet"; // Default model
+		if (requestBodyJSON?.model) {
+			const modelString = requestBodyJSON.model.toLowerCase();
+			const modelTypes = Object.keys((await configManager.getConfig()).MODEL_CAPS.pro).filter(key => key !== 'default');
+			for (const modelType of modelTypes) {
+				if (modelString.includes(modelType.toLowerCase())) {
+					model = modelType;
+					await Log("Model from request:", model);
+					break;
+				}
+			}
+		}
+
 		const key = `${orgId}:${conversationId}`;
 		await Log(`Message sent - Key: ${key}`);
 		const styleId = requestBodyJSON?.personalized_styles?.[0]?.key || requestBodyJSON?.personalized_styles?.[0]?.uuid
@@ -1404,7 +1398,8 @@ async function onBeforeRequestHandler(details) {
 			orgId: orgId,
 			conversationId: conversationId,
 			tabId: details.tabId,
-			styleId: requestBodyJSON?.personalized_styles?.[0]?.key || requestBodyJSON?.personalized_styles?.[0]?.uuid
+			styleId: requestBodyJSON?.personalized_styles?.[0]?.key || requestBodyJSON?.personalized_styles?.[0]?.uuid,
+			model: model
 		});
 	}
 
