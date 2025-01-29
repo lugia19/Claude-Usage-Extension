@@ -128,8 +128,8 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 		await updateAllTabs();
 	}
 
-	if (alarm.name === 'resetTimesSync') {
-		await tokenStorageManager.syncResetTimes();
+	if (alarm.name === 'capHitsSync') {
+		await tokenStorageManager.syncCapHits();
 	}
 
 	if (alarm.name === 'checkExpiredData') {
@@ -151,7 +151,7 @@ browser.alarms.create('checkExpiredData', {
 });
 
 browser.alarms.create('firebaseSync', { periodInMinutes: 3 });
-browser.alarms.create('resetTimesSync', { periodInMinutes: 10 });
+browser.alarms.create('capHitsSync', { periodInMinutes: 1 });
 Log("Firebase alarms created.");
 
 Log("Initializing config refresh...");
@@ -404,7 +404,7 @@ class TokenStorageManager {
 	constructor() {
 		this.firebase_base_url = "https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app"
 		this.isSyncingFirebase = false;
-		this.isSyncingResetTimes = false;
+		this.isSyncingCapHits = false;
 		this.storageLock = false;
 		this.orgIds = undefined;
 		this.subscriptionTiers = new StoredMap("subscriptionTiers")
@@ -727,25 +727,28 @@ class TokenStorageManager {
 		const key = `${orgId}:${modelData.resetTimestamp}`;
 		const cap = (await tokenStorageManager.getCaps(orgId, api))[model]
 		const tier = await tokenStorageManager.subscriptionTiers.get(orgId)
+		const hasApiKey = !!(await browser.storage.local.get('apiKey'))?.apiKey;
+
 		// Only add if not already present
 		if (!(await this.resetsHit.has(key))) {
 			await this.resetsHit.set(key, {
 				total: `${modelData.total}/${cap}`,
 				model: model,
 				timestamp: modelData.resetTimestamp,
-				tier: tier
+				tier: tier,
+				accurateCount: hasApiKey
 			});
 		}
 	}
 
-	async syncResetTimes() {
-		if (this.isSyncingResetTimes) {
-			await Log("Reset times sync already in progress, skipping");
+	async syncCapHits() {
+		if (this.isSyncingCapHits) {
+			await Log("Cap hits sync already in progress, skipping");
 			return;
 		}
 
-		this.isSyncingResetTimes = true;
-		await Log("=== RESET TIMES SYNC STARTING ===");
+		this.isSyncingCapHits = true;
+		await Log("=== CAP HITS SYNC STARTING ===");
 		try {
 			// Group all entries by orgId
 			const groupedResets = {};
@@ -766,13 +769,14 @@ class TokenStorageManager {
 						total: resetData.total,
 						timestamp: resetData.timestamp,
 						model: resetData.model,
-						tier: resetData.tier
+						tier: resetData.tier,
+						accurateCount: resetData.accurateCount
 					};
 				}
-				await Log("Transformed resets:", transformedResets)
+				await Log("Transformed cap hits:", transformedResets)
 
-				const url = `${this.firebase_base_url}/users/${orgId}/resets.json`;
-				await Log("Writing reset times for orgId:", orgId);
+				const url = `${this.firebase_base_url}/users/${orgId}/cap_hits.json`;
+				await Log("Writing cap hits for orgId:", orgId);
 
 				const writeResponse = await fetch(url, {
 					method: 'PUT',
@@ -782,12 +786,12 @@ class TokenStorageManager {
 					throw new Error(`Write failed! status: ${writeResponse.status}`);
 				}
 			}
-			await Log("=== RESET TIMES SYNC COMPLETED SUCCESSFULLY ===");
+			await Log("=== CAP HITS SYNC COMPLETED SUCCESSFULLY ===");
 		} catch (error) {
-			await Log("error", '=== RESET TIMES SYNC FAILED ===');
+			await Log("error", '=== CAP HITS SYNC FAILED ===');
 			await Log("error", 'Error details:', error);
 		} finally {
-			this.isSyncingResetTimes = false;
+			this.isSyncingCapHits = false;
 		}
 	}
 
