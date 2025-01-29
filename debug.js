@@ -121,7 +121,9 @@ function enablePermanentDebug() {
 function startAutoRefresh() {
 	if (!autoRefreshInterval) {
 		autoRefreshInterval = setInterval(() => {
-			showLogs();
+			if (document.getElementById('autoUpdate').checked) {
+				showLogs();
+			}
 			updateDebugStatus();
 		}, 5000);
 	}
