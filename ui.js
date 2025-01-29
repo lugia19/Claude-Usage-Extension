@@ -897,6 +897,7 @@
 			this.estimateDisplay = document.createElement('div');
 			this.estimateDisplay.className = 'text-text-400 text-xs mr-2';
 			this.estimateDisplay.style.userSelect = 'text';  // Make text selectable
+			this.estimateDisplay.innerHTML = `Est. messages left: <span>N/A</span>`;
 			this.statLine.appendChild(this.estimateDisplay);
 
 			// Create reset display
@@ -1060,7 +1061,6 @@
 			}
 
 			// Initialize model section visibility
-			const isHomePage = getConversationId() === null;
 			config.MODELS.forEach(modelName => {
 				const section = this.modelSections[modelName];
 				if (section) {
