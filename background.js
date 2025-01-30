@@ -350,6 +350,31 @@ async function countTokensViaAPI(userMessages = [], assistantMessages = [], file
 		return 0
 	}
 }
+
+async function getTextFromContent(content) {
+	let textPieces = [];
+
+	if (content.text) {
+		textPieces.push(content.text);
+	}
+	if (content.input) {
+		textPieces.push(JSON.stringify(content.input));
+	}
+	if (content.content) {
+		// Handle nested content array
+		if (Array.isArray(content.content)) {
+			for (const nestedContent of content.content) {
+				textPieces = textPieces.concat(await getTextFromContent(nestedContent));
+			}
+		}
+		// Handle single nested content object
+		else if (typeof content.content === 'object') {
+			textPieces = textPieces.concat(await getTextFromContent(content.content));
+		}
+	}
+	await Log("Got text pieces:", textPieces);
+	return textPieces;
+}
 //#endregion
 
 //#region Manager classes
@@ -984,17 +1009,8 @@ class ClaudeAPI {
 			let messageContent = [];
 			// Process content array
 			for (const content of message.content) {
-				if (content.text) {
-					messageContent.push(content.text);
-				}
-				if (content.input?.code) {
-					messageContent.push(content.input.code);
-				}
-				if (content.content?.text) {
-					messageContent.push(content.content.text);
-				}
+				messageContent = messageContent.concat(await getTextFromContent(content));
 			}
-
 			// Attachment tokens
 			for (const attachment of message.attachments) {
 				await Log("Attachment:", attachment.file_name, attachment.id);
@@ -1389,6 +1405,17 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	messageCost += styleTokens;
 	await Log("Added style tokens:", styleTokens);
 
+	if (pendingResponse?.toolDefinitions) {
+		let toolTokens = 0
+		for (const tool of pendingResponse.toolDefinitions) {
+			toolTokens += await getTextTokens(
+				`${tool.name} ${tool.description} ${tool.schema}`
+			);
+		}
+		await Log("Added tool definition tokens;:", toolTokens);
+		messageCost += toolTokens;
+	}
+
 	if (isNewMessage) {
 		const model = pendingResponse.model;
 		const requestTime = pendingResponse.requestTimestamp;
@@ -1453,14 +1480,26 @@ async function onBeforeRequestHandler(details) {
 		await Log(`Message sent - Key: ${key}`);
 		const styleId = requestBodyJSON?.personalized_styles?.[0]?.key || requestBodyJSON?.personalized_styles?.[0]?.uuid
 		await Log("Choosing style between:", requestBodyJSON?.personalized_styles?.[0]?.key, requestBodyJSON?.personalized_styles?.[0]?.uuid)
-		// Store pending response with both orgId and tabId
+
+		// Process tool definitions if present
+		const toolDefs = requestBodyJSON?.tools?.filter(tool =>
+			tool.name && !['artifacts_v0', 'repl_v0'].includes(tool.type)
+		)?.map(tool => ({
+			name: tool.name,
+			description: tool.description || '',
+			schema: JSON.stringify(tool.input_schema || {})
+		})) || [];
+		await Log("Tool definitions:", toolDefs);
+
+		// Store pending response with all data
 		await pendingResponses.set(key, {
 			orgId: orgId,
 			conversationId: conversationId,
 			tabId: details.tabId,
-			styleId: requestBodyJSON?.personalized_styles?.[0]?.key || requestBodyJSON?.personalized_styles?.[0]?.uuid,
+			styleId: styleId,
 			model: model,
-			requestTimestamp: Date.now()
+			requestTimestamp: Date.now(),
+			toolDefinitions: toolDefs
 		});
 	}
 

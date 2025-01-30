@@ -671,6 +671,8 @@
 
 				if (result === 'fallback') {
 					window.location.href = chrome.runtime.getURL('debug.html');
+				} else {
+					this.remove();
 				}
 			});
 
