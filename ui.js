@@ -615,7 +615,6 @@
 			// Get stored modifiers
 			const result = await sendBackgroundMessage({ type: 'getCapModifiers' });
 			const storedModifiers = result || {};
-
 			// Create input for each model
 			config.MODELS.forEach(model => {
 				const row = document.createElement('div');
@@ -632,7 +631,7 @@
 
 				const input = document.createElement('input');
 				input.type = 'text';
-				input.value = `${(storedModifiers[model] * 100)}%` || '100%';
+				input.value = storedModifiers[model] !== undefined ? `${(storedModifiers[model] * 100)}%` : '100%';
 				input.style.cssText = `
 					width: 45px;
 					padding: 4px;
