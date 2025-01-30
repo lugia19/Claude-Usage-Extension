@@ -595,25 +595,13 @@
 				gap: 8px;
 				align-items: center;
 			`;
-
-			// Move the save button into the container
 			buttonContainer.appendChild(saveButton);
-
-			// Add separator
-			const separator = document.createElement('div');
-			separator.style.cssText = `
-				margin: 16px 0 8px 0;
-				border-top: 1px solid #4B4B4B;
-				padding-top: 8px;
-			`;
 			const separatorText = document.createElement('div');
-			separatorText.textContent = 'Model Cap Modifiers';
+			separatorText.textContent = 'Model Cap Modifiers:';
 			separatorText.style.cssText = `
-				color: #888;
 				font-size: 12px;
 				margin-bottom: 8px;
 			`;
-			separator.appendChild(separatorText);
 
 			// Add model modifiers
 			const modifiersContainer = document.createElement('div');
@@ -661,7 +649,7 @@
 				modifiersContainer.appendChild(row);
 			});
 
-			this.element.appendChild(separator);
+			this.element.appendChild(separatorText);
 			this.element.appendChild(modifiersContainer);
 			// Create and add debug button to container
 			const debugButton = document.createElement('button');
