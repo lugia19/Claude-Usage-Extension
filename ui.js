@@ -702,6 +702,22 @@
 			if (SettingsCard.currentInstance) {
 				SettingsCard.currentInstance.remove();
 			}
+
+			if (position) {
+				// Get the card's width - we need to temporarily add it to the DOM to measure
+				this.element.style.visibility = 'hidden';
+				document.body.appendChild(this.element);
+				const cardWidth = this.element.offsetWidth;
+				this.element.remove();
+				this.element.style.visibility = 'visible';
+
+				// Check if card would overflow the right edge
+				if (position.left + cardWidth > window.innerWidth) {
+					// Adjust to align with left edge of screen with small margin
+					position.left = 8;
+				}
+			}
+
 			super.show(position);
 			SettingsCard.currentInstance = this;
 		}
