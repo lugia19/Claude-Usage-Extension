@@ -312,8 +312,14 @@
 			this.container.appendChild(this.progressBar.container);
 		}
 
-		updateProgress(total, maxTokens) {
-			this.progressBar.updateProgress(total, maxTokens);
+		async updateProgress(total, maxTokens) {
+			// Get modifiers
+			const result = await sendBackgroundMessage({ type: 'getCapModifiers' });
+			const modifiers = result || {};
+
+			// Apply modifier if it exists
+			const adjustedMax = modifiers[this.modelName] ? maxTokens * modifiers[this.modelName] : maxTokens;
+			this.progressBar.updateProgress(total, adjustedMax);
 		}
 
 		updateMessageCount(count) {
@@ -507,7 +513,7 @@
 		constructor() {
 			super();
 			this.element.classList.add('settings-panel'); // Add the class for easier querying
-			this.element.style.maxWidth = '275px';
+			this.element.style.maxWidth = '350px';
 		}
 
 		async build() {
@@ -543,6 +549,21 @@
 			`;
 
 			saveButton.addEventListener('click', async () => {
+				// Collect modifiers
+				const modifiers = {};
+				modifiersContainer.querySelectorAll('input').forEach(input => {
+					const value = input.value.replace('%', '');
+					if (!isNaN(value)) {
+						modifiers[input.dataset.model] = parseFloat(value) / 100;
+					}
+				});
+
+				// Save modifiers
+				await sendBackgroundMessage({
+					type: 'setCapModifiers',
+					modifiers
+				});
+
 				let result = await sendBackgroundMessage({ type: 'setAPIKey', newKey: input.value })
 				if (!result) {
 					const errorMsg = document.createElement('div');
@@ -578,6 +599,70 @@
 			// Move the save button into the container
 			buttonContainer.appendChild(saveButton);
 
+			// Add separator
+			const separator = document.createElement('div');
+			separator.style.cssText = `
+				margin: 16px 0 8px 0;
+				border-top: 1px solid #4B4B4B;
+				padding-top: 8px;
+			`;
+			const separatorText = document.createElement('div');
+			separatorText.textContent = 'Model Cap Modifiers';
+			separatorText.style.cssText = `
+				color: #888;
+				font-size: 12px;
+				margin-bottom: 8px;
+			`;
+			separator.appendChild(separatorText);
+
+			// Add model modifiers
+			const modifiersContainer = document.createElement('div');
+			modifiersContainer.style.cssText = `
+				display: flex;
+				flex-direction: row;
+				gap: 12px;
+				margin-bottom: 12px;
+			`;
+
+			// Get stored modifiers
+			const result = await sendBackgroundMessage({ type: 'getCapModifiers' });
+			const storedModifiers = result || {};
+
+			// Create input for each model
+			config.MODELS.forEach(model => {
+				const row = document.createElement('div');
+				row.style.cssText = `
+					display: flex;
+					align-items: center;
+					gap: 4px;
+				`;
+
+				const label = document.createElement('label');
+				label.textContent = `${model}:`;
+				label.style.color = '#FFF';
+				label.style.fontSize = '12px';
+
+				const input = document.createElement('input');
+				input.type = 'text';
+				input.value = `${(storedModifiers[model] * 100)}%` || '100%';
+				input.style.cssText = `
+					width: 45px;
+					padding: 4px;
+					background: #3B3B3B;
+					border: 1px solid #4B4B4B;
+					border-radius: 4px;
+					color: white;
+					font-size: 12px;
+				`;
+				input.dataset.model = model;
+
+				row.appendChild(label);
+				row.appendChild(input);
+				modifiersContainer.appendChild(row);
+			});
+
+			this.element.appendChild(separator);
+			this.element.appendChild(modifiersContainer);
 			// Create and add debug button to container
 			const debugButton = document.createElement('button');
 			debugButton.textContent = 'Debug Logs';
@@ -605,6 +690,8 @@
 
 			// Add the container instead of just the save button
 			this.element.appendChild(buttonContainer);
+
+
 
 			this.addCloseButton();
 
@@ -844,7 +931,7 @@
 
 			// Update both UIs
 			await this.sidebarUI.updateProgressBars(data, this.currentlyDisplayedModel, modelCaps);
-			this.chatUI.updateChatUI(data, this.currentlyDisplayedModel, modelCaps);
+			await this.chatUI.updateChatUI(data, this.currentlyDisplayedModel, modelCaps);
 		}
 
 	}
@@ -933,7 +1020,7 @@
 			}
 		}
 
-		updateChatUI(data, currentModel, modelCaps) {
+		async updateChatUI(data, currentModel, modelCaps) {
 			if (data.conversationMetrics) {
 				this.updateCostAndLength(data.conversationMetrics);
 				this.lastMessageCost = data.conversationMetrics.cost;
@@ -941,18 +1028,25 @@
 			} else if (this.lastMessageCost) {
 				this.updateEstimate(data.modelData, currentModel, modelCaps, this.lastMessageCost);
 			}
-			this.updateProgressBar(data.modelData, currentModel, modelCaps);
+			await this.updateProgressBar(data.modelData, currentModel, modelCaps);
 			this.updateResetTime(data.modelData, currentModel);
 		}
 
-		updateProgressBar(modelData, currentModel, modelCaps) {
+		async updateProgressBar(modelData, currentModel, modelCaps) {
 			if (!this.progressBar) return;
 
 			const maxTokens = modelCaps[currentModel] || modelCaps.default;
 			const currentModelData = modelData[currentModel];
 			const modelTotal = currentModelData?.total || 0;
 
-			this.progressBar.updateProgress(modelTotal, maxTokens);
+			// Get modifiers
+			const result = await sendBackgroundMessage({ type: 'getCapModifiers' });
+			const modifiers = result || {};
+
+			// Apply modifier if it exists
+			const adjustedMax = modifiers[currentModel] ? maxTokens * modifiers[currentModel] : maxTokens;
+
+			this.progressBar.updateProgress(modelTotal, adjustedMax);
 		}
 
 		updateCostAndLength(metrics) {
@@ -1111,8 +1205,8 @@
 					const settingsCard = new SettingsCard();
 					await settingsCard.build();
 					settingsCard.show({
-						top: buttonRect.bottom + 5,
-						left: buttonRect.left
+						top: buttonRect.top - 5,
+						left: buttonRect.right + 5
 					});
 				}
 			});
@@ -1162,7 +1256,7 @@
 				const messageCount = modelInfo.messageCount || 0;
 				const maxTokens = modelCaps[modelName];
 
-				section.updateProgress(modelTotal, maxTokens);
+				await section.updateProgress(modelTotal, maxTokens);
 				section.updateMessageCount(messageCount);
 				section.updateResetTime(modelInfo.resetTimestamp);
 			}

@@ -29,6 +29,7 @@ const INTERCEPT_PATTERNS = {
 //#region Variable declarations
 let processingQueue = Promise.resolve();
 let pendingResponses;
+let capModifiers;
 let conversationLengthCache;
 let tokenStorageManager;
 let configManager;
@@ -1306,6 +1307,15 @@ async function handleMessageFromContent(message, sender) {
 				message.details.cookieStoreId = sender.tab.cookieStoreId;
 				onCompletedHandler(message.details);
 				return true;
+			case 'getCapModifiers':
+				const entries = await capModifiers.entries();
+				return Object.fromEntries(entries);
+
+			case 'setCapModifiers':
+				for (const [model, value] of Object.entries(message.modifiers)) {
+					await capModifiers.set(model, value);
+				}
+				return true;
 		}
 	})();
 	await Log("📤 Sending response:", response);
@@ -1541,6 +1551,7 @@ async function addFirefoxContainerFixListener() {
 
 //#region Variable fill in and initialization
 pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
+capModifiers = new StoredMap('capModifiers');
 conversationLengthCache = new Map();
 tokenStorageManager = new TokenStorageManager();
 configManager = new Config();
