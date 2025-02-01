@@ -782,11 +782,27 @@
 		setupEventListeners() {
 			this.container.addEventListener('mouseenter', () => {
 				const rect = this.container.getBoundingClientRect();
-				this.tooltip.style.left = `${rect.left + (rect.width / 2)}px`;
-				this.tooltip.style.top = `${rect.top - 30}px`;
+				const tooltipRect = this.tooltip.getBoundingClientRect();
+
+				let leftPos = rect.left + (rect.width / 2);
+				if (leftPos + (tooltipRect.width / 2) > window.innerWidth) {
+					leftPos = window.innerWidth - tooltipRect.width - 10;
+				}
+				if (leftPos - (tooltipRect.width / 2) < 0) {
+					leftPos = tooltipRect.width / 2 + 10;
+				}
+
+				let topPos = rect.top - 30;
+				if (topPos < 10) {
+					topPos = rect.bottom + 10;
+				}
+
+				this.tooltip.style.left = `${leftPos}px`;
+				this.tooltip.style.top = `${topPos}px`;
 				this.tooltip.style.transform = 'translateX(-50%)';
 				this.tooltip.style.opacity = '1';
 			});
+
 
 			this.container.addEventListener('mouseleave', () => {
 				this.tooltip.style.opacity = '0';
