@@ -903,6 +903,7 @@
 			if (isHomePage && this.conversationMetrics !== null) {
 				this.conversationMetrics = null;
 				this.chatUI.updateEstimate(null, null, null, null, true);
+				this.currentConversation = null;
 			}
 		}
 
@@ -926,7 +927,7 @@
 			if (!data) return;
 			const { conversationMetrics, modelData } = data;
 
-			if (conversationMetrics) this.conversationMetrics = conversationMetrics.length;
+			if (conversationMetrics) this.conversationMetrics = conversationMetrics;
 
 			// Update current model
 			this.currentlyDisplayedModel = await getCurrentModel() || this.currentlyDisplayedModel
@@ -1107,7 +1108,6 @@
 
 			if (!this.lastResetTimestamp) {
 				this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">Not set</span>`;
-				this.updateEstimate(null, null, null, null, true);
 				return;
 			}
 
@@ -1116,7 +1116,6 @@
 
 			if (diff <= 0) {
 				this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">pending...</span>`;
-				this.updateEstimate(null, null, null, null, true);
 			} else {
 				const hours = Math.floor(diff / (1000 * 60 * 60));
 				const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
