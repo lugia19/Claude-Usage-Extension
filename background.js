@@ -151,7 +151,7 @@ browser.alarms.create('checkExpiredData', {
 	periodInMinutes: 60
 });
 
-browser.alarms.create('firebaseSync', { periodInMinutes: 3 });
+browser.alarms.create('firebaseSync', { periodInMinutes: 1 });
 browser.alarms.create('capHitsSync', { periodInMinutes: 10 });
 Log("Firebase alarms created.");
 
@@ -372,7 +372,6 @@ async function getTextFromContent(content) {
 			textPieces = textPieces.concat(await getTextFromContent(content.content));
 		}
 	}
-	await Log("Got text pieces:", textPieces);
 	return textPieces;
 }
 //#endregion
@@ -479,79 +478,96 @@ class TokenStorageManager {
 		this.isSyncingFirebase = true;
 		await Log("=== FIREBASE SYNC STARTING ===");
 		await this.ensureOrgIds();
+
 		try {
+			// Ensure we have a device ID
+			let deviceId = await browser.storage.local.get('deviceId');
+			if (!deviceId?.deviceId) {
+				deviceId = crypto.randomUUID();
+				await browser.storage.local.set({ deviceId });
+			} else {
+				deviceId = deviceId.deviceId;
+			}
+
 			for (const orgId of this.orgIds) {
-				const timestampUrl = `${this.firebase_base_url}/users/${orgId}/last_update.json`;
-				const response = await fetch(timestampUrl);
-				if (!response.ok) {
-					throw new Error(`HTTP error! status: ${response.status}`);
+				const localModels = await this.#getValue(this.#getStorageKey(orgId, 'models')) || {};
+				const currentHash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(localModels)));
+				const lastSyncHash = await this.#getValue(this.#getStorageKey(orgId, 'lastSyncHash'));
+
+				// Check if we have local changes
+				const currentHashString = Array.from(new Uint8Array(currentHash)).map(b => b.toString(16).padStart(2, '0')).join('')
+				const hasLocalChanges = !lastSyncHash || currentHashString !== lastSyncHash;
+
+				// First get last update info but don't download models yet
+				const lastUpdateUrl = `${this.firebase_base_url}/users/${orgId}/last_update.json`;
+				const response = await fetch(lastUpdateUrl);
+				const remoteUpdate = await response.json();
+				const remoteDeviceId = remoteUpdate?.deviceId;
+
+				// Get our last download timestamp
+				const lastDownloadTime = await this.#getValue(this.#getStorageKey(orgId, 'lastDownloadTime')) || 0;
+				const shouldDownload = !remoteDeviceId ||
+					(remoteDeviceId !== deviceId && (Date.now() - lastDownloadTime > 3 * 60 * 1000)) ||
+					hasLocalChanges ||
+					(Date.now() - lastDownloadTime > 5 * 60 * 1000);
+
+				let shouldUpload = false;
+				let mergedModels = localModels;
+
+				// If we should download, get the remote data
+				if (shouldDownload) {
+					await Log("Downloading remote data");
+					const modelsUrl = `${this.firebase_base_url}/users/${orgId}/models.json`;
+					const modelsResponse = await fetch(modelsUrl);
+					const remoteModels = await modelsResponse.json() || {};
+					mergedModels = await this.#mergeModelData(localModels, remoteModels);
+					await this.#setValue(this.#getStorageKey(orgId, 'lastDownloadTime'), Date.now());
 				}
-				const remoteTimestamp = (await response.json())?.timestamp;
-				const localTimestamp = await this.#getValue(this.#getStorageKey(orgId, 'lastUpdate'));
-				const currentTime = Date.now();
 
-				// No remote data at all - first sync
-				if (!remoteTimestamp) {
-					await Log("No remote data, uploading local data");
-					const localModels = await this.#getValue(this.#getStorageKey(orgId, 'models')) || {};
+				// Determine if we should upload
+				await Log(`Got remote device ID: ${remoteDeviceId} vs local: ${deviceId}`);
+				if (!remoteDeviceId) {
+					// No remote data - upload immediately
+					shouldUpload = true;
+					await Log("No remote device ID, will upload:", shouldUpload);
+				} else if (remoteDeviceId === deviceId) {
+					// Our data - upload every 10 minutes if we have changes
+					shouldUpload = hasLocalChanges &&
+						(!remoteUpdate.timestamp || (Date.now() - remoteUpdate.timestamp > 5 * 60 * 1000));
+					await Log("Our device ID, will upload:", shouldUpload);
+				} else {
+					// Another device's data - upload immediately if we have changes
+					shouldUpload = hasLocalChanges;
+					await Log("Different device ID, will upload:", shouldUpload);
+				}
 
+				// Upload if needed
+				if (shouldUpload) {
+					await Log("Uploading data and updating device ID");
 					const modelsUrl = `${this.firebase_base_url}/users/${orgId}/models.json`;
 					const writeResponse = await fetch(modelsUrl, {
 						method: 'PUT',
-						body: JSON.stringify(localModels)
+						body: JSON.stringify(mergedModels)
 					});
 					if (!writeResponse.ok) {
 						throw new Error(`Write failed! status: ${writeResponse.status}`);
 					}
 
-					// Update timestamp
-					await fetch(timestampUrl, {
+					// Update last update info
+					await fetch(lastUpdateUrl, {
 						method: 'PUT',
-						body: JSON.stringify({ timestamp: currentTime })
+						body: JSON.stringify({
+							deviceId: deviceId,
+							timestamp: Date.now()
+						})
 					});
-					await this.#setValue(this.#getStorageKey(orgId, 'lastUpdate'), currentTime);
 				}
-				// We have both timestamps and they match - check update time
-				else if (localTimestamp && localTimestamp === remoteTimestamp) {
-					// Only upload if it's been more than 6 minutes
-					if ((currentTime - localTimestamp) > 6 * 60 * 1000) {
-						await Log("Our update and 6+ minutes passed, uploading local data");
-						const localModels = await this.#getValue(this.#getStorageKey(orgId, 'models')) || {};
 
-						const modelsUrl = `${this.firebase_base_url}/users/${orgId}/models.json`;
-						const writeResponse = await fetch(modelsUrl, {
-							method: 'PUT',
-							body: JSON.stringify(localModels)
-						});
-						if (!writeResponse.ok) {
-							throw new Error(`Write failed! status: ${writeResponse.status}`);
-						}
-
-						// Update timestamp
-						await fetch(timestampUrl, {
-							method: 'PUT',
-							body: JSON.stringify({ timestamp: currentTime })
-						});
-						await this.#setValue(this.#getStorageKey(orgId, 'lastUpdate'), currentTime);
-					} else {
-						await Log("Our update but less than 4 minutes passed, skipping upload");
-					}
-				}
-				// Either no local timestamp or timestamps differ - need to sync
-				else {
-					await Log("Need to sync - either no local timestamp or timestamps differ");
-					const modelsUrl = `${this.firebase_base_url}/users/${orgId}/models.json`;
-					const modelsResponse = await fetch(modelsUrl);
-					const remoteModels = await modelsResponse.json() || {};
-
-					const localModels = await this.#getValue(this.#getStorageKey(orgId, 'models')) || {};
-					const mergedModels = await this.#mergeModelData(localModels, remoteModels);
-
-					// Save merged result locally
-					await this.#setValue(this.#getStorageKey(orgId, 'models'), mergedModels);
-					await this.#setValue(this.#getStorageKey(orgId, 'lastUpdate'), remoteTimestamp);
-				}
+				//Always update local data...
+				await this.#setValue(this.#getStorageKey(orgId, 'models'), mergedModels);
+				await this.#setValue(this.#getStorageKey(orgId, 'lastSyncHash'), currentHashString);
 			}
+
 			await Log("=== SYNC COMPLETED SUCCESSFULLY ===");
 		} catch (error) {
 			await Log("error", '=== SYNC FAILED ===');
@@ -611,7 +627,6 @@ class TokenStorageManager {
 				}
 			}
 		});
-
 		return merged;
 	}
 
@@ -620,7 +635,7 @@ class TokenStorageManager {
 		if (!subscriptionTier) {
 			subscriptionTier = await api.getSubscriptionTier(orgId)
 			//await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 1000)	//5 seconds (for testing only)
-			await this.subscriptionTiers.set(orgId, subscriptionTier, 1 * 60 * 60 * 1000)	//1 hour
+			await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 60 * 1000)	//10 minutes
 		}
 		return (await configManager.getConfig()).MODEL_CAPS[subscriptionTier]
 	}
@@ -1231,7 +1246,6 @@ async function updateAllTabs(currentCost = undefined, currentLength = undefined,
 // Content -> Background messaging
 async function handleMessageFromContent(message, sender) {
 	await Log("📥 Received message:", message);
-	//const { sessionKey, orgId } = message;
 	const { orgId } = message;
 	const api = await ClaudeAPI.create(sender.tab?.cookieStoreId);
 	const response = await (async () => {
