@@ -89,7 +89,7 @@ if (browser.contextMenus) {
 	});
 }
 
-// WebRequest listeners with specific URL patterns
+// WebRequest listeners
 if (!isElectron) {
 	browser.webRequest.onBeforeRequest.addListener(
 		(details) => queueOrExecute(onBeforeRequestHandler, [details]),
@@ -103,6 +103,27 @@ if (!isElectron) {
 		["responseHeaders"]
 	);
 
+	// Tab listeners
+	browser.tabs.onCreated.addListener(async (tab) => {
+		if (tab.url?.includes('claude.ai')) {
+			await updateSyncAlarm(true);
+		}
+	});
+
+	browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+		if (changeInfo.url?.includes('claude.ai')) {
+			await updateSyncAlarm(true);
+		}
+	});
+
+	browser.tabs.onRemoved.addListener(async () => {
+		// Check remaining claude.ai tabs
+		const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
+		await Log("Remaining tabs:", tabs.length);
+		if (tabs.length <= 1) {
+			await updateSyncAlarm(false);
+		}
+	});
 
 	addFirefoxContainerFixListener();
 }
@@ -151,7 +172,21 @@ browser.alarms.create('checkExpiredData', {
 	periodInMinutes: 60
 });
 
-browser.alarms.create('firebaseSync', { periodInMinutes: 1 });
+browser.alarms.create('firebaseSync', { periodInMinutes: isElectron ? 3 : 15 });
+
+async function updateSyncAlarm(hasActiveTabs) {
+	const currentAlarm = await browser.alarms.get('firebaseSync');
+	if (hasActiveTabs === undefined) {
+		hasActiveTabs = (await browser.tabs.query({ url: "*://claude.ai/*" })).length > 0;
+	}
+	const desiredInterval = hasActiveTabs ? 3 : 15;
+	if (!currentAlarm || currentAlarm.periodInMinutes !== desiredInterval) {
+		await browser.alarms.clear('firebaseSync');
+		browser.alarms.create('firebaseSync', { periodInMinutes: desiredInterval });
+		await Log(`Updated firebaseSync alarm to ${desiredInterval} minutes`);
+	}
+}
+
 browser.alarms.create('capHitsSync', { periodInMinutes: 10 });
 Log("Firebase alarms created.");
 
@@ -507,9 +542,9 @@ class TokenStorageManager {
 				// Get our last download timestamp
 				const lastDownloadTime = await this.#getValue(this.#getStorageKey(orgId, 'lastDownloadTime')) || 0;
 				const shouldDownload = !remoteDeviceId ||
-					(remoteDeviceId !== deviceId && (Date.now() - lastDownloadTime > 3 * 60 * 1000)) ||
+					(remoteDeviceId !== deviceId && (Date.now() - lastDownloadTime > 5 * 60 * 1000)) ||
 					hasLocalChanges ||
-					(Date.now() - lastDownloadTime > 5 * 60 * 1000);
+					(Date.now() - lastDownloadTime > 9 * 60 * 1000);
 
 				let shouldUpload = false;
 				let mergedModels = localModels;
@@ -531,9 +566,9 @@ class TokenStorageManager {
 					shouldUpload = true;
 					await Log("No remote device ID, will upload:", shouldUpload);
 				} else if (remoteDeviceId === deviceId) {
-					// Our data - upload every 10 minutes if we have changes
+					// Our data - upload every 7 minutes if we have changes
 					shouldUpload = hasLocalChanges &&
-						(!remoteUpdate.timestamp || (Date.now() - remoteUpdate.timestamp > 5 * 60 * 1000));
+						(!remoteUpdate.timestamp || (Date.now() - remoteUpdate.timestamp > 7 * 60 * 1000));
 					await Log("Our device ID, will upload:", shouldUpload);
 				} else {
 					// Another device's data - upload immediately if we have changes
@@ -1314,9 +1349,9 @@ async function handleMessageFromContent(message, sender) {
 				});
 				return true;
 			case 'openDebugPage':
-				if (chrome.tabs?.create) {
-					chrome.tabs.create({
-						url: chrome.runtime.getURL('debug.html')
+				if (browser.tabs?.create) {
+					browser.tabs.create({
+						url: browser.runtime.getURL('debug.html')
 					});
 					return true;
 				}
@@ -1615,6 +1650,6 @@ for (const handler of pendingHandlers) {
 	handler.fn(...handler.args);
 }
 pendingHandlers = [];
-
+updateSyncAlarm();
 Log("Done initializing.")
 //#endregion
