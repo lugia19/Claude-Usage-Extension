@@ -106,21 +106,18 @@ if (!isElectron) {
 	// Tab listeners
 	// Track focused/visible claude.ai tabs
 	browser.tabs.onActivated.addListener(async (activeInfo) => {
-		await sleep(50);
 		await updateSyncAlarm();
 	});
 
 	// Handle tab updates
 	browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 		if (changeInfo.url?.includes('claude.ai') || tab.url?.includes('claude.ai')) {
-			await sleep(50);
 			await updateSyncAlarm();
 		}
 	});
 
 	// Handle tab closing
 	browser.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
-		await sleep(50);
 		await updateSyncAlarm(true);
 	});
 
@@ -191,6 +188,7 @@ async function updateSyncAlarm(fromRemovedEvent = false) {
 			desiredInterval = (await configManager.getConfig()).SYNC_INTERVALS.inactive;
 		}
 	}
+	await Log("Current state:", state, "Desired interval:", desiredInterval);
 
 	const currentAlarm = await browser.alarms.get('firebaseSync');
 	const isStateChange = !currentAlarm || currentAlarm.periodInMinutes !== desiredInterval;

@@ -32,7 +32,7 @@
 	"SYNC_INTERVALS": {
 		"none": 30,
 		"inactive": 10,
-		"active": 5
+		"active": 4
 	},
 	"WARNING_THRESHOLD": 0.9,
 	"SELECTORS": {
