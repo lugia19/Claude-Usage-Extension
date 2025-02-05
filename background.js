@@ -168,8 +168,6 @@ browser.alarms.create('checkExpiredData', {
 	periodInMinutes: 60
 });
 
-browser.alarms.create('firebaseSync', { periodInMinutes: 5 });
-
 async function updateSyncAlarm(fromRemovedEvent = false) {
 	const allClaudeTabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 	let state;
