@@ -104,25 +104,24 @@ if (!isElectron) {
 	);
 
 	// Tab listeners
-	browser.tabs.onCreated.addListener(async (tab) => {
-		if (tab.url?.includes('claude.ai')) {
-			await updateSyncAlarm(true);
-		}
+	// Track focused/visible claude.ai tabs
+	browser.tabs.onActivated.addListener(async (activeInfo) => {
+		await sleep(50);
+		await updateSyncAlarm();
 	});
 
+	// Handle tab updates
 	browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-		if (changeInfo.url?.includes('claude.ai')) {
-			await updateSyncAlarm(true);
+		if (changeInfo.url?.includes('claude.ai') || tab.url?.includes('claude.ai')) {
+			await sleep(50);
+			await updateSyncAlarm();
 		}
 	});
 
-	browser.tabs.onRemoved.addListener(async () => {
-		// Check remaining claude.ai tabs
-		const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
-		await Log("Remaining tabs:", tabs.length);
-		if (tabs.length <= 1) {
-			await updateSyncAlarm(false);
-		}
+	// Handle tab closing
+	browser.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
+		await sleep(50);
+		await updateSyncAlarm(true);
 	});
 
 	addFirefoxContainerFixListener();
@@ -172,18 +171,32 @@ browser.alarms.create('checkExpiredData', {
 	periodInMinutes: 60
 });
 
-browser.alarms.create('firebaseSync', { periodInMinutes: isElectron ? 3 : 15 });
+browser.alarms.create('firebaseSync', { periodInMinutes: 5 });
 
-async function updateSyncAlarm(hasActiveTabs) {
-	const currentAlarm = await browser.alarms.get('firebaseSync');
-	if (hasActiveTabs === undefined) {
-		hasActiveTabs = (await browser.tabs.query({ url: "*://claude.ai/*" })).length > 0;
+async function updateSyncAlarm(fromRemovedEvent) {
+	const allClaudeTabs = await browser.tabs.query({ url: "*://claude.ai/*" });
+	let state;
+	let desiredInterval;
+
+	if (allClaudeTabs.length === 0 || (fromRemovedEvent && allClaudeTabs.length <= 1)) {
+		state = 'none';
+		desiredInterval = (await configManager.getConfig()).SYNC_INTERVALS.none;
+	} else {
+		const activeClaudeTabs = await browser.tabs.query({ url: "*://claude.ai/*", active: true });
+		if (activeClaudeTabs.length > 0) {
+			state = 'active';
+			desiredInterval = (await configManager.getConfig()).SYNC_INTERVALS.active;
+		} else {
+			state = 'inactive';
+			desiredInterval = (await configManager.getConfig()).SYNC_INTERVALS.inactive;
+		}
 	}
-	const desiredInterval = hasActiveTabs ? 3 : 15;
+
+	const currentAlarm = await browser.alarms.get('firebaseSync');
 	if (!currentAlarm || currentAlarm.periodInMinutes !== desiredInterval) {
 		await browser.alarms.clear('firebaseSync');
 		browser.alarms.create('firebaseSync', { periodInMinutes: desiredInterval });
-		await Log(`Updated firebaseSync alarm to ${desiredInterval} minutes`);
+		await Log(`Updated firebaseSync alarm to ${desiredInterval} minutes (state: ${state})`);
 	}
 }
 
@@ -541,10 +554,11 @@ class TokenStorageManager {
 
 				// Get our last download timestamp
 				const lastDownloadTime = await this.#getValue(this.#getStorageKey(orgId, 'lastDownloadTime')) || 0;
+
+				// Only download if we have local changes to upload, or if someone else updated the data (and we haven't checked it in 5 minutes)
 				const shouldDownload = !remoteDeviceId ||
 					(remoteDeviceId !== deviceId && (Date.now() - lastDownloadTime > 5 * 60 * 1000)) ||
-					hasLocalChanges ||
-					(Date.now() - lastDownloadTime > 9 * 60 * 1000);
+					hasLocalChanges;
 
 				let shouldUpload = false;
 				let mergedModels = localModels;
@@ -566,9 +580,9 @@ class TokenStorageManager {
 					shouldUpload = true;
 					await Log("No remote device ID, will upload:", shouldUpload);
 				} else if (remoteDeviceId === deviceId) {
-					// Our data - upload every 7 minutes if we have changes
+					// Our data - upload every 5 minutes if we have changes
 					shouldUpload = hasLocalChanges &&
-						(!remoteUpdate.timestamp || (Date.now() - remoteUpdate.timestamp > 7 * 60 * 1000));
+						(!remoteUpdate.timestamp || (Date.now() - remoteUpdate.timestamp > 5 * 60 * 1000));
 					await Log("Our device ID, will upload:", shouldUpload);
 				} else {
 					// Another device's data - upload immediately if we have changes

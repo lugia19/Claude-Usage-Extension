@@ -29,6 +29,11 @@
 			"default": 1
 		}
 	},
+	"SYNC_INTERVALS": {
+		"none": 30,
+		"inactive": 10,
+		"active": 2
+	},
 	"WARNING_THRESHOLD": 0.9,
 	"SELECTORS": {
 		"MAIN_INPUT": "div[aria-label=\"Write your prompt to Claude\"]",
