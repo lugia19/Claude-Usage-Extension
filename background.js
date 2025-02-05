@@ -143,7 +143,6 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 
 	if (alarm.name === 'firebaseSync') {
 		await tokenStorageManager.syncWithFirebase();
-		await updateAllTabs();
 	}
 
 	if (alarm.name === 'capHitsSync') {
@@ -190,7 +189,7 @@ async function updateSyncAlarm(fromRemovedEvent = false) {
 
 	const currentAlarm = await browser.alarms.get('firebaseSync');
 	const isStateChange = !currentAlarm || currentAlarm.periodInMinutes !== desiredInterval;
-	const wasActive = currentAlarm && currentAlarm.periodInMinutes === (await configManager.getConfig()).SYNC_INTERVALS.active;
+	//const wasActive = currentAlarm && currentAlarm.periodInMinutes === (await configManager.getConfig()).SYNC_INTERVALS.active;
 
 	if (isStateChange) {
 		await browser.alarms.clear('firebaseSync');
@@ -198,8 +197,8 @@ async function updateSyncAlarm(fromRemovedEvent = false) {
 		await Log(`Updated firebaseSync alarm to ${desiredInterval} minutes (state: ${state})`);
 
 		// Trigger sync if we're changing to or from active state
-		if (state === 'active' || wasActive) {
-			await Log("Changed to or from active, triggering immediate sync!")
+		if (state === 'active') {
+			await Log("Changed to active, triggering immediate sync!")
 			await tokenStorageManager.syncWithFirebase();
 		}
 	}
@@ -622,7 +621,8 @@ class TokenStorageManager {
 				await this.#setValue(this.#getStorageKey(orgId, 'lastSyncHash'), currentHashString);
 			}
 
-			await Log("=== SYNC COMPLETED SUCCESSFULLY ===");
+			await Log("=== SYNC COMPLETED SUCCESSFULLY, UPDATING TABS ===");
+			await updateAllTabs();
 		} catch (error) {
 			await Log("error", '=== SYNC FAILED ===');
 			await Log("error", 'Error details:', error);
@@ -1269,6 +1269,7 @@ class StoredMap {
 
 //Updates each tab with its own data
 async function updateAllTabs(currentCost = undefined, currentLength = undefined, lengthTabId = undefined) {
+	await Log("Updating all tabs with new data");
 	const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 	for (const tab of tabs) {
 		const orgId = await requestActiveOrgId(tab);

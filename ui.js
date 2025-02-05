@@ -1459,7 +1459,7 @@
 
 	async function initialize() {
 		const MAX_RETRIES = 15;
-		const RETRY_DELAY = 200;
+		const RETRY_DELAY = 400;
 		const LOGIN_CHECK_DELAY = 10000;
 
 		// Load and assign configuration to global variables
