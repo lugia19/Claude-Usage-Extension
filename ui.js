@@ -1006,7 +1006,7 @@
 			this.estimateDisplay = document.createElement('div');
 			this.estimateDisplay.className = 'text-text-400 text-xs mr-2';
 			this.estimateDisplay.style.userSelect = 'text';  // Make text selectable
-			this.estimateDisplay.innerHTML = `Est. messages left: <span>N/A</span>`;
+			this.estimateDisplay.innerHTML = `Est. messages: <span>N/A</span>`;
 			this.statLine.appendChild(this.estimateDisplay);
 
 			// Create reset display
@@ -1091,7 +1091,7 @@
 		updateEstimate(modelData, currentModel, modelCaps, messageCost, overrideNone) {
 			if (!this.estimateDisplay) return;
 			if (overrideNone) {
-				this.estimateDisplay.innerHTML = `Est. messages left: <span>N/A</span>`;
+				this.estimateDisplay.innerHTML = `Est. messages: <span>N/A</span>`;
 				return
 			}
 			const maxTokens = modelCaps[currentModel] || modelCaps.default;
@@ -1108,7 +1108,7 @@
 			}
 
 			const color = estimate !== "N/A" && parseFloat(estimate) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
-			this.estimateDisplay.innerHTML = `Est. messages left: <span style="color: ${color}">${estimate}</span>`;
+			this.estimateDisplay.innerHTML = `Est. messages: <span style="color: ${color}">${estimate}</span>`;
 		}
 
 		updateResetTime(modelData, currentModel) {

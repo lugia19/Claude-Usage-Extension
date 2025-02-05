@@ -173,7 +173,7 @@ browser.alarms.create('checkExpiredData', {
 
 browser.alarms.create('firebaseSync', { periodInMinutes: 5 });
 
-async function updateSyncAlarm(fromRemovedEvent) {
+async function updateSyncAlarm(fromRemovedEvent = false) {
 	const allClaudeTabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 	let state;
 	let desiredInterval;
@@ -193,10 +193,19 @@ async function updateSyncAlarm(fromRemovedEvent) {
 	}
 
 	const currentAlarm = await browser.alarms.get('firebaseSync');
-	if (!currentAlarm || currentAlarm.periodInMinutes !== desiredInterval) {
+	const isStateChange = !currentAlarm || currentAlarm.periodInMinutes !== desiredInterval;
+	const wasActive = currentAlarm && currentAlarm.periodInMinutes === (await configManager.getConfig()).SYNC_INTERVALS.active;
+
+	if (isStateChange) {
 		await browser.alarms.clear('firebaseSync');
 		browser.alarms.create('firebaseSync', { periodInMinutes: desiredInterval });
 		await Log(`Updated firebaseSync alarm to ${desiredInterval} minutes (state: ${state})`);
+
+		// Trigger sync if we're changing to or from active state
+		if (state === 'active' || wasActive) {
+			await Log("Changed to or from active, triggering immediate sync!")
+			await tokenStorageManager.syncWithFirebase();
+		}
 	}
 }
 
