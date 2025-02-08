@@ -3,6 +3,7 @@ import './lib/o200k_base.js';
 
 const tokenizer = GPTTokenizer_o200k_base;
 const STORAGE_KEY = "claudeUsageTracker_v5"
+const FORCE_DEBUG = false;
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
 		urls: [
@@ -106,19 +107,19 @@ if (!isElectron) {
 	// Tab listeners
 	// Track focused/visible claude.ai tabs
 	browser.tabs.onActivated.addListener(async (activeInfo) => {
-		await updateSyncAlarm();
+		await updateSyncAlarmAndFetchData(activeInfo.tabId);
 	});
 
 	// Handle tab updates
 	browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 		if (changeInfo.url?.includes('claude.ai') || tab.url?.includes('claude.ai')) {
-			await updateSyncAlarm();
+			await updateSyncAlarmAndFetchData(tabId);
 		}
 	});
 
 	// Handle tab closing
 	browser.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
-		await updateSyncAlarm(true);
+		await updateSyncAlarmAndFetchData(tabId, true);
 	});
 
 	addFirefoxContainerFixListener();
@@ -167,7 +168,7 @@ browser.alarms.create('checkExpiredData', {
 	periodInMinutes: 60
 });
 
-async function updateSyncAlarm(fromRemovedEvent = false) {
+async function updateSyncAlarmAndFetchData(sourceTabId, fromRemovedEvent = false) {
 	const allClaudeTabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 	let state;
 	let desiredInterval;
@@ -198,7 +199,9 @@ async function updateSyncAlarm(fromRemovedEvent = false) {
 
 		// Trigger sync if we're changing to or from active state
 		if (state === 'active') {
-			await Log("Changed to active, triggering immediate sync!")
+			await Log("Changed to active, triggering immediate sync! Ensuring we have the orgId first.")
+			const orgId = await requestActiveOrgId(sourceTabId);
+			await tokenStorageManager.addOrgId(orgId);
 			await tokenStorageManager.syncWithFirebase();
 		}
 	}
@@ -232,7 +235,7 @@ async function Log(...args) {
 	const debugUntil = result.debug_mode_until;
 	const now = Date.now();
 
-	if (!debugUntil || debugUntil <= now) {
+	if ((!debugUntil || debugUntil <= now) && !FORCE_DEBUG) {
 		return;
 	}
 
@@ -977,7 +980,7 @@ class ClaudeAPI {
 		if (!styleId) {
 			//Ask the tabId to fetch it from localStorage.
 			await Log("Fetching styleId from tab:", tabId);
-			const response = await browser.tabs.sendMessage(tabId, {
+			const response = await sendTabMessage(tabId, {
 				action: "getStyleId"
 			});
 			styleId = response?.styleId;
@@ -1155,16 +1158,31 @@ class ClaudeAPI {
 }
 
 async function requestActiveOrgId(tab) {
-	if (typeof tab !== "number") {
-		tab = tab.id
+	if (typeof tab === "number") {
+		tab = await browser.tabs.get(tab);
 	}
+
 	try {
-		const response = await browser.tabs.sendMessage(tab, {
+		const cookie = await browser.cookies.get({
+			name: 'lastActiveOrg',
+			url: tab.url,
+			storeId: tab.cookieStoreId
+		});
+
+		if (cookie?.value) {
+			return cookie.value;
+		}
+	} catch (error) {
+		await Log("error", "Error getting cookie directly:", error);
+	}
+
+	try {
+		const response = await sendTabMessage(tab.id, {
 			action: "getOrgID"
 		});
 		return response?.orgId;
 	} catch (error) {
-		await Log("error", "Error getting org ID:", error);
+		await Log("error", "Error getting org ID from content script:", error);
 		return null;
 	}
 }
@@ -1273,12 +1291,14 @@ async function updateAllTabs(currentCost = undefined, currentLength = undefined,
 	const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 	for (const tab of tabs) {
 		const orgId = await requestActiveOrgId(tab);
+		await Log("Updating tab:", tab.id, "with orgId:", orgId);
 		const tabData = {
 			modelData: {}
 		};
 
 		for (const model of (await configManager.getConfig()).MODELS) {
 			const modelData = await tokenStorageManager.getModelData(orgId, model);
+			await Log("Got model data:", modelData, "for model:", model);
 			if (modelData) {
 				tabData.modelData[model] = modelData;
 			}
@@ -1291,11 +1311,34 @@ async function updateAllTabs(currentCost = undefined, currentLength = undefined,
 			};
 		}
 
-		browser.tabs.sendMessage(tab.id, {
+		sendTabMessage(tab.id, {
 			type: 'updateUsage',
 			data: tabData
 		});
 	}
+}
+
+// Background -> Content messaging
+async function sendTabMessage(tabId, message, maxRetries = 10, delay = 100) {
+	let counter = maxRetries;
+	await Log("Sending message to tab:", tabId, message);
+	while (counter > 0) {
+		try {
+			const response = await browser.tabs.sendMessage(tabId, message);
+			await Log("Got response from tab:", response);
+			return response;
+		} catch (error) {
+			if (error.message?.includes('Receiving end does not exist')) {
+				await Log("warn", `Tab ${tabId} not ready, retrying...`, error);
+				await new Promise(resolve => setTimeout(resolve, delay));
+			} else {
+				// For any other error, throw immediately
+				throw error;
+			}
+		}
+		counter--;
+	}
+	throw new Error(`Failed to send message to tab ${tabId} after ${maxRetries} retries.`);
 }
 
 // Content -> Background messaging
@@ -1670,6 +1713,6 @@ for (const handler of pendingHandlers) {
 	handler.fn(...handler.args);
 }
 pendingHandlers = [];
-updateSyncAlarm();
+updateSyncAlarmAndFetchData();
 Log("Done initializing.")
 //#endregion

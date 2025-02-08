@@ -2,6 +2,7 @@
 	'use strict';
 	const BLUE_HIGHLIGHT = '#3b82f6';
 	const RED_WARNING = "#ef4444";
+	const FORCE_DEBUG = false;
 
 	async function Log(...args) {
 		const sender = `content:${document.title.substring(0, 20)}${document.title.length > 20 ? '...' : ''}`;
@@ -16,7 +17,7 @@
 		const debugUntil = result.debug_mode_until;
 		const now = Date.now();
 
-		if (!debugUntil || debugUntil <= now) {
+		if ((!debugUntil || debugUntil <= now) && !FORCE_DEBUG) {
 			return;
 		}
 
@@ -918,7 +919,7 @@
 			// Update home page state if needed
 			if (isHomePage && this.conversationMetrics !== null) {
 				this.conversationMetrics = null;
-				this.chatUI.updateEstimate(null, null, null, null, true);
+				this.chatUI.updateEstimate();
 				this.currentConversation = null;
 			}
 		}
@@ -1088,9 +1089,9 @@
 			}
 		}
 
-		updateEstimate(modelData, currentModel, modelCaps, messageCost, overrideNone) {
+		updateEstimate(modelData, currentModel, modelCaps, messageCost) {
 			if (!this.estimateDisplay) return;
-			if (overrideNone) {
+			if (!getConversationId()) {
 				this.estimateDisplay.innerHTML = `Est. messages: <span>N/A</span>`;
 				return
 			}
