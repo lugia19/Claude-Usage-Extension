@@ -832,7 +832,8 @@ class TokenStorageManager {
 			await this.resetsHit.set(key, {
 				total: `${modelData.total}/${cap}`,
 				model: model,
-				timestamp: modelData.resetTimestamp,
+				reset_time: modelData.resetTimestamp,
+				warning_time: new Date().toISOString(),
 				tier: tier,
 				accurateCount: hasApiKey
 			});
@@ -862,10 +863,11 @@ class TokenStorageManager {
 				// Transform the data to use model:timestamp as keys
 				const transformedResets = {};
 				for (const [_, resetData] of Object.entries(resets)) {
-					const newKey = `${resetData.model}:${resetData.timestamp}`;
+					const newKey = `${resetData.model}:${resetData.reset_time}`;
 					transformedResets[newKey] = {
 						total: resetData.total,
-						timestamp: resetData.timestamp,
+						reset_time: resetData.reset_time,
+						warning_time: resetData.warning_time,
 						model: resetData.model,
 						tier: resetData.tier,
 						accurateCount: resetData.accurateCount
