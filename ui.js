@@ -1036,7 +1036,7 @@
 			const modelSelector = document.querySelector('[data-testid="model-selector-dropdown"]');
 			if (!modelSelector) return;
 			// Handle stat line injection
-			const selectorLine = modelSelector.closest('.min-w-0.flex-1.flex')?.parentElement?.parentElement;
+			const selectorLine = modelSelector.closest('.min-w-0.flex-1.flex')?.parentElement;
 			if (!selectorLine) return;
 			if (selectorLine && selectorLine.nextElementSibling !== this.statLine) {
 				selectorLine.after(this.statLine);
