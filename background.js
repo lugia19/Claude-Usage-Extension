@@ -406,12 +406,17 @@ async function countTokensViaAPI(userMessages = [], assistantMessages = [], file
 	}
 }
 
-async function getTextFromContent(content) {
+async function getTextFromContent(content, includeThinking = false) {
 	let textPieces = [];
 
 	if (content.text) {
 		textPieces.push(content.text);
 	}
+
+	if (content.thinking && includeThinking) {
+		textPieces.push(content.thinking);
+	}
+
 	if (content.input) {
 		textPieces.push(JSON.stringify(content.input));
 	}
@@ -419,12 +424,12 @@ async function getTextFromContent(content) {
 		// Handle nested content array
 		if (Array.isArray(content.content)) {
 			for (const nestedContent of content.content) {
-				textPieces = textPieces.concat(await getTextFromContent(nestedContent));
+				textPieces = textPieces.concat(await getTextFromContent(nestedContent, includeThinking));
 			}
 		}
 		// Handle single nested content object
 		else if (typeof content.content === 'object') {
-			textPieces = textPieces.concat(await getTextFromContent(content.content));
+			textPieces = textPieces.concat(await getTextFromContent(content.content, includeThinking));
 		}
 	}
 	return textPieces;
@@ -1101,7 +1106,11 @@ class ClaudeAPI {
 			}
 
 			if (message === lastMessage) {
-				lastMessageTokens = await getTextTokens(messageContent.join(' ')) * ((await configManager.getConfig()).OUTPUT_TOKEN_MULTIPLIER - 1);
+				let lastMessageContent = [];
+				for (const content of message.content) {
+					lastMessageContent = lastMessageContent.concat(await getTextFromContent(content, true));
+				}
+				lastMessageTokens = await getTextTokens(lastMessageContent.join(' ')) * ((await configManager.getConfig()).OUTPUT_TOKEN_MULTIPLIER);
 			}
 
 			if (message.sender === "human") {
