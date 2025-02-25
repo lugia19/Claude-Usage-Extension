@@ -434,6 +434,21 @@ async function getTextFromContent(content, includeThinking = false) {
 	}
 	return textPieces;
 }
+
+// Generic container-aware fetch utility
+async function containerFetch(url, options = {}, cookieStoreId = null) {
+	if (!cookieStoreId || cookieStoreId === "0" || isElectron) {
+		// No container specifics needed, just do a regular fetch
+		return fetch(url, options);
+	}
+
+	// Add our container ID header
+	const headers = options.headers || {};
+	headers['X-Container'] = cookieStoreId;
+	options.headers = headers;
+
+	return fetch(url, options);
+}
 //#endregion
 
 //#region Manager classes
@@ -905,38 +920,19 @@ class TokenStorageManager {
 
 // Claude API interface
 class ClaudeAPI {
-	static async create(cookieStoreId = "0") {
-		const api = new ClaudeAPI();
-		await Log("Creating API from cookie store:", cookieStoreId);
-		api.sessionKey = await api.getSessionKey(cookieStoreId)
-		return api;
-	}
-
-	constructor() {
+	constructor(cookieStoreId) {
 		this.baseUrl = 'https://claude.ai/api';
-		this.sessionKey = undefined;
-	}
-
-	//I love jank...
-	async getSessionKey(cookieStoreId = "0") {
-		if (isElectron) return undefined;
-		const cookie = await browser.cookies.get({
-			url: "https://claude.ai",
-			name: "sessionKey",
-			storeId: cookieStoreId
-		});
-		return cookie?.value;
+		this.cookieStoreId = cookieStoreId;
 	}
 
 	// Core GET method with auth
 	async getRequest(endpoint) {
-		const response = await fetch(`${this.baseUrl}${endpoint}`, {
+		const response = await containerFetch(`${this.baseUrl}${endpoint}`, {
 			headers: {
-				'X-Overwrite-SessionKey': this.sessionKey,	//This is only relevant on firefox, to handle different cookie stores
 				'Content-Type': 'application/json'
 			},
 			method: 'GET'
-		});
+		}, this.cookieStoreId);
 		return response.json();
 	}
 
@@ -944,12 +940,7 @@ class ClaudeAPI {
 	async getUploadedFileAsBase64(url) {
 		try {
 			await Log(`Starting file download from: https://claude.ai${url}`);
-			const response = await fetch(`https://claude.ai${url}`, {
-				headers: {
-					'X-Overwrite-SessionKey': this.sessionKey
-				}
-			});
-
+			const response = await containerFetch(`https://claude.ai${url}`, undefined, this.cookieStoreId);
 			if (!response.ok) {
 				await Log("error", 'Fetch failed:', response.status, response.statusText);
 				return null;
@@ -975,12 +966,78 @@ class ClaudeAPI {
 		}
 	}
 
-	async getSyncText(orgId, syncURI, syncType) {
-		if (!syncURI) return "";
-		if (syncType != "gdrive") return ""
-		let syncText = (await this.getRequest(`/organizations/${orgId}/sync/mcp/drive/document/${syncURI}`))?.text
-		await Log("Sync text:", syncText);
-		return syncText || "";
+	async getSyncText(orgId, sync) {
+		if (!sync) return "";
+
+		const syncType = sync.type;
+		await Log("Processing sync:", syncType, sync.uuid || sync.id);
+
+		if (syncType === "gdrive") {
+			const uri = sync.config?.uri;
+			if (!uri) return "";
+
+			// Use the existing API endpoint for Google Drive
+			const response = await containerFetch(`${this.baseUrl}/organizations/${orgId}/sync/mcp/drive/document/${uri}`,
+				{ headers: { 'Content-Type': 'application/json' } },
+				this.cookieStoreId
+			);
+
+			if (!response.ok) {
+				await Log("warn", `Failed to fetch Google Drive document: ${uri}, status: ${response.status}`);
+				return "";
+			}
+
+			const data = await response.json();
+			const syncText = data?.text || "";
+			await Log("Gdrive sync text:", syncText?.substring(0, 100) + (syncText?.length > 100 ? "..." : ""));
+			return syncText;
+		}
+		else if (syncType === "github") {
+			try {
+				const { owner, repo, branch, filters } = sync.config || {};
+				if (!owner || !repo || !branch || !filters?.filters) {
+					await Log("warn", "Incomplete GitHub sync config", sync.config);
+					return "";
+				}
+
+				// For each included file, fetch and aggregate content
+				let allContent = "";
+				for (const [filePath, action] of Object.entries(filters.filters)) {
+					if (action !== "include") continue;
+
+					// Remove leading slash if present
+					const cleanPath = filePath.startsWith('/') ? filePath.substring(1) : filePath;
+
+					// Construct raw GitHub URL
+					const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${cleanPath}`;
+					await Log("Fetching GitHub file from:", rawUrl);
+
+					try {
+						// Use containerFetch to respect Firefox containers
+						const response = await containerFetch(rawUrl, {}, this.cookieStoreId);
+
+						if (response.ok) {
+							const fileContent = await response.text();
+							allContent += fileContent + "\n";
+							await Log(`GitHub file fetched: ${filePath}, size: ${fileContent.length} bytes`);
+						} else {
+							await Log("warn", `Failed to fetch GitHub file: ${rawUrl}, status: ${response.status}`);
+						}
+					} catch (error) {
+						await Log("error", `Error fetching GitHub file: ${rawUrl}`, error);
+					}
+				}
+
+				return allContent;
+			} catch (error) {
+				await Log("error", "Error processing GitHub sync source:", error);
+				return "";
+			}
+		}
+
+		// Unsupported sync type
+		await Log("warn", `Unsupported sync type: ${syncType}`);
+		return "";
 	}
 
 	async getStyleTokens(orgId, styleId, tabId) {
@@ -1356,7 +1413,7 @@ async function sendTabMessage(tabId, message, maxRetries = 10, delay = 100) {
 async function handleMessageFromContent(message, sender) {
 	await Log("📥 Received message:", message);
 	const { orgId } = message;
-	const api = await ClaudeAPI.create(sender.tab?.cookieStoreId);
+	const api = new ClaudeAPI(sender.tab?.cookieStoreId);
 	const response = await (async () => {
 		switch (message.type) {
 			case 'getCollapsedState':
@@ -1498,7 +1555,7 @@ async function parseRequestBody(requestBody) {
 
 async function processResponse(orgId, conversationId, responseKey, details) {
 	const tabId = details.tabId;
-	const api = await ClaudeAPI.create(details.cookieStoreId);
+	const api = new ClaudeAPI(details.cookieStoreId);
 
 	const tokens = await api.getConversationTokens(orgId, conversationId);
 	if (!tokens) {
@@ -1629,7 +1686,7 @@ async function onBeforeRequestHandler(details) {
 	if (details.method === "GET" && details.url.includes("/settings/billing")) {
 		await Log("Hit the billing page, let's make sure we get the updated subscription tier in case it was changed...")
 		const orgId = await requestActiveOrgId(details.tabId);
-		const api = await ClaudeAPI.create(details.cookieStoreId);
+		const api = new ClaudeAPI(details.cookieStoreId);
 		let subscriptionTier = await api.getSubscriptionTier(orgId)
 		await tokenStorageManager.subscriptionTiers.set(orgId, subscriptionTier, 6 * 60 * 60 * 1000)
 	}
@@ -1664,46 +1721,50 @@ async function addFirefoxContainerFixListener() {
 	const stores = await browser.cookies.getAllCookieStores();
 	const isFirefoxContainers = stores[0].id === "firefox-default";
 
-	//Fine to register this here, as it's only relevant for the background script's own requests. No wakeup needed.
 	if (isFirefoxContainers) {
-		await Log("We're in firefox with containers, registering blocking listener...")
+		await Log("We're in firefox with containers, registering blocking listener...");
 		browser.webRequest.onBeforeSendHeaders.addListener(
 			async (details) => {
-				const overwriteKey = details.requestHeaders.find(h =>
-					h.name === 'X-Overwrite-SessionKey'
+				// Check for our container header
+				const containerStore = details.requestHeaders.find(h =>
+					h.name === 'X-Container'
 				)?.value;
 
-				if (overwriteKey) {
-					// Find existing cookie header
-					const cookieHeader = details.requestHeaders.find(h => h.name === 'Cookie');
-					if (cookieHeader) {
-						// Parse existing cookies
-						const cookies = cookieHeader.value.split('; ');
-						// Extract existing sessionKey if present
-						const existingSessionKey = cookies
-							.find(c => c.startsWith('sessionKey='))
-							?.split('=')[1];
+				if (containerStore) {
+					await Log("Processing request for container:", containerStore, "URL:", details.url);
 
-						if (existingSessionKey != overwriteKey) {
-							await Log("Modifying session key (request must've been made from non-default container...");
+					// Extract domain from URL
+					const url = new URL(details.url);
+					const domain = url.hostname;
+
+					// Get cookies for this domain from the specified container
+					const domainCookies = await browser.cookies.getAll({
+						domain: domain,
+						storeId: containerStore
+					});
+					await Log("Found cookies for domain:", domain, "in container:", containerStore, domainCookies);
+					if (domainCookies.length > 0) {
+						// Create or find the cookie header
+						let cookieHeader = details.requestHeaders.find(h => h.name === 'Cookie');
+						if (!cookieHeader) {
+							cookieHeader = { name: 'Cookie', value: '' };
+							details.requestHeaders.push(cookieHeader);
 						}
 
-						// Filter out existing sessionKey and add new one
-						const filteredCookies = cookies.filter(c => !c.startsWith('sessionKey='));
-						filteredCookies.push(`sessionKey=${overwriteKey}`);
-
-						// Rebuild cookie header
-						cookieHeader.value = filteredCookies.join('; ');
+						// Format cookies for the header
+						const formattedCookies = domainCookies.map(c => `${c.name}=${c.value}`);
+						cookieHeader.value = formattedCookies.join('; ');
 					}
 
 					// Remove our custom header
 					details.requestHeaders = details.requestHeaders.filter(h =>
-						h.name !== 'X-Overwrite-SessionKey'
+						h.name !== 'X-Container'
 					);
 				}
+
 				return { requestHeaders: details.requestHeaders };
 			},
-			{ urls: ["*://claude.ai/api/*"] },
+			{ urls: ["<all_urls>"] },
 			["blocking", "requestHeaders"]
 		);
 	}
