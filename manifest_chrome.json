@@ -36,6 +36,7 @@
 	"host_permissions": [
 		"*://claude.ai/*",
 		"https://raw.githubusercontent.com/*",
+		"https://github.com/*",
 		"https://api.anthropic.com/*"
 	],
 	"web_accessible_resources": [

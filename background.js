@@ -1008,23 +1008,23 @@ class ClaudeAPI {
 					// Remove leading slash if present
 					const cleanPath = filePath.startsWith('/') ? filePath.substring(1) : filePath;
 
-					// Construct raw GitHub URL
-					const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${cleanPath}`;
-					await Log("Fetching GitHub file from:", rawUrl);
+					// Use the GitHub raw URL format directly - redirects will be followed automatically
+					const githubUrl = `https://github.com/${owner}/${repo}/raw/refs/heads/${branch}/${cleanPath}`;
+					await Log("Fetching GitHub file from:", githubUrl);
 
 					try {
-						// Use containerFetch to respect Firefox containers
-						const response = await containerFetch(rawUrl, {}, this.cookieStoreId);
+						// Let containerFetch handle everything
+						const response = await containerFetch(githubUrl, { method: 'GET' }, this.cookieStoreId);
 
 						if (response.ok) {
 							const fileContent = await response.text();
 							allContent += fileContent + "\n";
 							await Log(`GitHub file fetched: ${filePath}, size: ${fileContent.length} bytes`);
 						} else {
-							await Log("warn", `Failed to fetch GitHub file: ${rawUrl}, status: ${response.status}`);
+							await Log("warn", `Failed to fetch GitHub file: ${githubUrl}, status: ${response.status}`);
 						}
 					} catch (error) {
-						await Log("error", `Error fetching GitHub file: ${rawUrl}`, error);
+						await Log("error", `Error fetching GitHub file: ${githubUrl}`, error);
 					}
 				}
 
@@ -1084,7 +1084,7 @@ class ClaudeAPI {
 		const syncData = await this.getRequest(`/organizations/${orgId}/projects/${projectId}/syncs`);
 		for (const sync of syncData) {
 			await Log("Sync:", sync.uuid);
-			const syncText = await this.getSyncText(orgId, sync.config?.uri, sync.type);
+			const syncText = await this.getSyncText(orgId, sync);
 			project_text += syncText;
 			await Log("Sync tokens:", await getTextTokens(syncText, true));
 		}
@@ -1105,6 +1105,7 @@ class ClaudeAPI {
 		// Count messages by sender
 		let humanMessagesCount = 0;
 		let assistantMessagesCount = 0;
+		if (!conversationData.chat_messages) return 0;
 
 		const lastMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
 
@@ -1159,7 +1160,7 @@ class ClaudeAPI {
 			// Sync tokens
 			for (const sync of message.sync_sources) {
 				await Log("Sync source:", sync.uuid)
-				messageContent.push(await this.getSyncText(orgId, sync.config?.uri, sync.type));
+				messageContent.push(await this.getSyncText(orgId, sync));
 			}
 
 			if (message === lastMessage) {
@@ -1742,7 +1743,7 @@ async function addFirefoxContainerFixListener() {
 						domain: domain,
 						storeId: containerStore
 					});
-					await Log("Found cookies for domain:", domain, "in container:", containerStore, domainCookies);
+					await Log("Found cookies for domain:", domain, "in container:", containerStore);
 					if (domainCookies.length > 0) {
 						// Create or find the cookie header
 						let cookieHeader = details.requestHeaders.find(h => h.name === 'Cookie');

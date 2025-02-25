@@ -36,7 +36,8 @@
         "tabs",
         "*://claude.ai/*",
         "https://raw.githubusercontent.com/*",
-        "https://api.anthropic.com/*"
+        "https://api.anthropic.com/*",
+        "https://github.com/*"
     ],
     "web_accessible_resources": [
         "default-config.json",
