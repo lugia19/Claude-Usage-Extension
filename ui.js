@@ -2,7 +2,7 @@
 	'use strict';
 	const BLUE_HIGHLIGHT = '#3b82f6';
 	const RED_WARNING = "#ef4444";
-	const FORCE_DEBUG = false;
+	const FORCE_DEBUG = true;
 
 	async function Log(...args) {
 		const sender = `content:${document.title.substring(0, 20)}${document.title.length > 20 ? '...' : ''}`;
@@ -110,6 +110,7 @@
 		let elapsed = 0;
 		const waitInterval = 100
 		while (elapsed < maxTime) {
+			await Log("Have waited for", elapsed, "ms");
 			const element = target.querySelector(selector);
 			if (element) return element;
 			await sleep(waitInterval);
@@ -255,33 +256,56 @@
 				user-select: none;
 			`;
 
-			// Model name container with fixed width
+			// Model name container - fixed percentage width
 			const nameContainer = document.createElement('div');
 			nameContainer.style.cssText = `
-				width: 20%;
-				flex-shrink: 0;
+				width: 35%;
+				display: flex;
+				align-items: center;
 			`;
-			const title = document.createElement('div');
-			title.textContent = this.modelName;
-			nameContainer.appendChild(title);
 
-			// Stats container for messages and reset time
+			// Create model name
+			const title = document.createElement('span');
+			title.textContent = `${this.modelName}:`;
+
+			// Create percentage display next to model name
+			this.percentageDisplay = document.createElement('span');
+			this.percentageDisplay.style.cssText = `
+				margin-left: 6px;
+				font-size: 11px;
+				white-space: nowrap;
+			`;
+
+			// Add both to the name container
+			nameContainer.appendChild(title);
+			nameContainer.appendChild(this.percentageDisplay);
+
+			// Stats container with fixed column widths for alignment
 			const statsContainer = document.createElement('div');
 			statsContainer.style.cssText = `
 				display: flex;
-				gap: 12px;
 				flex-grow: 1;
+				align-items: center;
 				color: #888;
 				font-size: 11px;
 			`;
 
-			// Message counter
+			// Message counter - fixed width column for alignment
 			this.messageCounter = document.createElement('div');
-			this.messageCounter.style.width = '40%';
-			this.messageCounter.textContent = 'Messages: 0';
+			this.messageCounter.style.cssText = `
+				width: 35%;
+				text-align: left;
+				white-space: nowrap;
+			`;
+			this.messageCounter.textContent = 'Msgs: 0';
 
 			// Reset time display
 			this.resetTimeDisplay = document.createElement('div');
+			this.resetTimeDisplay.style.cssText = `
+				width: 30%;
+				text-align: left;
+				white-space: nowrap;
+			`;
 			this.resetTimeDisplay.textContent = 'Reset in: Not set';
 
 			// Active indicator
@@ -293,7 +317,7 @@
 				background: #3b82f6;
 				opacity: 1;
 				transition: opacity 0.2s;
-				margin-left: auto;
+				margin-left: 2%;
 				flex-shrink: 0;
 			`;
 
@@ -320,17 +344,28 @@
 
 			// Apply modifier if it exists
 			const adjustedMax = modifiers[this.modelName] ? maxTokens * modifiers[this.modelName] : maxTokens;
+
+			// Calculate percentage
+			const percentage = (total / adjustedMax) * 100;
+
+			// Update progress bar
 			this.progressBar.updateProgress(total, adjustedMax);
+
+			// Update percentage display
+			const color = percentage >= config.WARNING_THRESHOLD * 100 ? '#ef4444' : '#3b82f6';
+			this.percentageDisplay.textContent = `${percentage.toFixed(1)}%`;
+			this.percentageDisplay.style.color = color;
 		}
 
 		updateMessageCount(count) {
-			this.messageCounter.textContent = `Messages: ${count}`;
+			this.messageCounter.textContent = `Msgs: ${count}`;
 		}
 
 		updateResetTime(timestamp) {
 			this.resetTime = timestamp;
-			this.resetTimeDisplay.textContent = timestamp ?
-				`Reset in: ${formatTimeRemaining(timestamp).split(': ')[1]}` :
+
+			this.resetTimeDisplay.innerHTML = timestamp ?
+				`Reset in: <span style="color: ${BLUE_HIGHLIGHT}">${formatTimeRemaining(timestamp)}</span>` :
 				'Reset in: Not Set';
 		}
 
@@ -969,6 +1004,7 @@
 			this.progressBar = null;
 			this.lastResetTimestamp = null;
 			this.lastMessageCost = null;
+			this.usageLabel = null;
 		}
 
 		initialize() {
@@ -983,11 +1019,11 @@
 
 			// Add label for progress bar if not on mobile
 			if (!isMobileView()) {
-				const usageLabel = document.createElement('div');
-				usageLabel.className = 'text-text-400 text-xs mr-2';
-				usageLabel.textContent = 'Quota:';
-				usageLabel.style.userSelect = 'none';
-				this.statLine.appendChild(usageLabel);
+				this.usageLabel = document.createElement('div');
+				this.usageLabel.className = 'text-text-400 text-xs mr-2';
+				this.usageLabel.textContent = 'Quota:';
+				this.usageLabel.style.userSelect = 'none';
+				this.statLine.appendChild(this.usageLabel);
 			}
 
 			// Create progress bar
@@ -1070,7 +1106,17 @@
 			// Apply modifier if it exists
 			const adjustedMax = modifiers[currentModel] ? maxTokens * modifiers[currentModel] : maxTokens;
 
+			// Calculate percentage
+			const percentage = (modelTotal / adjustedMax) * 100;
+
+			// Update progress bar
 			this.progressBar.updateProgress(modelTotal, adjustedMax);
+
+			// Update the usage label with percentage
+			if (this.usageLabel) {
+				const color = percentage >= config.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
+				this.usageLabel.innerHTML = `Quota: <span style="color: ${color}">${percentage.toFixed(1)}%</span>`;
+			}
 		}
 
 		updateCostAndLength(metrics) {
@@ -1135,10 +1181,7 @@
 			if (diff <= 0) {
 				this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">pending...</span>`;
 			} else {
-				const hours = Math.floor(diff / (1000 * 60 * 60));
-				const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-				const timeStr = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-				this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">${timeStr}</span>`;
+				this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">${formatTimeRemaining(this.lastResetTimestamp)}</span>`;
 			}
 		}
 	}
@@ -1313,7 +1356,7 @@
 		const hours = Math.floor(diff / (1000 * 60 * 60));
 		const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
 
-		return hours > 0 ? `Reset in: ${hours}h ${minutes}m` : `Reset in: ${minutes}m`;
+		return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 	}
 	//#endregion
 
