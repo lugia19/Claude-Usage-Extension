@@ -920,6 +920,7 @@
 			if (isHomePage && this.conversationMetrics !== null) {
 				this.conversationMetrics = null;
 				this.chatUI.updateEstimate();
+				this.chatUI.updateCostAndLength();
 				this.currentConversation = null;
 			}
 		}
