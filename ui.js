@@ -813,7 +813,7 @@
 		updateProgress(total, maxTokens) {
 			const percentage = (total / maxTokens) * 100;
 			this.bar.style.width = `${Math.min(percentage, 100)}%`;
-			this.bar.style.background = total >= maxTokens * config.WARNING_THRESHOLD ? '#ef4444' : '#3b82f6';
+			this.bar.style.background = total >= maxTokens * config.WARNING.PERCENT_THRESHOLD ? '#ef4444' : '#3b82f6';
 			this.tooltip.textContent = `${total.toLocaleString()} / ${maxTokens.toLocaleString()} tokens (${percentage.toFixed(1)}%)`;
 		}
 	}
@@ -821,14 +821,14 @@
 
 	async function findSidebarContainer() {
 		// First find the nav element with the specific data-testid
-		const sidebarNav = document.querySelector('nav[data-testid="menu-sidebar"]');
+		const sidebarNav = document.querySelector(config.SELECTORS.SIDEBAR_NAV);
 		if (!sidebarNav) {
 			await Log("error", 'Could not find sidebar nav');
 			return null;
 		}
 
 		// Then find the scrollable container within it
-		const container = sidebarNav.querySelector('.overflow-y-auto.overflow-x-hidden.flex.flex-col.gap-4');
+		const container = sidebarNav.querySelector(config.SELECTORS.SIDEBAR_CONTAINER);
 		if (!container) {
 			await Log("error", 'Could not find sidebar container within nav');
 			return null;
@@ -927,7 +927,7 @@
 
 		async lowFrequencyUpdates() {
 			// Check for message limits
-			const messageLimitElement = document.querySelector('a[href*="does-claude-pro-have-any-usage-limits"]');
+			const messageLimitElement = document.querySelector(config.SELECTORS.USAGE_LIMIT_LINK);
 			if (messageLimitElement) {
 				const limitTextElement = messageLimitElement.closest('.text-text-400');
 				if (limitTextElement) {
@@ -1020,7 +1020,7 @@
 
 		async checkAndReinject() {
 			// Handle length display injection
-			const chatMenu = document.querySelector('[data-testid="chat-menu-trigger"]');
+			const chatMenu = document.querySelector(config.SELECTORS.CHAT_MENU);
 			if (chatMenu) {
 				const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
 				if (titleLine) {
@@ -1034,7 +1034,7 @@
 			}
 
 			// Handle stat line injection
-			const modelSelector = document.querySelector('[data-testid="model-selector-dropdown"]');
+			const modelSelector = document.querySelector(config.SELECTORS.MODEL_SELECTOR);
 			if (!modelSelector) return;
 			// Handle stat line injection
 			const selectorLine = modelSelector.closest('.min-w-0.flex-1.flex')?.parentElement;
@@ -1081,8 +1081,8 @@
 					return;
 				}
 
-				const lengthColor = metrics.length >= 50000 ? RED_WARNING : BLUE_HIGHLIGHT;
-				const costColor = metrics.cost >= 50000 ? RED_WARNING : BLUE_HIGHLIGHT;
+				const lengthColor = metrics.length >= config.WARNING.LENGTH ? RED_WARNING : BLUE_HIGHLIGHT;
+				const costColor = metrics.cost >= config.WARNING.COST ? RED_WARNING : BLUE_HIGHLIGHT;
 
 				this.costAndLengthDisplay.innerHTML =
 					`Length: <span style="color: ${lengthColor}">${metrics.length.toLocaleString()}</span> tokens${separator}` +
@@ -1460,44 +1460,25 @@
 	//#endregion
 
 	async function initialize() {
-		const MAX_RETRIES = 15;
-		const RETRY_DELAY = 400;
 		const LOGIN_CHECK_DELAY = 10000;
 
 		// Load and assign configuration to global variables
-		await Log("Calling browser message...")
-		let timeLeft = 5000; // 5 seconds in ms, how long to retry getting the config
-		while (timeLeft > 0) {
-			config = await sendBackgroundMessage({ type: 'getConfig' });
-			if (config) break;
-			await sleep(100);
-			timeLeft -= 100;
-		}
+		config = await sendBackgroundMessage({ type: 'getConfig' });
 		await Log("Config received...")
 		await Log(config)
 		let userMenuButton = null;
 		while (true) {
 			// Check for duplicate running with retry logic
 
-			let attempts = 0;
-
-			while (!userMenuButton && attempts < MAX_RETRIES) {
-				userMenuButton = document.querySelector(config.SELECTORS.USER_MENU_BUTTON);
-				if (!userMenuButton) {
-					await Log(`User menu button not found, attempt ${attempts + 1}/${MAX_RETRIES}`);
-					await sleep(RETRY_DELAY);
-					attempts++;
-				}
-			}
-
+			userMenuButton = await waitForElement(document, config.SELECTORS.USER_MENU_BUTTON, 6000);
 			if (userMenuButton) {
 				// Found the button, continue with initialization
 				break;
 			}
 
 			// Check if we're on either login screen
-			const initialLoginScreen = document.querySelector('button[data-testid="login-with-google"]');
-			const verificationLoginScreen = document.querySelector('input[data-testid="code"]');
+			const initialLoginScreen = document.querySelector(config.SELECTORS.INIT_LOGIN_SCREEN);
+			const verificationLoginScreen = document.querySelector(config.SELECTORS.VERIF_LOGIN_SCREEN);
 
 			if (!initialLoginScreen && !verificationLoginScreen) {
 				await Log("error", 'Neither user menu button nor any login screen found');

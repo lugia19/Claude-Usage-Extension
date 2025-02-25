@@ -33,7 +33,7 @@ let pendingResponses;
 let capModifiers;
 let conversationLengthCache;
 let tokenStorageManager;
-let configManager;
+let CONFIG = null;
 
 let isInitialized = false;
 let pendingHandlers = [];
@@ -132,13 +132,6 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 });
 
 browser.alarms.onAlarm.addListener(async (alarm) => {
-	if (!configManager) return
-	if (alarm.name === 'refreshConfig') {
-		configManager.config = await configManager.getFreshConfig();
-	}
-});
-
-browser.alarms.onAlarm.addListener(async (alarm) => {
 	if (!tokenStorageManager) return;
 	await tokenStorageManager.ensureOrgIds();
 
@@ -175,22 +168,22 @@ async function updateSyncAlarmAndFetchData(sourceTabId, fromRemovedEvent = false
 
 	if (allClaudeTabs.length === 0 || (fromRemovedEvent && allClaudeTabs.length <= 1)) {
 		state = 'none';
-		desiredInterval = (await configManager.getConfig()).SYNC_INTERVALS.none;
+		desiredInterval = CONFIG.SYNC_INTERVALS.none;
 	} else {
 		const activeClaudeTabs = await browser.tabs.query({ url: "*://claude.ai/*", active: true });
 		if (activeClaudeTabs.length > 0) {
 			state = 'active';
-			desiredInterval = (await configManager.getConfig()).SYNC_INTERVALS.active;
+			desiredInterval = CONFIG.SYNC_INTERVALS.active;
 		} else {
 			state = 'inactive';
-			desiredInterval = (await configManager.getConfig()).SYNC_INTERVALS.inactive;
+			desiredInterval = CONFIG.SYNC_INTERVALS.inactive;
 		}
 	}
 	await Log("Current state:", state, "Desired interval:", desiredInterval);
 
 	const currentAlarm = await browser.alarms.get('firebaseSync');
 	const isStateChange = !currentAlarm || currentAlarm.periodInMinutes !== desiredInterval;
-	//const wasActive = currentAlarm && currentAlarm.periodInMinutes === (await configManager.getConfig()).SYNC_INTERVALS.active;
+	//const wasActive = currentAlarm && currentAlarm.periodInMinutes === CONFIG.SYNC_INTERVALS.active;
 
 	if (isStateChange) {
 		await browser.alarms.clear('firebaseSync');
@@ -280,15 +273,23 @@ async function Log(...args) {
 	await browser.storage.local.set({ debug_logs: logs });
 }
 
-function mergeDeep(target, source) {
-	for (const key in source) {
-		if (source[key] instanceof Object && key in target) {
-			target[key] = mergeDeep(target[key], source[key]);
-		} else {
-			target[key] = source[key];
-		}
+async function loadConfig() {
+	try {
+		// Load the local configuration file
+		const localConfig = await (await fetch(browser.runtime.getURL('constants.json'))).json();
+
+		// Extract models from the caps
+		localConfig.MODELS = Object.keys(localConfig.MODEL_CAPS.pro).filter(key => key !== 'default');
+
+		// Set the global config
+		CONFIG = localConfig;
+
+		await Log("Config loaded:", CONFIG);
+		return CONFIG;
+	} catch (error) {
+		await Log("error", "Failed to load config:", error);
+		throw error; // This is critical - we can't proceed without config
 	}
-	return target;
 }
 
 async function checkAndSetAPIKey(newKey) {
@@ -452,53 +453,6 @@ async function containerFetch(url, options = {}, cookieStoreId = null) {
 //#endregion
 
 //#region Manager classes
-class Config {
-	static instance = null;
-	static CONFIG_URL = 'https://raw.githubusercontent.com/lugia19/Claude-Usage-Extension/refs/heads/main/constants.json';
-
-	constructor() {
-		if (Config.instance) {
-			return Config.instance;
-		}
-		Config.instance = this;
-		this.config = null;
-		this.defaultConfig = null;
-	}
-
-	async initialize() {
-		const localConfig = await (await fetch(browser.runtime.getURL('constants.json'))).json();
-		localConfig.MODELS = Object.keys(localConfig.MODEL_CAPS.pro).filter(key => key !== 'default');
-		this.defaultConfig = localConfig;
-		this.config = await this.getFreshConfig();
-	}
-
-	async getFreshConfig() {
-		try {
-			const response = await fetch(Config.CONFIG_URL);
-			if (!response.ok) {
-				await Log("warn", 'Using default config');
-				return this.defaultConfig;
-			}
-
-			const remoteConfig = await response.json();
-			const mergedConfig = mergeDeep(this.defaultConfig, remoteConfig);
-			mergedConfig.MODELS = Object.keys(mergedConfig.MODEL_CAPS.pro)
-				.filter(key => key !== 'default');
-			return mergedConfig;
-		} catch (error) {
-			await Log("warn", 'Error loading remote config:', error);
-			return this.defaultConfig;
-		}
-	}
-
-	async getConfig() {
-		if (!this.config) {
-			this.config = await this.getFreshConfig();
-		}
-		return this.config;
-	}
-}
-
 // Token storage manager
 class TokenStorageManager {
 	constructor() {
@@ -714,7 +668,7 @@ class TokenStorageManager {
 			//await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 1000)	//5 seconds (for testing only)
 			await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 60 * 1000)	//10 minutes
 		}
-		return (await configManager.getConfig()).MODEL_CAPS[subscriptionTier]
+		return CONFIG.MODEL_CAPS[subscriptionTier]
 	}
 
 	async getCollapsedState() {
@@ -1127,8 +1081,8 @@ class ClaudeAPI {
 		// Add settings costs
 		for (const [setting, enabled] of Object.entries(conversationData.settings)) {
 			await Log("Setting:", setting, enabled);
-			if (enabled && (await configManager.getConfig()).FEATURE_COSTS[setting]) {
-				baseTokens += (await configManager.getConfig()).FEATURE_COSTS[setting];
+			if (enabled && CONFIG.FEATURE_COSTS[setting]) {
+				baseTokens += CONFIG.FEATURE_COSTS[setting];
 			}
 		}
 
@@ -1146,7 +1100,8 @@ class ClaudeAPI {
 			let messageContent = [];
 			// Process content array
 			for (const content of message.content) {
-				messageContent = messageContent.concat(await getTextFromContent(content));
+				//We don't consider the thinking tokens in the length calculation at all, as they don't remain in the context.
+				messageContent = messageContent.concat(await getTextFromContent(content, false));
 			}
 			// Attachment tokens
 			for (const attachment of message.attachments) {
@@ -1168,7 +1123,7 @@ class ClaudeAPI {
 				for (const content of message.content) {
 					lastMessageContent = lastMessageContent.concat(await getTextFromContent(content, true));
 				}
-				lastMessageTokens = await getTextTokens(lastMessageContent.join(' ')) * ((await configManager.getConfig()).OUTPUT_TOKEN_MULTIPLIER);
+				lastMessageTokens = await getTextTokens(lastMessageContent.join(' ')) * (CONFIG.OUTPUT_TOKEN_MULTIPLIER);
 			}
 
 			if (message.sender === "human") {
@@ -1365,7 +1320,7 @@ async function updateAllTabs(currentCost = undefined, currentLength = undefined,
 			modelData: {}
 		};
 
-		for (const model of (await configManager.getConfig()).MODELS) {
+		for (const model of CONFIG.MODELS) {
 			const modelData = await tokenStorageManager.getModelData(orgId, model);
 			await Log("Got model data:", modelData, "for model:", model);
 			if (modelData) {
@@ -1422,14 +1377,13 @@ async function handleMessageFromContent(message, sender) {
 			case 'setCollapsedState':
 				return await tokenStorageManager.setCollapsedState(message.isCollapsed);
 			case 'getConfig':
-				let config = (await configManager.getConfig());
-				return config;
+				return CONFIG;
 			case 'requestData':
 				const baseData = { modelData: {} };
 				const { conversationId } = message ?? undefined;
 
 				// Get data for all models
-				for (const model of (await configManager.getConfig()).MODELS) {
+				for (const model of CONFIG.MODELS) {
 					const modelData = await tokenStorageManager.getModelData(orgId, model);
 					if (modelData) {
 						baseData.modelData[model] = modelData;
@@ -1445,8 +1399,8 @@ async function handleMessageFromContent(message, sender) {
 						const tokens = await api.getConversationTokens(orgId, conversationId);
 						if (tokens) {
 							const profileTokens = await api.getProfileTokens();
-							const baseLength = tokens.length + profileTokens + (await configManager.getConfig()).BASE_SYSTEM_PROMPT_LENGTH;
-							const messageCost = tokens.cost + profileTokens + (await configManager.getConfig()).BASE_SYSTEM_PROMPT_LENGTH;
+							const baseLength = tokens.length + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
+							const messageCost = tokens.cost + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
 
 							conversationLengthCache.set(key, {
 								length: baseLength,
@@ -1566,8 +1520,8 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 
 
 	const profileTokens = await api.getProfileTokens();
-	let baseLength = tokens.length + (await configManager.getConfig()).BASE_SYSTEM_PROMPT_LENGTH;
-	let messageCost = tokens.cost + profileTokens + (await configManager.getConfig()).BASE_SYSTEM_PROMPT_LENGTH;
+	let baseLength = tokens.length + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
+	let messageCost = tokens.cost + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
 
 	await Log("Current base length:", baseLength);
 	await Log("Current message cost:", messageCost);
@@ -1616,7 +1570,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	};
 
 	// Get data for all models
-	for (const model of (await configManager.getConfig()).MODELS) {
+	for (const model of CONFIG.MODELS) {
 		const modelData = await tokenStorageManager.getModelData(orgId, model);
 		if (modelData) {
 			baseData.modelData[model] = modelData;
@@ -1647,7 +1601,7 @@ async function onBeforeRequestHandler(details) {
 		let model = "Sonnet"; // Default model
 		if (requestBodyJSON?.model) {
 			const modelString = requestBodyJSON.model.toLowerCase();
-			const modelTypes = Object.keys((await configManager.getConfig()).MODEL_CAPS.pro).filter(key => key !== 'default');
+			const modelTypes = Object.keys(CONFIG.MODEL_CAPS.pro).filter(key => key !== 'default');
 			for (const modelType of modelTypes) {
 				if (modelString.includes(modelType.toLowerCase())) {
 					model = modelType;
@@ -1778,9 +1732,7 @@ pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {user
 capModifiers = new StoredMap('capModifiers');
 conversationLengthCache = new Map();
 tokenStorageManager = new TokenStorageManager();
-configManager = new Config();
-configManager.initialize();
-
+loadConfig();
 isInitialized = true;
 for (const handler of pendingHandlers) {
 	handler.fn(...handler.args);
