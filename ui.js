@@ -2,7 +2,7 @@
 	'use strict';
 	const BLUE_HIGHLIGHT = '#3b82f6';
 	const RED_WARNING = "#ef4444";
-	const FORCE_DEBUG = true;
+	const FORCE_DEBUG = false;
 
 	async function Log(...args) {
 		const sender = `content:${document.title.substring(0, 20)}${document.title.length > 20 ? '...' : ''}`;
@@ -110,7 +110,6 @@
 		let elapsed = 0;
 		const waitInterval = 100
 		while (elapsed < maxTime) {
-			await Log("Have waited for", elapsed, "ms");
 			const element = target.querySelector(selector);
 			if (element) return element;
 			await sleep(waitInterval);
@@ -713,6 +712,69 @@
 
 			buttonContainer.appendChild(debugButton);
 
+			// Create reset button with warning styling
+			const resetButton = document.createElement('button');
+			resetButton.textContent = 'Reset Quota';
+			resetButton.style.cssText = `
+				background: ${RED_WARNING};
+				border: none;
+				border-radius: 4px;
+				color: white;
+				cursor: pointer;
+				padding: 6px 12px;
+				font-size: 12px;
+			`;
+
+			resetButton.addEventListener('click', async () => {
+				// Show confirmation dialog
+				const confirmation = confirm(
+					'Are you sure you want to reset usage data for this organization?\n\n' +
+					'This will reset ALL models\' usage counters to zero and sync this reset across all your devices. ' +
+					'This action cannot be undone.'
+				);
+
+				if (confirmation) {
+					try {
+						// Show loading state
+						const originalText = resetButton.textContent;
+						resetButton.textContent = 'Resetting...';
+						resetButton.disabled = true;
+
+						// Send reset message to background (sendBackgroundMessage already handles orgId)
+						const result = await sendBackgroundMessage({
+							type: 'resetOrgData'
+						});
+
+						if (result) {
+							// Show success message
+							resetButton.textContent = 'Reset Complete!';
+							resetButton.style.background = '#22c55e'; // Success green
+
+							// Reset button after delay
+							setTimeout(() => {
+								resetButton.textContent = originalText;
+								resetButton.style.background = RED_WARNING;
+								resetButton.disabled = false;
+							}, 2000);
+						} else {
+							throw new Error('Reset failed');
+						}
+					} catch (error) {
+						// Show error
+						resetButton.textContent = 'Reset Failed';
+						console.error('Reset failed:', error);
+
+						// Reset button after delay
+						setTimeout(() => {
+							resetButton.textContent = originalText;
+							resetButton.disabled = false;
+						}, 2000);
+					}
+				}
+			});
+
+			buttonContainer.appendChild(resetButton);
+
 			// Add the container instead of just the save button
 			this.element.appendChild(buttonContainer);
 
@@ -1017,14 +1079,14 @@
 			this.statLine.className = 'flex items-center min-w-0 max-w-full';
 			this.statLine.style.userSelect = 'none'; // Make the whole line unselectable by default
 
-			// Add label for progress bar if not on mobile
-			if (!isMobileView()) {
-				this.usageLabel = document.createElement('div');
-				this.usageLabel.className = 'text-text-400 text-xs mr-2';
-				this.usageLabel.textContent = 'Quota:';
-				this.usageLabel.style.userSelect = 'none';
-				this.statLine.appendChild(this.usageLabel);
-			}
+			// Add label for progress bar
+			//if (!isMobileView() || true) {
+			this.usageLabel = document.createElement('div');
+			this.usageLabel.className = 'text-text-400 text-xs mr-2';
+			this.usageLabel.textContent = 'Quota:';
+			this.usageLabel.style.userSelect = 'none';
+			this.statLine.appendChild(this.usageLabel);
+
 
 			// Create progress bar
 			this.progressBar = new ProgressBar({
@@ -1044,7 +1106,7 @@
 			this.estimateDisplay = document.createElement('div');
 			this.estimateDisplay.className = 'text-text-400 text-xs mr-2';
 			this.estimateDisplay.style.userSelect = 'text';  // Make text selectable
-			this.estimateDisplay.innerHTML = `Est. messages: <span>N/A</span>`;
+			this.estimateDisplay.innerHTML = `${isMobileView() ? "Est. Msgs" : "Est. messages"}: <span>N/A</span>`;
 			this.statLine.appendChild(this.estimateDisplay);
 
 			// Create reset display
@@ -1115,7 +1177,12 @@
 			// Update the usage label with percentage
 			if (this.usageLabel) {
 				const color = percentage >= config.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
-				this.usageLabel.innerHTML = `Quota: <span style="color: ${color}">${percentage.toFixed(1)}%</span>`;
+				if (isMobileView()) {
+					this.usageLabel.innerHTML = `<span style="color: ${color}">${percentage.toFixed(1)}%</span>`;
+				} else {
+					this.usageLabel.innerHTML = `Quota: <span style="color: ${color}">${percentage.toFixed(1)}%</span>`;
+				}
+
 			}
 		}
 
@@ -1139,7 +1206,7 @@
 		updateEstimate(modelData, currentModel, modelCaps, messageCost) {
 			if (!this.estimateDisplay) return;
 			if (!getConversationId()) {
-				this.estimateDisplay.innerHTML = `Est. messages: <span>N/A</span>`;
+				this.estimateDisplay.innerHTML = `${isMobileView() ? "Est. Msgs" : "Est. messages"}: <span>N/A</span>`;
 				return
 			}
 			const maxTokens = modelCaps[currentModel] || modelCaps.default;
@@ -1156,7 +1223,7 @@
 			}
 
 			const color = estimate !== "N/A" && parseFloat(estimate) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
-			this.estimateDisplay.innerHTML = `Est. messages: <span style="color: ${color}">${estimate}</span>`;
+			this.estimateDisplay.innerHTML = `${isMobileView() ? "Est. Msgs" : "Est. messages"}: <span style="color: ${color}">${estimate}</span>`;
 		}
 
 		updateResetTime(modelData, currentModel) {

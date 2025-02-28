@@ -33,6 +33,7 @@ let pendingResponses;
 let capModifiers;
 let conversationLengthCache;
 let tokenStorageManager;
+let firebaseManager;
 let CONFIG = null;
 
 let isInitialized = false;
@@ -51,7 +52,6 @@ function queueOrExecute(fn, args) {
 //#region Listener setup (I hate MV3 - listeners must be initialized here)
 //Extension-related listeners:
 browser.runtime.onMessage.addListener(async (message, sender) => {
-	await Log("Background received message:", message);
 	return queueOrExecute(handleMessageFromContent, [message, sender]);
 });
 
@@ -136,11 +136,11 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 	await tokenStorageManager.ensureOrgIds();
 
 	if (alarm.name === 'firebaseSync') {
-		await tokenStorageManager.syncWithFirebase();
+		await firebaseManager.syncWithFirebase();
 	}
 
 	if (alarm.name === 'capHitsSync') {
-		await tokenStorageManager.syncCapHits();
+		await firebaseManager.syncCapHits();
 	}
 
 	if (alarm.name === 'checkExpiredData') {
@@ -191,11 +191,11 @@ async function updateSyncAlarmAndFetchData(sourceTabId, fromRemovedEvent = false
 		await Log(`Updated firebaseSync alarm to ${desiredInterval} minutes (state: ${state})`);
 
 		// Trigger sync if we're changing to or from active state
-		if (state === 'active') {
+		if (state === 'active' && sourceTabId) {
 			await Log("Changed to active, triggering immediate sync! Ensuring we have the orgId first.")
 			const orgId = await requestActiveOrgId(sourceTabId);
 			await tokenStorageManager.addOrgId(orgId);
-			await tokenStorageManager.syncWithFirebase();
+			await firebaseManager.syncWithFirebase();
 		}
 	}
 }
@@ -456,18 +456,19 @@ async function containerFetch(url, options = {}, cookieStoreId = null) {
 // Token storage manager
 class TokenStorageManager {
 	constructor() {
-		this.firebase_base_url = "https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app"
-		this.isSyncingFirebase = false;
-		this.isSyncingCapHits = false;
+		this.firebase_base_url = "https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app";
 		this.storageLock = false;
 		this.orgIds = undefined;
-		this.subscriptionTiers = new StoredMap("subscriptionTiers")
-		this.filesTokenCache = new StoredMap("fileTokens")
+		this.subscriptionTiers = new StoredMap("subscriptionTiers");
+		this.filesTokenCache = new StoredMap("fileTokens");
 		this.resetsHit = new StoredMap("resetsHit");
+
+		// Create Firebase manager and give it access to this manager
+		this.firebaseManager = new FirebaseSyncManager(this);
 	}
 
 	async ensureOrgIds() {
-		if (this.orgIds) return
+		if (this.orgIds) return;
 		try {
 			const result = await browser.storage.local.get('orgIds');
 			this.orgIds = new Set(result.orgIds || []);
@@ -484,134 +485,22 @@ class TokenStorageManager {
 	}
 
 	// Helper methods for browser.storage
-	#getStorageKey(orgId, type) {
+	getStorageKey(orgId, type) {
 		return `${STORAGE_KEY}_${orgId}_${type}`;
 	}
 
-	async #setValue(key, value) {
+	async setValue(key, value) {
 		await browser.storage.local.set({ [key]: value });
 		return true;
 	}
 
-	async #getValue(key, defaultValue = null) {
+	async getValue(key, defaultValue = null) {
 		const result = await browser.storage.local.get(key) || {};
 		return result[key] ?? defaultValue;
 	}
 
-	async syncWithFirebase() {
-		if (this.isSyncingFirebase) {
-			await Log("Sync already in progress, skipping");
-			return;
-		}
-
-		this.isSyncingFirebase = true;
-		await Log("=== FIREBASE SYNC STARTING ===");
-		await this.ensureOrgIds();
-
-		try {
-			// Ensure we have a device ID
-			let deviceId = await browser.storage.local.get('deviceId');
-			if (!deviceId?.deviceId) {
-				deviceId = crypto.randomUUID();
-				await browser.storage.local.set({ deviceId });
-			} else {
-				deviceId = deviceId.deviceId;
-			}
-
-			for (const orgId of this.orgIds) {
-				const localModels = await this.#getValue(this.#getStorageKey(orgId, 'models')) || {};
-				const currentHash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(localModels)));
-				const lastSyncHash = await this.#getValue(this.#getStorageKey(orgId, 'lastSyncHash'));
-
-				// Check if we have local changes
-				const currentHashString = Array.from(new Uint8Array(currentHash)).map(b => b.toString(16).padStart(2, '0')).join('')
-				const hasLocalChanges = !lastSyncHash || currentHashString !== lastSyncHash;
-
-				// First get last update info but don't download models yet
-				const lastUpdateUrl = `${this.firebase_base_url}/users/${orgId}/last_update.json`;
-				const response = await fetch(lastUpdateUrl);
-				const remoteUpdate = await response.json();
-				const remoteDeviceId = remoteUpdate?.deviceId;
-
-				// Get our last download timestamp
-				const lastDownloadTime = await this.#getValue(this.#getStorageKey(orgId, 'lastDownloadTime')) || 0;
-
-				// Only download if we have local changes to upload, or if someone else updated the data (and we haven't checked it in 5 minutes)
-				const shouldDownload = !remoteDeviceId ||
-					(remoteDeviceId !== deviceId && (Date.now() - lastDownloadTime > 5 * 60 * 1000)) ||
-					hasLocalChanges;
-
-				let shouldUpload = false;
-				let mergedModels = localModels;
-
-				// If we should download, get the remote data
-				if (shouldDownload) {
-					await Log("Downloading remote data");
-					const modelsUrl = `${this.firebase_base_url}/users/${orgId}/models.json`;
-					const modelsResponse = await fetch(modelsUrl);
-					const remoteModels = await modelsResponse.json() || {};
-					mergedModels = await this.#mergeModelData(localModels, remoteModels);
-					await this.#setValue(this.#getStorageKey(orgId, 'lastDownloadTime'), Date.now());
-				}
-
-				// Determine if we should upload
-				await Log(`Got remote device ID: ${remoteDeviceId} vs local: ${deviceId}`);
-				if (!remoteDeviceId) {
-					// No remote data - upload immediately
-					shouldUpload = true;
-					await Log("No remote device ID, will upload:", shouldUpload);
-				} else if (remoteDeviceId === deviceId) {
-					// Our data - upload every 5 minutes if we have changes
-					shouldUpload = hasLocalChanges &&
-						(!remoteUpdate.timestamp || (Date.now() - remoteUpdate.timestamp > 5 * 60 * 1000));
-					await Log("Our device ID, will upload:", shouldUpload);
-				} else {
-					// Another device's data - upload immediately if we have changes
-					shouldUpload = hasLocalChanges;
-					await Log("Different device ID, will upload:", shouldUpload);
-				}
-
-				// Upload if needed
-				if (shouldUpload) {
-					await Log("Uploading data and updating device ID");
-					const modelsUrl = `${this.firebase_base_url}/users/${orgId}/models.json`;
-					const writeResponse = await fetch(modelsUrl, {
-						method: 'PUT',
-						body: JSON.stringify(mergedModels)
-					});
-					if (!writeResponse.ok) {
-						throw new Error(`Write failed! status: ${writeResponse.status}`);
-					}
-
-					// Update last update info
-					await fetch(lastUpdateUrl, {
-						method: 'PUT',
-						body: JSON.stringify({
-							deviceId: deviceId,
-							timestamp: Date.now()
-						})
-					});
-				}
-
-				//Always update local data...
-				await this.#setValue(this.#getStorageKey(orgId, 'models'), mergedModels);
-				await this.#setValue(this.#getStorageKey(orgId, 'lastSyncHash'), currentHashString);
-			}
-
-			await Log("=== SYNC COMPLETED SUCCESSFULLY, UPDATING TABS ===");
-			await updateAllTabs();
-		} catch (error) {
-			await Log("error", '=== SYNC FAILED ===');
-			await Log("error", 'Error details:', error);
-			await Log("error", 'Stack:', error.stack);
-		} finally {
-			this.isSyncingFirebase = false;
-		}
-	}
-
-	//Just a helper method to merge the data
-	async #mergeModelData(localModels = {}, firebaseModels = {}) {
-		await Log("MERGING...")
+	async mergeModelData(localModels = {}, firebaseModels = {}) {
+		await Log("MERGING...");
 		const merged = {};
 		const allModelKeys = new Set([
 			...Object.keys(localModels),
@@ -631,7 +520,7 @@ class TokenStorageManager {
 			} else {
 				// If reset times match, take the highest counts as before
 				if (local.resetTimestamp === remote.resetTimestamp) {
-					await Log("TIMESTAMP MATCHES, TAKING HIGHEST COUNTS!")
+					await Log("TIMESTAMP MATCHES, TAKING HIGHEST COUNTS!");
 					merged[model] = {
 						total: Math.max(local.total, remote.total),
 						messageCount: Math.max(local.messageCount, remote.messageCount),
@@ -644,7 +533,7 @@ class TokenStorageManager {
 
 					// If earlier timestamp is still valid (not in past)
 					if (earlier.resetTimestamp > currentTime) {
-						await Log("EARLIER TIMESTAMP STILL VALID, COMBINING COUNTS!")
+						await Log("EARLIER TIMESTAMP STILL VALID, COMBINING COUNTS!");
 						merged[model] = {
 							total: earlier.total + later.total,
 							messageCount: earlier.messageCount + later.messageCount,
@@ -652,35 +541,35 @@ class TokenStorageManager {
 						};
 					} else {
 						// If earlier timestamp is expired, use later one
-						await Log("EARLIER TIMESTAMP EXPIRED, USING LATER ONE!")
+						await Log("EARLIER TIMESTAMP EXPIRED, USING LATER ONE!");
 						merged[model] = later;
 					}
 				}
 			}
 		});
+		await Log(merged);
 		return merged;
 	}
 
 	async getCaps(orgId, api) {
-		let subscriptionTier = await this.subscriptionTiers.get(orgId)
+		let subscriptionTier = await this.subscriptionTiers.get(orgId);
 		if (!subscriptionTier) {
-			subscriptionTier = await api.getSubscriptionTier(orgId)
-			//await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 1000)	//5 seconds (for testing only)
-			await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 60 * 1000)	//10 minutes
+			subscriptionTier = await api.getSubscriptionTier(orgId);
+			await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 60 * 1000); // 10 minutes
 		}
-		return CONFIG.MODEL_CAPS[subscriptionTier]
+		return CONFIG.MODEL_CAPS[subscriptionTier];
 	}
 
 	async getCollapsedState() {
-		return await this.#getValue(`${STORAGE_KEY}_collapsed`, false);
+		return await this.getValue(`${STORAGE_KEY}_collapsed`, false);
 	}
 
 	async setCollapsedState(isCollapsed) {
-		await this.#setValue(`${STORAGE_KEY}_collapsed`, isCollapsed);
+		await this.setValue(`${STORAGE_KEY}_collapsed`, isCollapsed);
 	}
 
 	async checkAndCleanExpiredData(orgId) {
-		const allModelData = await this.#getValue(this.#getStorageKey(orgId, 'models'));
+		const allModelData = await this.getValue(this.getStorageKey(orgId, 'models'));
 		if (!allModelData) return;
 
 		const currentTime = new Date();
@@ -695,25 +584,25 @@ class TokenStorageManager {
 		}
 
 		if (hasChanges) {
-			await this.#setValue(this.#getStorageKey(orgId, 'models'), allModelData);
+			await this.setValue(this.getStorageKey(orgId, 'models'), allModelData);
 		}
 	}
 
 	async getModelData(orgId, model) {
 		await this.checkAndCleanExpiredData(orgId);
-		const allModelData = await this.#getValue(this.#getStorageKey(orgId, 'models'));
+		const allModelData = await this.getValue(this.getStorageKey(orgId, 'models'));
 		return allModelData?.[model];
 	}
 
 	async addTokensToModel(orgId, model, newTokens) {
 		// Wait if sync is in progress
-		while (this.isSyncingFirebase || this.storageLock) {
+		while (this.firebaseManager.isSyncing || this.storageLock) {
 			await sleep(50);
 		}
 
 		try {
 			this.storageLock = true;
-			let allModelData = await this.#getValue(this.#getStorageKey(orgId, 'models'), {});
+			let allModelData = await this.getValue(this.getStorageKey(orgId, 'models'), {});
 			const stored = allModelData[model];
 			const now = new Date();
 
@@ -733,7 +622,7 @@ class TokenStorageManager {
 				};
 			}
 
-			await this.#setValue(this.#getStorageKey(orgId, 'models'), allModelData);
+			await this.setValue(this.getStorageKey(orgId, 'models'), allModelData);
 			return allModelData[model];
 		} finally {
 			this.storageLock = false;
@@ -755,33 +644,33 @@ class TokenStorageManager {
 		} else {
 			if ((await browser.storage.local.get('apiKey'))?.apiKey && !estimateOnly) {
 				try {
-					await Log("Using api...")
-					let filename = ""
-					let fileurl = ""
-					filename = file.file_name
+					await Log("Using api...");
+					let filename = "";
+					let fileurl = "";
+					filename = file.file_name;
 					if (file.file_kind === "image") {
-						fileurl = file.preview_asset.url
+						fileurl = file.preview_asset.url;
 					} else if (file.file_kind === "document") {
-						fileurl = file.document_asset.url
+						fileurl = file.document_asset.url;
 					}
 
-					let fileTokens = await countTokensViaAPI([], [], { "url": fileurl, "filename": filename, "uploaderAPI": uploaderClaudeAI_API })
+					let fileTokens = await countTokensViaAPI([], [], { "url": fileurl, "filename": filename, "uploaderAPI": uploaderClaudeAI_API });
 					if (fileTokens === 0) {
-						await Log("Falling back to estimate...")
-						return this.getUploadedFileTokens(orgId, file, true)
+						await Log("Falling back to estimate...");
+						return this.getUploadedFileTokens(orgId, file, true);
 					}
-					await this.filesTokenCache.set(`${orgId}:${file.file_uuid}`, fileTokens)
-					return fileTokens
+					await this.filesTokenCache.set(`${orgId}:${file.file_uuid}`, fileTokens);
+					return fileTokens;
 				} catch (error) {
-					await Log("error", "Error fetching file tokens:", error)
-					await Log("Falling back to estimate...")
-					return this.getUploadedFileTokens(orgId, file, true)
+					await Log("error", "Error fetching file tokens:", error);
+					await Log("Falling back to estimate...");
+					return this.getUploadedFileTokens(orgId, file, true);
 				}
 			} else {
-				await Log("Using estimate...")
+				await Log("Using estimate...");
 				if (file.file_kind === "image") {
-					const width = file.preview_asset.image_width
-					const height = file.preview_asset.image_width
+					const width = file.preview_asset.image_width;
+					const height = file.preview_asset.image_width;
 					return Math.min(1600, Math.ceil((width * height) / 750));
 				} else if (file.file_kind === "document") {
 					return 2250 * file.document_asset.page_count;
@@ -792,13 +681,13 @@ class TokenStorageManager {
 	}
 
 	async addReset(orgId, model, api) {
-		await sleep(15000); //We want to ensure we get the latest data, which can take a second - so we wait 15.
+		await sleep(15000); // We want to ensure we get the latest data, which can take a second - so we wait 15.
 		const modelData = await this.getModelData(orgId, model);
 		if (!modelData) return;
 
 		const key = `${orgId}:${modelData.resetTimestamp}`;
-		const cap = (await tokenStorageManager.getCaps(orgId, api))[model]
-		const tier = await tokenStorageManager.subscriptionTiers.get(orgId)
+		const cap = (await this.getCaps(orgId, api))[model];
+		const tier = await this.subscriptionTiers.get(orgId);
 		const hasApiKey = !!(await browser.storage.local.get('apiKey'))?.apiKey;
 
 		// Only add if not already present
@@ -813,6 +702,177 @@ class TokenStorageManager {
 			});
 		}
 	}
+}
+
+// Firebase sync manager
+class FirebaseSyncManager {
+	constructor(tokenStorageManager) {
+		this.tokenStorage = tokenStorageManager;
+		this.firebase_base_url = "https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app";
+		this.isSyncing = false;
+		this.isSyncingCapHits = false;
+		this.deviceStateMap = new StoredMap("deviceStates"); // Unified map for device states
+		this.resetCounters = new StoredMap("resetCounters");
+	}
+
+	async triggerReset(orgId) {
+		await Log(`Triggering reset for org ${orgId}`);
+
+		// Get current local counter
+		const localCounter = await this.resetCounters.get(orgId) || 0;
+		const newCounter = localCounter + 1;
+
+		// Update local counter immediately
+		await this.resetCounters.set(orgId, newCounter);
+
+		// Clear our own data
+		await this.clearOrgData(orgId, true);
+		await updateAllTabs();
+
+		// Attempt to update remote counter if we're not a lone device
+		const isLoneDevice = await this.checkDevices(orgId);
+		if (!isLoneDevice) {
+			const resetCounterUrl = `${this.firebase_base_url}/users/${orgId}/reset_counter.json`;
+			await fetch(resetCounterUrl, {
+				method: 'PUT',
+				body: JSON.stringify({
+					value: newCounter,
+					lastReset: Date.now(),
+					triggeredBy: await this.ensureDeviceId()
+				})
+			});
+		}
+
+		await Log(`Reset completed for org ${orgId}, new counter: ${newCounter}`);
+		return true;
+	}
+
+	async clearOrgData(orgId, cleanRemote = false) {
+		// Clear models data
+		await this.tokenStorage.setValue(
+			this.tokenStorage.getStorageKey(orgId, 'models'),
+			{}
+		);
+
+		// Clear related data
+		await this.tokenStorage.setValue(
+			this.tokenStorage.getStorageKey(orgId, 'lastSyncHash'),
+			null
+		);
+
+		// TODO: Other cleanup as needed
+
+		// Write empty data back to Firebase
+		if (cleanRemote) {
+			await this.uploadData(orgId, {}, await this.ensureDeviceId());
+		}
+
+		await Log(`Cleared all data for org ${orgId}`);
+	}
+
+	async syncWithFirebase() {
+		if (this.isSyncing) {
+			await Log("Sync already in progress, skipping");
+			return;
+		}
+
+		this.isSyncing = true;
+		await Log("=== FIREBASE SYNC STARTING ===");
+
+		try {
+			await this.tokenStorage.ensureOrgIds();
+			const deviceId = await this.ensureDeviceId();
+			await Log("Syncing device ID:", deviceId);
+			for (const orgId of this.tokenStorage.orgIds) {
+				await this.syncSingleOrg(orgId, deviceId);
+			}
+
+			await Log("=== SYNC COMPLETED SUCCESSFULLY, UPDATING TABS ===");
+			await updateAllTabs();
+		} catch (error) {
+			await Log("error", '=== SYNC FAILED ===');
+			await Log("error", 'Error details:', error);
+			await Log("error", 'Stack:', error.stack);
+		} finally {
+			this.isSyncing = false;
+		}
+	}
+
+	async checkDevices(orgId) {
+		const now = Date.now();
+		const deviceState = await this.deviceStateMap.get(orgId) || {
+			lastCheckTime: 0,
+			isLoneDevice: true,
+			lastUploadTime: 0
+		};
+		if (deviceState.isLoneDevice === undefined) deviceState.isLoneDevice = true;
+
+		const deviceId = await this.ensureDeviceId();
+		const devicesUrl = `${this.firebase_base_url}/users/${orgId}/devices_seen.json`;
+
+		// PART 1: Update our own device presence if needed (once per 24h)
+		const UPLOAD_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
+
+		if (!deviceState.lastUploadTime || now - deviceState.lastUploadTime > UPLOAD_INTERVAL) {
+			await Log(`Updating our device presence for ${orgId} (hasn't been updated in 24h)`);
+
+			// Use PATCH to only update our specific device
+			const devicePatchUrl = `${this.firebase_base_url}/users/${orgId}/devices_seen/${deviceId}.json`;
+
+			await fetch(devicePatchUrl, {
+				method: 'PATCH',
+				body: JSON.stringify({
+					timestamp: now
+				})
+			});
+
+			// Update our last upload time
+			deviceState.lastUploadTime = now;
+			await this.deviceStateMap.set(orgId, deviceState);
+		}
+
+		// PART 2: Check for other devices with adaptive interval
+		// Use shorter interval (15min) for lone devices, longer (60min) for multi-device
+		const MULTI_DEVICE_CHECK_INTERVAL = 60 * 60 * 1000; // 60 minutes
+		const DEVICE_CHECK_INTERVAL = 5 * 60 * 1000;
+		const checkInterval = deviceState.isLoneDevice ?
+			DEVICE_CHECK_INTERVAL : // 15 minutes for lone devices
+			MULTI_DEVICE_CHECK_INTERVAL; // 60 minutes for multi-device setups
+
+		if (now - deviceState.lastCheckTime < checkInterval) {
+			await Log(`Using cached device state for ${orgId}: isLoneDevice=${deviceState.isLoneDevice}, last checked ${Math.round((now - deviceState.lastCheckTime) / 1000)}s ago, next check in ${Math.round((checkInterval - (now - deviceState.lastCheckTime)) / 1000)}s`);
+			return deviceState.isLoneDevice;
+		}
+
+		try {
+			// Download all devices
+			const response = await fetch(devicesUrl);
+			const devices = await response.json() || {};
+
+			// Filter out stale devices (older than 7 days)
+			const cutoffTime = now - (7 * 24 * 60 * 60 * 1000);
+			let deviceCount = 0;
+
+			for (const [id, data] of Object.entries(devices)) {
+				if (data.timestamp > cutoffTime) {
+					deviceCount++;
+				}
+			}
+
+			// Determine if we're the only active device
+			const wasLoneDevice = deviceState.isLoneDevice;
+			deviceState.isLoneDevice = deviceCount === 1;
+			deviceState.lastCheckTime = now;
+
+			await this.deviceStateMap.set(orgId, deviceState);
+
+			await Log(`Device check for ${orgId}: ${deviceCount} active devices, isLoneDevice: ${deviceState.isLoneDevice}, was lone device: ${wasLoneDevice}, next check in ${deviceState.isLoneDevice ? '15min' : '60min'}`);
+			return deviceState.isLoneDevice;
+		} catch (error) {
+			await Log("error", "Error checking devices:", error);
+			return false; // Default to false on error (do sync)
+		}
+	}
 
 	async syncCapHits() {
 		if (this.isSyncingCapHits) {
@@ -825,7 +885,7 @@ class TokenStorageManager {
 		try {
 			// Group all entries by orgId
 			const groupedResets = {};
-			for (const [key, value] of (await this.resetsHit.entries())) {
+			for (const [key, value] of (await this.tokenStorage.resetsHit.entries())) {
 				const orgId = key.split(':')[0];
 				if (!groupedResets[orgId]) {
 					groupedResets[orgId] = {};
@@ -869,7 +929,220 @@ class TokenStorageManager {
 		}
 	}
 
+	// Helper methods
+	async ensureDeviceId() {
+		let deviceId = await browser.storage.local.get('deviceId');
+		if (!deviceId?.deviceId) {
+			deviceId = crypto.randomUUID();
+			await browser.storage.local.set({ deviceId });
+		} else {
+			deviceId = deviceId.deviceId;
+		}
+		return deviceId;
+	}
 
+	async syncResetCounter(orgId) {
+		const resetCounterUrl = `${this.firebase_base_url}/users/${orgId}/reset_counter.json`;
+		const response = await fetch(resetCounterUrl);
+		const remoteData = await response.json();
+		const remoteCounter = remoteData?.value || 0;
+
+		// Get local counter
+		const localCounter = await this.resetCounters.get(orgId) || 0;
+
+		await Log(`Reset counters for ${orgId}: local=${localCounter}, remote=${remoteCounter}`);
+
+		if (localCounter > remoteCounter) {
+			// If our local counter is higher, update the remote
+			await Log(`Local reset counter is higher, updating remote to ${localCounter}`);
+			await fetch(resetCounterUrl, {
+				method: 'PUT',
+				body: JSON.stringify({
+					value: localCounter,
+					lastReset: Date.now(),
+					triggeredBy: await this.ensureDeviceId()
+				})
+			});
+			// We've already reset our data when the trigger happened locally
+			return true;
+
+		} else if (remoteCounter > localCounter) {
+			// If remote counter is higher, we need to reset
+			await Log(`Remote reset counter is higher, resetting local data`);
+
+			// Clear our data
+			await this.clearOrgData(orgId);
+
+			// Update our local counter
+			await this.resetCounters.set(orgId, remoteCounter);
+
+			return true;
+		}
+
+		// Counters are equal, no reset needed
+		return false;
+	}
+
+	async syncSingleOrg(orgId, deviceId) {
+		if (!orgId) return
+		try {
+			// Check if we're the only device
+			const isLoneDevice = await this.checkDevices(orgId);
+
+			if (isLoneDevice) {
+				await Log(`Lone device for org ${orgId}, skipping sync entirely.`);
+				return;
+			}
+
+			// Check for resets before doing normal sync
+			const resetProcessed = await this.syncResetCounter(orgId);
+
+			// If we just processed a reset, we should still continue with sync
+			// to get any other changes, but log it for debugging
+			if (resetProcessed) {
+				await Log(`Reset processed for org ${orgId}, continuing with sync`);
+			}
+
+			// Get local state
+			const localState = await this.prepareLocalState(orgId);
+
+			// Get remote info
+			const lastUpdateInfo = await this.getLastUpdateInfo(orgId);
+			await Log("Remote info for org", orgId, ":", lastUpdateInfo);
+			// Sync logic
+			const noRemoteData = !lastUpdateInfo.deviceId;
+			const isAnotherDeviceData = lastUpdateInfo.deviceId !== deviceId;
+			const hasLocalChanges = localState.hasLocalChanges;
+
+			let shouldDownload = noRemoteData ||
+				isAnotherDeviceData ||
+				hasLocalChanges;
+
+			await Log("Download decision verdict:", {
+				decision: shouldDownload,
+				reasons: {
+					noRemoteData: noRemoteData,
+					anotherDevice: isAnotherDeviceData,
+					hasLocalChanges: hasLocalChanges
+				}
+			});
+
+			let shouldUpload = false;
+			let uploadReason = "";
+
+			if (noRemoteData) {
+				shouldUpload = true;
+				uploadReason = "noRemoteData";
+			} else {
+				shouldUpload = hasLocalChanges;
+				uploadReason = "localChanges";
+			}
+
+			let mergedModels = localState.localModels;
+
+			// Download and merge if needed
+			await Log("Final sync decisions:", {
+				shouldDownload: shouldDownload,
+				shouldUpload: shouldUpload,
+				uploadReason: uploadReason || "conditionalLogic"
+			});
+
+			if (shouldDownload) {
+				mergedModels = await this.downloadAndMerge(orgId, localState.localModels);
+			}
+
+			// Upload if needed
+			if (shouldUpload) {
+				await this.uploadData(orgId, mergedModels, deviceId);
+			}
+
+			// Update local storage
+			await this.tokenStorage.setValue(
+				this.tokenStorage.getStorageKey(orgId, 'models'),
+				mergedModels
+			);
+			await this.tokenStorage.setValue(
+				this.tokenStorage.getStorageKey(orgId, 'lastSyncHash'),
+				localState.currentHashString
+			);
+
+		} catch (error) {
+			await Log("error", `Error syncing org ${orgId}:`, error);
+		}
+	}
+
+	async prepareLocalState(orgId) {
+		const localModels = await this.tokenStorage.getValue(
+			this.tokenStorage.getStorageKey(orgId, 'models')
+		) || {};
+
+		const currentHash = await crypto.subtle.digest(
+			'SHA-256',
+			new TextEncoder().encode(JSON.stringify(localModels))
+		);
+
+		const currentHashString = Array.from(new Uint8Array(currentHash))
+			.map(b => b.toString(16).padStart(2, '0'))
+			.join('');
+
+		const lastSyncHash = await this.tokenStorage.getValue(
+			this.tokenStorage.getStorageKey(orgId, 'lastSyncHash')
+		);
+
+		const hasLocalChanges = !lastSyncHash || currentHashString !== lastSyncHash;
+		await Log("We have local changes:", hasLocalChanges);
+		return {
+			localModels,
+			currentHashString,
+			hasLocalChanges
+		};
+	}
+
+	async getLastUpdateInfo(orgId) {
+		const lastUpdateUrl = `${this.firebase_base_url}/users/${orgId}/last_update.json`;
+		const response = await fetch(lastUpdateUrl);
+		const remoteUpdate = await response.json();
+
+		return {
+			deviceId: remoteUpdate?.deviceId,
+			timestamp: remoteUpdate?.timestamp
+		};
+	}
+
+	async downloadAndMerge(orgId, localModels) {
+		await Log("Downloading remote data");
+		const modelsUrl = `${this.firebase_base_url}/users/${orgId}/models.json`;
+		const modelsResponse = await fetch(modelsUrl);
+		const remoteModels = await modelsResponse.json() || {};
+		const mergedModels = await this.tokenStorage.mergeModelData(localModels, remoteModels);
+
+		return mergedModels;
+	}
+
+	async uploadData(orgId, models, deviceId) {
+		await Log("Uploading data and updating device ID");
+
+		// Upload models
+		const modelsUrl = `${this.firebase_base_url}/users/${orgId}/models.json`;
+		const writeResponse = await fetch(modelsUrl, {
+			method: 'PUT',
+			body: JSON.stringify(models)
+		});
+
+		if (!writeResponse.ok) {
+			throw new Error(`Write failed! status: ${writeResponse.status}`);
+		}
+
+		// Update last update info
+		const lastUpdateUrl = `${this.firebase_base_url}/users/${orgId}/last_update.json`;
+		await fetch(lastUpdateUrl, {
+			method: 'PUT',
+			body: JSON.stringify({
+				deviceId: deviceId,
+				timestamp: Date.now()
+			})
+		});
+	}
 }
 
 // Claude API interface
@@ -1367,7 +1640,7 @@ async function sendTabMessage(tabId, message, maxRetries = 10, delay = 100) {
 
 // Content -> Background messaging
 async function handleMessageFromContent(message, sender) {
-	await Log("📥 Received message:", message);
+	//await Log("📥 Received message:", message);
 	const { orgId } = message;
 	const api = new ClaudeAPI(sender.tab?.cookieStoreId);
 	const response = await (async () => {
@@ -1467,9 +1740,11 @@ async function handleMessageFromContent(message, sender) {
 					await capModifiers.set(model, value);
 				}
 				return true;
+			case 'resetOrgData':
+				return await firebaseManager.triggerReset(message.orgId);
 		}
 	})();
-	await Log("📤 Sending response:", response);
+	//await Log("📤 Sending response:", response);
 	return response;
 }
 //#endregion
@@ -1732,12 +2007,15 @@ pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {user
 capModifiers = new StoredMap('capModifiers');
 conversationLengthCache = new Map();
 tokenStorageManager = new TokenStorageManager();
-loadConfig();
-isInitialized = true;
-for (const handler of pendingHandlers) {
-	handler.fn(...handler.args);
-}
-pendingHandlers = [];
-updateSyncAlarmAndFetchData();
-Log("Done initializing.")
+firebaseManager = tokenStorageManager.firebaseManager
+
+loadConfig().then(async () => {
+	isInitialized = true;
+	for (const handler of pendingHandlers) {
+		handler.fn(...handler.args);
+	}
+	pendingHandlers = [];
+	updateSyncAlarmAndFetchData();
+	Log("Done initializing.")
+});
 //#endregion
