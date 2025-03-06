@@ -924,14 +924,35 @@
 			return null;
 		}
 
-		// Then find the scrollable container within it
-		const container = sidebarNav.querySelector(config.SELECTORS.SIDEBAR_CONTAINER);
-		if (!container) {
-			await Log("error", 'Could not find sidebar container within nav');
+		// Look specifically for the "Chats" link that points to /recents
+		const recentsLink = sidebarNav.querySelector('a[href="/recents"]');
+		if (!recentsLink) {
+			await Log("error", 'Could not find recents link in sidebar');
 			return null;
 		}
 
-		return container;
+		// Go directly to the containing div from the link
+		const menuContainer = recentsLink.closest('div.flex.flex-col');
+		if (!menuContainer) {
+			await Log("error", 'Could not find menu container div');
+			return null;
+		}
+
+		// Get the next sibling of the menu container - this should be the sidebar container we want
+		const container = menuContainer.nextElementSibling;
+		if (!container) {
+			await Log("error", 'Could not find sidebar container after menu container');
+			return null;
+		}
+
+		// Get the first child of the container
+		const firstChild = container.firstElementChild;
+		if (!firstChild) {
+			await Log("error", 'Container has no children');
+			return null;
+		}
+
+		return firstChild; // Return the first child instead of the container
 	}
 
 	class UIManager {
@@ -1190,16 +1211,21 @@
 			const separator = isMobileView() ? '<br>' : ' | ';
 			if (this.costAndLengthDisplay) {
 				if (!metrics) {
-					this.costAndLengthDisplay.innerHTML = `Length: N/A tokens${separator}Cost: N/A tokens`;
+					this.costAndLengthDisplay.innerHTML = `Length: N/A tokens`;
 					return;
 				}
 
+				const hasCost = config.OUTPUT_TOKEN_MULTIPLIER != 1 || metrics.cost != metrics.length;
 				const lengthColor = metrics.length >= config.WARNING.LENGTH ? RED_WARNING : BLUE_HIGHLIGHT;
 				const costColor = metrics.cost >= config.WARNING.COST ? RED_WARNING : BLUE_HIGHLIGHT;
 
+				/*this.costAndLengthDisplay.innerHTML =
+					`Length: <span style="color: ${lengthColor}">${metrics.length.toLocaleString()}</span> tokens` +
+					`${hasCost ? `${separator}Cost: <span style="color: ${costColor}">${metrics.cost.toLocaleString()}</span> tokens` : ""}`;
+				*/
 				this.costAndLengthDisplay.innerHTML =
-					`Length: <span style="color: ${lengthColor}">${metrics.length.toLocaleString()}</span> tokens${separator}` +
-					`Cost: <span style="color: ${costColor}">${metrics.cost.toLocaleString()}</span> tokens`;
+					`Length: <span style="color: ${lengthColor}">${metrics.length.toLocaleString()}</span> tokens` +
+					`${separator}Cost: <span style="color: ${costColor}">${metrics.cost.toLocaleString()}</span> tokens`;
 			}
 		}
 
@@ -1266,7 +1292,7 @@
 			// Create container for the sidebar integration
 			this.container = document.createElement('div');
 			this.container.className = 'flex flex-col min-h-0';
-			this.container.style.cssText = `opacity: 1; filter: blur(0px); transform: translateX(0%) translateZ(0px);`
+			this.container.style.cssText = `opacity: 1; filter: blur(0px); transform: translateX(0%) translateZ(0px); order: 9999; margin-top: auto;`
 
 			this.header = await this.buildHeader();
 			this.container.appendChild(this.header);
