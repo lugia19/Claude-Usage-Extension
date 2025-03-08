@@ -1143,11 +1143,39 @@
 			if (chatMenu) {
 				const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
 				if (titleLine) {
+					// Check if there's a project link
+					const projectLink = titleLine.querySelector('a[href^="/project/"]');
+
+					if (projectLink) {
+						// If there's a project link, we need to create a wrapper for project and chat menu
+						if (!titleLine.querySelector('.chat-project-wrapper')) {
+							const wrapper = document.createElement('div');
+							wrapper.className = 'chat-project-wrapper flex min-w-0 flex-row items-center md:items-center 2xl:justify-center';
+
+							//Move elements to wrapper
+							projectLink.remove();
+							wrapper.appendChild(projectLink);
+
+							const chatMenuContainer = chatMenu.closest('.flex.min-w-0.items-center');
+							if (chatMenuContainer) {
+								chatMenuContainer.remove();
+								wrapper.appendChild(chatMenuContainer);
+							}
+
+							titleLine.insertBefore(wrapper, titleLine.firstChild);
+						}
+					}
+
+					// Keep the alignment classes on the titleLine
 					titleLine.classList.remove('md:flex-row');
 					titleLine.classList.add('md:flex-col');
 
+					// Add our length display after the wrapper or chat menu
 					if (chatMenu.parentElement.nextElementSibling !== this.costAndLengthDisplay) {
-						chatMenu.parentElement.after(this.costAndLengthDisplay);
+						const chatMenuParent = chatMenu.closest('.chat-project-wrapper') || chatMenu.parentElement;
+						if (chatMenuParent.nextElementSibling !== this.costAndLengthDisplay) {
+							chatMenuParent.after(this.costAndLengthDisplay);
+						}
 					}
 				}
 			}
@@ -1155,7 +1183,7 @@
 			// Handle stat line injection
 			const modelSelector = document.querySelector(config.SELECTORS.MODEL_SELECTOR);
 			if (!modelSelector) return;
-			// Handle stat line injection
+
 			const selectorLine = modelSelector.closest('.min-w-0.flex-1.flex')?.parentElement;
 			if (!selectorLine) return;
 			if (selectorLine && selectorLine.nextElementSibling !== this.statLine) {
