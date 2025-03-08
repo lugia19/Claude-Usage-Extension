@@ -1,6 +1,6 @@
 {
 	"UI_UPDATE_INTERVAL_MS": 3000,
-	"OUTPUT_TOKEN_MULTIPLIER": 10,
+	"OUTPUT_TOKEN_MULTIPLIER": 1,
 	"MODEL_CAPS": {
 		"free": {
 			"Opus": 0,
@@ -10,7 +10,7 @@
 		},
 		"pro": {
 			"Opus": 500000,
-			"Sonnet": 1600000,
+			"Sonnet": 1500000,
 			"Haiku": 3000000,
 			"default": 1
 		},
