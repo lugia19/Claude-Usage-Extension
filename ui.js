@@ -62,6 +62,34 @@
 		await browser.storage.local.set({ debug_logs: logs });
 	}
 
+	async function logError(error) {
+		// If object is not an error, log it as a string
+		if (!(error instanceof Error)) {
+			await Log("error", JSON.stringify(error));
+			return
+		}
+
+		await Log("error", error.toString());
+		if ("captureStackTrace" in Error) {
+			Error.captureStackTrace(error, getStack);
+		}
+		await Log("error", JSON.stringify(error.stack));
+	}
+
+	//Error logging
+	window.addEventListener('error', async function (event) {
+		await logError(event.error);
+	});
+
+	window.addEventListener('unhandledrejection', async function (event) {
+		await logError(event.reason);
+	});
+
+	self.onerror = async function (message, source, lineno, colno, error) {
+		await logError(error);
+		return false;
+	};
+
 	if (window.claudeTrackerInstance) {
 		Log('Instance already running, stopping');
 		return;
