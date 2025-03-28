@@ -35,7 +35,7 @@
 	"SELECTORS": {
 		"MODEL_PICKER": "[data-testid=\"model-selector-dropdown\"]",
 		"USER_MENU_BUTTON": "button[data-testid=\"user-menu-button\"]",
-		"SIDEBAR_NAV": "nav[data-testid=\"menu-sidebar\"]",
+		"SIDEBAR_NAV": "nav.h-screen.flex",
 		"SIDEBAR_CONTAINER": ".overflow-y-auto.overflow-x-hidden.flex.flex-col.gap-4",
 		"USAGE_LIMIT_LINK": "a[href*=\"does-claude-pro-have-any-usage-limits\"]",
 		"CHAT_MENU": "[data-testid=\"chat-menu-trigger\"]",

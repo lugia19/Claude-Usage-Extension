@@ -437,7 +437,7 @@
 				color: white;
 				font-size: 12px;
 				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-				z-index: 10000;
+				z-index: 99999;
 				user-select: none;
 			`;
 		}
@@ -944,43 +944,46 @@
 	}
 
 
-	async function findSidebarContainer() {
-		// First find the nav element with the specific data-testid
+	async function findSidebarContainers() {
+		// First find the nav element
 		const sidebarNav = document.querySelector(config.SELECTORS.SIDEBAR_NAV);
 		if (!sidebarNav) {
 			await Log("error", 'Could not find sidebar nav');
 			return null;
 		}
 
-		// Look specifically for the "Chats" link that points to /recents
-		const recentsLink = sidebarNav.querySelector('a[href="/recents"]');
-		if (!recentsLink) {
-			await Log("error", 'Could not find recents link in sidebar');
+		// Look for the main container that holds all sections
+		const mainContainer = sidebarNav.querySelector('.transition-all.duration-200.flex.flex-grow.flex-col.overflow-y-auto');
+		if (!mainContainer) {
+			await Log("error", 'Could not find main container in sidebar');
 			return null;
 		}
 
-		// Go directly to the containing div from the link
-		const menuContainer = recentsLink.closest('div.flex.flex-col');
-		if (!menuContainer) {
-			await Log("error", 'Could not find menu container div');
+		// Look for the Starred section
+		const starredSection = await waitForElement(mainContainer, 'div.flex.flex-col.mb-6', 5000);
+		if (!starredSection) {
+			await Log("error", 'Could not find Starred section, falling back to just recents');
+		}
+
+		// Check if the Recents section exists as the next sibling
+		let recentsSection = null;
+		if (starredSection) {
+			recentsSection = starredSection.nextElementSibling;
+		} else {
+			recentsSection = mainContainer.firstChild;
+		}
+
+		if (!recentsSection) {
+			await Log("error", 'Could not find Recents section');
 			return null;
 		}
 
-		// Get the next sibling of the menu container - this should be the sidebar container we want
-		const container = menuContainer.nextElementSibling;
-		if (!container) {
-			await Log("error", 'Could not find sidebar container after menu container');
-			return null;
-		}
-
-		// Get the first child of the container
-		const firstChild = container.firstElementChild;
-		if (!firstChild) {
-			await Log("error", 'Container has no children');
-			return null;
-		}
-
-		return firstChild; // Return the first child instead of the container
+		// Return the parent container so we can insert our UI between Starred and Recents
+		return {
+			container: mainContainer,
+			starredSection: starredSection,
+			recentsSection: recentsSection
+		};
 	}
 
 	class UIManager {
@@ -1042,8 +1045,8 @@
 			}
 
 			//UI presence checks
-			const sidebarContainer = await findSidebarContainer();
-			await this.sidebarUI.checkAndReinject(sidebarContainer);
+			const sidebarContainers = await findSidebarContainers();
+			await this.sidebarUI.checkAndReinject(sidebarContainers);
 			await this.chatUI.checkAndReinject();
 
 			this.sidebarUI.updateModelStates(this.currentlyDisplayedModel);
@@ -1210,10 +1213,17 @@
 
 			// Handle stat line injection
 			const modelSelector = document.querySelector(config.SELECTORS.MODEL_SELECTOR);
-			if (!modelSelector) return;
+			if (!modelSelector) {
+				await Log("warning", 'Could not find model selector!');
+				return;
+			}
 
-			const selectorLine = modelSelector.closest('.min-w-0.flex-1.flex')?.parentElement;
-			if (!selectorLine) return;
+			const selectorLine = modelSelector?.parentElement?.parentElement;
+
+			if (!selectorLine) {
+				await Log("warning", 'Could not find selector line!');
+				return;
+			}
 			if (selectorLine && selectorLine.nextElementSibling !== this.statLine) {
 				selectorLine.after(this.statLine);
 			}
@@ -1347,18 +1357,20 @@
 		async initialize() {
 			// Create container for the sidebar integration
 			this.container = document.createElement('div');
-			this.container.className = 'flex flex-col min-h-0';
-			this.container.style.cssText = `opacity: 1; filter: blur(0px); transform: translateX(0%) translateZ(0px); order: 9999; margin-top: auto;`
+			this.container.className = 'flex flex-col mb-6';
 
 			this.header = await this.buildHeader();
 			this.container.appendChild(this.header);
 			this.content = await this.buildContent();
 			this.container.appendChild(this.content);
 
-			// Find the sidebar's scrollable container and inject at the end
-			const sidebarContainer = await findSidebarContainer();
-			if (sidebarContainer) {
-				sidebarContainer.appendChild(this.container);
+			// Find the sidebar's containers
+			const sidebarContainers = await findSidebarContainers();
+			if (sidebarContainers) {
+				const { container, starredSection, recentsSection } = sidebarContainers;
+
+				// Insert our container between Starred and Recents
+				container.insertBefore(this.container, recentsSection);
 			}
 
 			this.uiReady = true;
@@ -1366,7 +1378,11 @@
 			// Process any updates that arrived before UI was ready
 			while (this.pendingUpdates.length > 0) {
 				const update = this.pendingUpdates.shift();
-				await this.updateProgressBars(update);
+				await this.updateProgressBars(
+					update.data,
+					update.currentlyDisplayedModel,
+					update.modelCaps
+				);
 			}
 
 			// Initialize model section visibility
@@ -1388,29 +1404,22 @@
 
 		async buildHeader() {
 			const header = document.createElement('div');
-			header.className = 'text-text-300 mb-1 flex';
-
+			header.className = 'flex items-center justify-between pb-2 pl-2 sticky top-0 bg-gradient-to-b from-bg-200 from-50% to-bg-200/40';
+			header.style.zIndex = "9999"
 			// Create title
-			const title = document.createElement('span');
-			title.textContent = 'Usage Tracker';
-			title.className = 'text-text-300 mb-1 flex items-center gap-1.5 text-sm font-medium';
-			title.style.cssText = `
-				left: 0px
-			`
+			const title = document.createElement('h3');
+			title.textContent = 'Usage';
+			title.className = 'text-text-300 flex items-center gap-1.5 text-xs select-none z-10 bg-gradient-to-b from-bg-200 from-50% to-bg-200/40';
+
 			// Add settings button
 			const settingsButton = document.createElement('button');
+			settingsButton.className = 'inline-flex items-center justify-center relative shrink-0 can-focus select-none text-text-300 border-transparent transition font-styrene duration-300 ease-[cubic-bezier(0.165,0.85,0.45,1)] hover:bg-bg-400 hover:text-text-100 h-8 w-8 rounded-md active:scale-95';
+			settingsButton.style.color = BLUE_HIGHLIGHT;
 			settingsButton.innerHTML = `
-				<svg viewBox="0 0 24 24" width="16" height="16" style="cursor: pointer;">
-					<path fill="currentColor" d="M19.43 12.98c.04-.32.07-.64.07-.98 0-.34-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98 0 .33.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
+				<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+					<path d="M19.43 12.98c.04-.32.07-.64.07-.98 0-.34-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98 0 .33.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
 				</svg>
 			`;
-			settingsButton.style.cssText = `
-				margin-left: auto;
-				display: flex;
-				align-items: center;
-				color: ${BLUE_HIGHLIGHT};
-			`;
-			settingsButton.className = "settings-button"
 			settingsButton.addEventListener('click', async () => {
 				if (SettingsCard.currentInstance) {
 					SettingsCard.currentInstance.remove();
@@ -1434,12 +1443,11 @@
 		async buildContent() {
 			// Create our container div that matches the Starred/Recents sections style
 			const content = document.createElement('div');
-			content.className = 'flex min-h-0 flex-col min-h-min';
-			content.style.cssText = 'opacity: 1; filter: blur(0px); transform: translateX(0%) translateZ(0px);';
+			content.className = 'flex min-h-0 flex-col pl-2';
 
 			// Container for model sections
-			const sectionsContainer = document.createElement('div');
-			sectionsContainer.className = '-mx-1.5 flex flex-1 flex-col gap-0.5 overflow-y-auto px-1.5';
+			const sectionsContainer = document.createElement('ul');
+			sectionsContainer.className = '-mx-1.5 flex flex-1 flex-col px-1.5 gap-px';
 
 			// Create model sections
 			config.MODELS.forEach(model => {
@@ -1456,7 +1464,11 @@
 		async updateProgressBars(data, currentlyDisplayedModel, modelCaps) {
 			if (!this.uiReady) {
 				await Log("UI not ready, pushing to pending updates...");
-				this.pendingUpdates.push(data);
+				this.pendingUpdates.push({
+					data,
+					currentlyDisplayedModel,
+					modelCaps
+				});
 				return;
 			}
 
@@ -1476,12 +1488,12 @@
 			}
 		}
 
-		async checkAndReinject(sidebarContainer) {
-			if (!sidebarContainer || !sidebarContainer.contains(this.container)) {
-				if (sidebarContainer) {
+		async checkAndReinject(sidebarContainers) {
+			if (!sidebarContainers || !sidebarContainers.container.contains(this.container)) {
+				if (sidebarContainers) {
 					await Log('UI not present in sidebar, re-injecting...');
 					this.uiReady = false;
-					sidebarContainer.appendChild(this.container);
+					sidebarContainers.container.insertBefore(this.container, sidebarContainers.recentsSection);
 					this.uiReady = true;
 				}
 				return false;
