@@ -155,7 +155,7 @@
 		if (!fullModelName || fullModelName === 'default') return undefined;
 
 		fullModelName = fullModelName.toLowerCase();
-		const modelTypes = Object.keys(config.MODEL_CAPS.pro).filter(key => key !== 'default');
+		const modelTypes = config.MODELS
 
 		for (const modelType of modelTypes) {
 			if (fullModelName.includes(modelType.toLowerCase())) {
@@ -1485,6 +1485,8 @@
 				await section.updateProgress(modelTotal, maxTokens);
 				section.updateMessageCount(messageCount);
 				section.updateResetTime(modelInfo.resetTimestamp);
+				console.log(section.container.style.display)
+				section.container.style.display = maxTokens === 0 ? 'none' : '';
 			}
 		}
 
