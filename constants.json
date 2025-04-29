@@ -2,25 +2,40 @@
 	"UI_UPDATE_INTERVAL_MS": 3000,
 	"OUTPUT_TOKEN_MULTIPLIER": 1,
 	"MODEL_CAPS": {
-		"free": {
-			"Opus": 0,
-			"Sonnet": 300000,
-			"Haiku": 600000,
-			"default": 1
-		},
-		"pro": {
+		"BASELINE": {
 			"Opus": 500000,
 			"Sonnet": 1500000,
 			"Haiku": 3000000,
 			"default": 1
 		},
-		"team": {
-			"Opus": 375000,
-			"Sonnet": 2400000,
-			"Haiku": 4500000,
-			"default": 1
+		"MULTIPLIERS": {
+			"claude_free": {
+				"Opus": 0,
+				"Sonnet": 0.2,
+				"Haiku": 0.2
+			},
+			"claude_pro": {
+				"Opus": 1,
+				"Sonnet": 1,
+				"Haiku": 1
+			},
+			"claude_team": {
+				"Opus": 1.5,
+				"Sonnet": 1.5,
+				"Haiku": 1.5
+			},
+			"claude_max": {
+				"Opus": 5,
+				"Sonnet": 5,
+				"Haiku": 5
+			}
 		}
 	},
+	"MODELS": [
+		"Opus",
+		"Sonnet",
+		"Haiku"
+	],
 	"SYNC_INTERVALS": {
 		"none": 30,
 		"inactive": 10,

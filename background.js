@@ -282,19 +282,22 @@ async function logError(error) {
 
 	await Log("error", error.toString());
 	if ("captureStackTrace" in Error) {
-		Error.captureStackTrace(error, getStack);
+		Error.captureStackTrace(error, logError);
 	}
 	await Log("error", JSON.stringify(error.stack));
 }
 
 //Error logging
-window.addEventListener('error', async function (event) {
-	await logError(event.error);
-});
+if (typeof window != "undefined") {
+	window.addEventListener('error', async function (event) {
+		await logError(event.error);
+	});
 
-window.addEventListener('unhandledrejection', async function (event) {
-	await logError(event.reason);
-});
+	window.addEventListener('unhandledrejection', async function (event) {
+		await logError(event.reason);
+	});
+}
+
 
 self.onerror = async function (message, source, lineno, colno, error) {
 	await logError(error);
@@ -306,9 +309,6 @@ async function loadConfig() {
 	try {
 		// Load the local configuration file
 		const localConfig = await (await fetch(browser.runtime.getURL('constants.json'))).json();
-
-		// Extract models from the caps
-		localConfig.MODELS = Object.keys(localConfig.MODEL_CAPS.pro).filter(key => key !== 'default');
 
 		// Set the global config
 		CONFIG = localConfig;
@@ -582,11 +582,24 @@ class TokenStorageManager {
 
 	async getCaps(orgId, api) {
 		let subscriptionTier = await this.subscriptionTiers.get(orgId);
-		if (!subscriptionTier) {
+
+		if (!subscriptionTier || !(subscriptionTier in CONFIG.MODEL_CAPS.MULTIPLIERS)) {	//Also re-check if it's not in the caps, to update old values
 			subscriptionTier = await api.getSubscriptionTier(orgId);
 			await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 60 * 1000); // 10 minutes
 		}
-		return CONFIG.MODEL_CAPS[subscriptionTier];
+		const baseline = CONFIG.MODEL_CAPS.BASELINE
+		const tierMultipliers = CONFIG.MODEL_CAPS.MULTIPLIERS[subscriptionTier];
+		const result = {};
+		if (tierMultipliers) {
+			Object.keys(tierMultipliers).forEach(model => {
+				if (baseline[model] && tierMultipliers[model] !== undefined) {
+					result[model] = baseline[model] * tierMultipliers[model];
+				}
+			});
+			return result
+		} else {
+			return baseline;
+		}
 	}
 
 	async getCollapsedState() {
@@ -1471,15 +1484,12 @@ class ClaudeAPI {
 
 	async getSubscriptionTier(orgId) {
 		const statsigData = await this.getRequest(`/bootstrap/${orgId}/statsig`);
-		await Log("User is Raven?", statsigData.user?.custom?.isRaven);
-		await Log("User is Pro?", statsigData.user?.custom?.isPro);
+		const identifier = statsigData.user?.custom?.orgType;
+		await Log("User identifier:", identifier);
 		if (statsigData.user?.custom?.isRaven) {
-			return "team"
+			return "claude_team";	//IDK if this is the actual identifier, so I'm just overriding it based on the old value.
 		}
-		if (statsigData.user?.custom?.isPro) {
-			return "pro"
-		}
-		return "free"
+		return identifier;
 	}
 }
 
@@ -1907,8 +1917,7 @@ async function onBeforeRequestHandler(details) {
 		let model = "Sonnet"; // Default model
 		if (requestBodyJSON?.model) {
 			const modelString = requestBodyJSON.model.toLowerCase();
-			const modelTypes = Object.keys(CONFIG.MODEL_CAPS.pro).filter(key => key !== 'default');
-			for (const modelType of modelTypes) {
+			for (const modelType of CONFIG.MODELS) {
 				if (modelString.includes(modelType.toLowerCase())) {
 					model = modelType;
 					await Log("Model from request:", model);
