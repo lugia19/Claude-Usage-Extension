@@ -5,3 +5,4 @@ icon_new.psd
 manifest.json
 background_mv2.js
 run-android.bat
+.vscode/*

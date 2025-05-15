@@ -1,7 +1,7 @@
 {
 	"manifest_version": 3,
 	"name": "Claude Usage Tracker",
-	"version": "3.7.3",
+	"version": "3.7.5",
 	"description": "Helps you track your claude.ai usage caps based on tokens sent, and syncs across devices using firebase.",
 	"author": "lugia19",
 	"browser_specific_settings": {
@@ -46,7 +46,8 @@
 				"lib/browser-polyfill.min.js",
 				"lib/o200k_base.js",
 				"kofi-button.png",
-				"debug.html"
+				"debug.html",
+				"update_patchnotes.txt"
 			],
 			"matches": [
 				"<all_urls>"

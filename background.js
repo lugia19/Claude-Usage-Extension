@@ -436,14 +436,14 @@ async function countTokensViaAPI(userMessages = [], assistantMessages = [], file
 	}
 }
 
-async function getTextFromContent(content, includeThinking = false) {
+async function getTextFromContent(content, includeEphemeral = false, api = null, orgId = null) {
 	let textPieces = [];
 
 	if (content.text) {
 		textPieces.push(content.text);
 	}
 
-	if (content.thinking && includeThinking) {
+	if (content.thinking && includeEphemeral) {
 		textPieces.push(content.thinking);
 	}
 
@@ -453,15 +453,53 @@ async function getTextFromContent(content, includeThinking = false) {
 	if (content.content) {
 		// Handle nested content array
 		if (Array.isArray(content.content)) {
-			for (const nestedContent of content.content) {
-				textPieces = textPieces.concat(await getTextFromContent(nestedContent, includeThinking));
+			if (content.type !== "tool_result" || includeEphemeral) {
+				// Tool results are ephemeral
+				for (const nestedContent of content.content) {
+					textPieces = textPieces.concat(await getTextFromContent(nestedContent, includeEphemeral, api, orgId));
+				}
 			}
 		}
 		// Handle single nested content object
 		else if (typeof content.content === 'object') {
-			textPieces = textPieces.concat(await getTextFromContent(content.content, includeThinking));
+			textPieces = textPieces.concat(await getTextFromContent(content.content, includeEphemeral, api, orgId));
 		}
 	}
+
+	if (content.type === "knowledge" && includeEphemeral) {
+		//"knowledge" type content is ephemeral, like tool results. Only fetch what is needed.
+		if (content.url && content.url.length > 0) {
+			//We have a knowledge url. Does it contain a gdoc link?
+			if (content.url.includes("docs.google.com")) {
+				//Get the text from gdrive using the sync endpoint
+				if (api && orgId) {
+					// Extract the document UUID from metadata.uri or parse it from the URL
+					const docUuid = content.metadata?.uri;
+
+					if (docUuid) {
+						// Construct the sync object in the format expected by getSyncText
+						const syncObj = { type: "gdrive", config: { uri: docUuid } };
+						await Log("Fetching Google Drive document content:", content.url, "with sync object:", syncObj);
+						try {
+							const syncText = await api.getSyncText(orgId, syncObj);
+							//const syncText = ""
+							if (syncText) {
+								textPieces.push(syncText);
+								await Log("Retrieved Google Drive document content successfully:", syncText);
+							}
+						} catch (error) {
+							await Log("error", "Error fetching Google Drive document:", error);
+						}
+					} else {
+						await Log("error", "Could not extract document UUID from URL or metadata");
+					}
+				} else {
+					await Log("warn", "API or orgId not provided, cannot fetch Google Drive document");
+				}
+			}
+		}
+	}
+
 	return textPieces;
 }
 
@@ -665,6 +703,7 @@ class TokenStorageManager {
 			}
 
 			await this.setValue(this.getStorageKey(orgId, 'models'), allModelData);
+			await browser.storage.local.set({ 'totalTokensTracked': await this.getTotalTokens() + newTokens });
 			return allModelData[model];
 		} finally {
 			this.storageLock = false;
@@ -743,6 +782,11 @@ class TokenStorageManager {
 				accurateCount: hasApiKey
 			});
 		}
+	}
+
+	async getTotalTokens() {
+		const result = await browser.storage.local.get('totalTokensTracked');
+		return result.totalTokensTracked || 0;
 	}
 }
 
@@ -1401,6 +1445,12 @@ class ClaudeAPI {
 			}
 		}
 
+		if ("enabled_web_search" in conversationData.settings || "enabled_bananagrams" in conversationData.settings) {
+			if (conversationData.settings?.enabled_websearch || conversationData.settings?.enabled_bananagrams) {
+				baseTokens += CONFIG.FEATURE_COSTS["citation_info"];
+			}
+		}
+
 		let humanMessages = [];
 		let assistantMessages = [];
 
@@ -1416,7 +1466,7 @@ class ClaudeAPI {
 			// Process content array
 			for (const content of message.content) {
 				//We don't consider the thinking tokens in the length calculation at all, as they don't remain in the context.
-				messageContent = messageContent.concat(await getTextFromContent(content, false));
+				messageContent = messageContent.concat(await getTextFromContent(content, false, this, orgId));
 			}
 			// Attachment tokens
 			for (const attachment of message.attachments) {
@@ -1436,7 +1486,7 @@ class ClaudeAPI {
 			if (message === lastMessage) {
 				let lastMessageContent = [];
 				for (const content of message.content) {
-					lastMessageContent = lastMessageContent.concat(await getTextFromContent(content, true));
+					lastMessageContent = lastMessageContent.concat(await getTextFromContent(content, true, this, orgId));
 				}
 				lastMessageTokens = await getTextTokens(lastMessageContent.join(' ')) * (CONFIG.OUTPUT_TOKEN_MULTIPLIER);
 			}
@@ -1781,6 +1831,70 @@ async function handleMessageFromContent(message, sender) {
 				return true;
 			case 'resetOrgData':
 				return await firebaseManager.triggerReset(message.orgId);
+
+			case 'shouldShowDonationNotification':
+				const { currentVersion } = message;
+				let previousVersion = await browser.storage.local.get('previousVersion').then(data => data.previousVersion);
+
+				// Prepare response object
+				const donationInfo = {
+					shouldShow: false,
+					versionMessage: '',
+					patchHighlights: []
+				};
+
+				// First install - don't show notification
+				if (!previousVersion) {
+					await browser.storage.local.set({ previousVersion: currentVersion });
+					return donationInfo;
+				}
+
+				// Get total tokens tracked
+				const totalTokens = await tokenStorageManager.getTotalTokens();
+
+				// Get donation thresholds from config (should be an array of increasing numbers)
+				const tokenThresholds = CONFIG.DONATION_TOKEN_THRESHOLDS
+
+				// Get already shown thresholds
+				const { shownDonationThresholds = [] } = await browser.storage.local.get('shownDonationThresholds');
+				const exceededThreshold = tokenThresholds.find(threshold =>
+					totalTokens >= threshold && !shownDonationThresholds.includes(threshold)
+				);
+
+				// Version change - show update notification with patch notes
+				if (previousVersion !== currentVersion) {
+					donationInfo.shouldShow = true;
+					donationInfo.versionMessage = `Updated from v${previousVersion} to v${currentVersion}!`;
+
+					try {
+						// Try to load patch notes from file
+						const patchNotesFile = await fetch(browser.runtime.getURL('update_patchnotes.txt'));
+						if (patchNotesFile.ok) {
+							const patchNotesText = await patchNotesFile.text();
+							donationInfo.patchHighlights = patchNotesText
+								.split('\n')
+								.filter(line => line.trim().length > 0);
+						}
+					} catch (error) {
+						await Log("error", "Failed to load patch notes:", error);
+					}
+
+					await browser.storage.local.set({ previousVersion: currentVersion });
+				}
+				else if (exceededThreshold) {
+					const tokenMillions = Math.floor(exceededThreshold / 1000000);
+					donationInfo.shouldShow = true;
+					donationInfo.versionMessage = `You've tracked over ${tokenMillions}M tokens with this extension!`;
+					donationInfo.patchHighlights = [
+						"Please consider supporting continued development with a donation!"
+					];
+
+					// Mark this threshold as shown
+					await browser.storage.local.set({
+						shownDonationThresholds: [...shownDonationThresholds, exceededThreshold]
+					});
+				}
+				return donationInfo;
 		}
 	})();
 	//await Log("📤 Sending response:", response);

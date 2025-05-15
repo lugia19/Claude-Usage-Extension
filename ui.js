@@ -401,24 +401,6 @@
 		}
 	}
 
-	async function checkVersionNotification() {
-		const previousVersion = await sendBackgroundMessage({ type: 'getPreviousVersion' });
-		const currentVersion = browser.runtime.getManifest().version;
-
-		// Skip if versions match
-		if (previousVersion === currentVersion) return null;
-		// Store current version
-		await sendBackgroundMessage({
-			type: 'setCurrentVersion',
-			version: currentVersion
-		});
-
-		return {
-			previousVersion,
-			currentVersion
-		};
-	}
-
 	class FloatingCard {
 		constructor() {
 			this.defaultPosition = { top: '20px', right: '20px' }
@@ -493,9 +475,9 @@
 	}
 
 	class VersionNotificationCard extends FloatingCard {
-		constructor(versionInfo) {
+		constructor(donationInfo) {
 			super();
-			this.versionInfo = versionInfo;
+			this.donationInfo = donationInfo;
 			this.element.style.textAlign = 'center';
 			this.element.style.maxWidth = '250px';
 			this.build();
@@ -505,48 +487,84 @@
 			// Create and style the header/drag handle
 			const dragHandle = document.createElement('div');
 			dragHandle.style.cssText = `
-				padding: 8px;
-				margin: -12px -12px 8px -12px;
-				border-bottom: 1px solid #3B3B3B;
-				cursor: move;
-			`;
+        padding: 8px;
+        margin: -12px -12px 8px -12px;
+        border-bottom: 1px solid #3B3B3B;
+        cursor: move;
+    `;
 			dragHandle.textContent = 'Usage Tracker';
 
 			// Add version message
 			const message = document.createElement('div');
 			message.style.marginBottom = '10px';
-			message.textContent = this.versionInfo.previousVersion ?
-				`Updated from v${this.versionInfo.previousVersion} to v${this.versionInfo.currentVersion}!` :
-				`Welcome to the usage tracker! You're on v${this.versionInfo.currentVersion}`;
+			message.textContent = this.donationInfo.versionMessage;
 
-
-			let patchNotesLink = null;
-			// Add patch notes link if applicable
-			if (this.versionInfo.previousVersion) {
-				patchNotesLink = document.createElement('a');
-				patchNotesLink.href = 'https://github.com/lugia19/Claude-Usage-Extension/releases';
-				patchNotesLink.target = '_blank';
-				patchNotesLink.style.cssText = `
-					color: ${BLUE_HIGHLIGHT};
-					text-decoration: underline;
-					cursor: pointer;
-					display: block;
+			// Create patch notes container if needed
+			let patchContainer = null;
+			if (this.donationInfo.patchHighlights && this.donationInfo.patchHighlights.length > 0) {
+				patchContainer = document.createElement('div');
+				patchContainer.style.cssText = `
+					text-align: left;
 					margin-bottom: 10px;
+					max-height: 150px;
+					overflow-y: auto;
+					background: #3B3B3B;
+					padding: 8px;
+					border-radius: 4px;
 					font-size: 12px;
 				`;
-				patchNotesLink.textContent = 'View patch notes';
-				this.element.appendChild(patchNotesLink);
+
+				if (!(this.donationInfo.patchHighlights[0].includes("donation"))) {
+					const patchTitle = document.createElement('div');
+					patchTitle.textContent = "What's New:";
+					patchTitle.style.fontWeight = 'bold';
+					patchTitle.style.marginBottom = '5px';
+					patchContainer.appendChild(patchTitle);
+				}
+
+
+				const patchList = document.createElement('ul');
+				patchList.style.cssText = `
+					padding-left: 12px; /* Reduced from 20px */
+					margin: 0;
+					list-style-type: disc; /* Explicitly set bullet style */
+					list-style-position: outside; /* Keep bullets outside */
+				`;
+
+				this.donationInfo.patchHighlights.forEach(highlight => {
+					const item = document.createElement('li');
+					item.textContent = highlight;
+					item.style.marginBottom = '3px'; /* Add some spacing between items */
+					item.style.paddingLeft = '3px'; /* Add a bit of padding after the bullet */
+					patchList.appendChild(item);
+				});
+
+				patchContainer.appendChild(patchList);
 			}
+
+			// Add patch notes link
+			const patchNotesLink = document.createElement('a');
+			patchNotesLink.href = 'https://github.com/lugia19/Claude-Usage-Extension/releases';
+			patchNotesLink.target = '_blank';
+			patchNotesLink.style.cssText = `
+				color: ${BLUE_HIGHLIGHT};
+				text-decoration: underline;
+				cursor: pointer;
+				display: block;
+				margin-bottom: 10px;
+				font-size: 12px;
+			`;
+			patchNotesLink.textContent = 'View full release notes';
 
 			// Add Ko-fi button
 			const kofiButton = document.createElement('a');
 			kofiButton.href = 'https://ko-fi.com/R6R14IUBY';
 			kofiButton.target = '_blank';
 			kofiButton.style.cssText = `
-				display: block;
-				text-align: center;
-				margin-top: 10px;
-			`;
+        display: block;
+        text-align: center;
+        margin-top: 10px;
+    `;
 
 			const kofiImg = document.createElement('img');
 			kofiImg.src = browser.runtime.getURL('kofi-button.png');
@@ -559,9 +577,13 @@
 			// Add elements to the card in the correct order
 			this.element.appendChild(dragHandle);
 			this.element.appendChild(message);
-			if (this.versionInfo.previousVersion) {
-				this.element.appendChild(patchNotesLink);
+
+			// Add patch notes if available
+			if (patchContainer) {
+				this.element.appendChild(patchContainer);
 			}
+
+			this.element.appendChild(patchNotesLink);
 			this.element.appendChild(kofiButton);
 			this.addCloseButton();
 
@@ -1395,9 +1417,13 @@
 			});
 
 			// Check for version notification
-			const versionInfo = await checkVersionNotification();
-			if (versionInfo) {
-				const notificationCard = new VersionNotificationCard(versionInfo);
+			const donationInfo = await sendBackgroundMessage({
+				type: 'shouldShowDonationNotification',
+				currentVersion: browser.runtime.getManifest().version
+			});
+
+			if (donationInfo && donationInfo.shouldShow) {
+				const notificationCard = new VersionNotificationCard(donationInfo);
 				notificationCard.show();
 			}
 		}
@@ -1485,7 +1511,6 @@
 				await section.updateProgress(modelTotal, maxTokens);
 				section.updateMessageCount(messageCount);
 				section.updateResetTime(modelInfo.resetTimestamp);
-				console.log(section.container.style.display)
 				section.container.style.display = maxTokens === 0 ? 'none' : '';
 			}
 		}
