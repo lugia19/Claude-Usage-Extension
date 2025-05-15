@@ -1089,56 +1089,20 @@ class FirebaseSyncManager {
 				await Log(`Reset processed for org ${orgId}, continuing with sync`);
 			}
 
-			// Get local state
+			// Get local state + remote info
 			const localState = await this.prepareLocalState(orgId);
-
-			// Get remote info
 			const lastUpdateInfo = await this.getLastUpdateInfo(orgId);
 			await Log("Remote info for org", orgId, ":", lastUpdateInfo);
-			// Sync logic
-			const noRemoteData = !lastUpdateInfo.deviceId;
-			const isAnotherDeviceData = lastUpdateInfo.deviceId !== deviceId;
-			const hasLocalChanges = localState.hasLocalChanges;
 
-			let shouldDownload = noRemoteData ||
-				isAnotherDeviceData ||
-				hasLocalChanges;
-
-			await Log("Download decision verdict:", {
-				decision: shouldDownload,
-				reasons: {
-					noRemoteData: noRemoteData,
-					anotherDevice: isAnotherDeviceData,
-					hasLocalChanges: hasLocalChanges
-				}
-			});
-
-			let shouldUpload = false;
-			let uploadReason = "";
-
-			if (noRemoteData) {
-				shouldUpload = true;
-				uploadReason = "noRemoteData";
-			} else {
-				shouldUpload = hasLocalChanges;
-				uploadReason = "localChanges";
-			}
-
+			// Determine sync strategy
+			const strategy = await this.determineSyncStrategy(localState, lastUpdateInfo, deviceId);
 			let mergedModels = localState.localModels;
 
-			// Download and merge if needed
-			await Log("Final sync decisions:", {
-				shouldDownload: shouldDownload,
-				shouldUpload: shouldUpload,
-				uploadReason: uploadReason || "conditionalLogic"
-			});
-
-			if (shouldDownload) {
+			if (strategy.shouldDownload) {
 				mergedModels = await this.downloadAndMerge(orgId, localState.localModels);
 			}
 
-			// Upload if needed
-			if (shouldUpload) {
+			if (strategy.shouldUpload) {
 				await this.uploadData(orgId, mergedModels, deviceId);
 			}
 
@@ -1155,6 +1119,38 @@ class FirebaseSyncManager {
 		} catch (error) {
 			await Log("error", `Error syncing org ${orgId}:`, error);
 		}
+	}
+
+	async determineSyncStrategy(localState, remoteInfo, deviceId) {
+		const noRemoteData = !remoteInfo.deviceId;
+		const isAnotherDeviceData = remoteInfo.deviceId !== deviceId;
+		const hasLocalChanges = localState.hasLocalChanges;
+
+		const shouldDownload = noRemoteData || isAnotherDeviceData || hasLocalChanges;
+
+		let shouldUpload = false;
+		let uploadReason = "";
+
+		if (noRemoteData) {
+			shouldUpload = true;
+			uploadReason = "noRemoteData";
+		} else {
+			shouldUpload = hasLocalChanges;
+			uploadReason = "localChanges";
+		}
+
+		await Log("Sync decisions:", {
+			shouldDownload,
+			shouldUpload,
+			uploadReason,
+			reasons: {
+				noRemoteData,
+				isAnotherDeviceData,
+				hasLocalChanges
+			}
+		});
+
+		return { shouldDownload, shouldUpload, uploadReason };
 	}
 
 	async prepareLocalState(orgId) {
@@ -1728,177 +1724,200 @@ async function sendTabMessage(tabId, message, maxRetries = 10, delay = 100) {
 }
 
 // Content -> Background messaging
-async function handleMessageFromContent(message, sender) {
-	//await Log("📥 Received message:", message);
-	const { orgId } = message;
-	const api = new ClaudeAPI(sender.tab?.cookieStoreId);
-	const response = await (async () => {
-		switch (message.type) {
-			case 'getCollapsedState':
-				return await tokenStorageManager.getCollapsedState();
-			case 'setCollapsedState':
-				return await tokenStorageManager.setCollapsedState(message.isCollapsed);
-			case 'getConfig':
-				return CONFIG;
-			case 'requestData':
-				const baseData = { modelData: {} };
-				const { conversationId } = message ?? undefined;
+class MessageHandlerRegistry {
+	constructor() {
+		this.handlers = new Map();
+	}
 
-				// Get data for all models
-				for (const model of CONFIG.MODELS) {
-					const modelData = await tokenStorageManager.getModelData(orgId, model);
-					if (modelData) {
-						baseData.modelData[model] = modelData;
-					}
-				}
-
-				if (conversationId) {
-					await Log("Requested metrics for conversation:", conversationId);
-					const key = `${orgId}:${conversationId}:metrics`;
-
-					if (!conversationLengthCache.has(key)) {
-						await Log("Conversation metrics not found, fetching...");
-						const tokens = await api.getConversationTokens(orgId, conversationId);
-						if (tokens) {
-							const profileTokens = await api.getProfileTokens();
-							const baseLength = tokens.length + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
-							const messageCost = tokens.cost + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
-
-							conversationLengthCache.set(key, {
-								length: baseLength,
-								cost: messageCost
-							});
-						}
-					}
-
-					if (conversationLengthCache.has(key)) {
-						baseData.conversationMetrics = conversationLengthCache.get(key);
-					}
-				}
-				return baseData;
-			case 'initOrg':
-				await tokenStorageManager.addOrgId(orgId);
-				return true;
-			case 'getPreviousVersion':
-				return await browser.storage.local.get('previousVersion').then(data => data.previousVersion);
-			case 'setCurrentVersion':
-				return await browser.storage.local.set({ previousVersion: message.version });
-			case 'getCaps':
-				return await tokenStorageManager.getCaps(orgId, api);
-			case 'getAPIKey':
-				return (await browser.storage.local.get('apiKey'))?.apiKey;
-			case 'setAPIKey':
-				const { newKey } = message
-				return await checkAndSetAPIKey(newKey);
-			case 'resetHit':
-				const { model } = message;
-				tokenStorageManager.addReset(orgId, model, api).catch(async err => {
-					await Log("error", 'Adding reset failed:', err);
-				});
-				return true;
-			case 'openDebugPage':
-				if (browser.tabs?.create) {
-					browser.tabs.create({
-						url: browser.runtime.getURL('debug.html')
-					});
-					return true;
-				}
-				return 'fallback';
-			case 'needsMonkeypatching':
-				return isElectron ? INTERCEPT_PATTERNS : false;
-			case 'interceptedRequest':
-				await Log("Got intercepted request, are we in electron?", isElectron);
-				if (!isElectron) return false;
-				message.details.tabId = sender.tab.id;
-				message.details.cookieStoreId = sender.tab.cookieStoreId;
-				onBeforeRequestHandler(message.details);
-				return true;
-			case 'interceptedResponse':
-				await Log("Got intercepted response, are we in electron?", isElectron);
-				if (!isElectron) return false;
-				message.details.tabId = sender.tab.id;
-				message.details.cookieStoreId = sender.tab.cookieStoreId;
-				onCompletedHandler(message.details);
-				return true;
-			case 'getCapModifiers':
-				const entries = await capModifiers.entries();
-				return Object.fromEntries(entries);
-
-			case 'setCapModifiers':
-				for (const [model, value] of Object.entries(message.modifiers)) {
-					await capModifiers.set(model, value);
-				}
-				return true;
-			case 'resetOrgData':
-				return await firebaseManager.triggerReset(message.orgId);
-
-			case 'shouldShowDonationNotification':
-				const { currentVersion } = message;
-				let previousVersion = await browser.storage.local.get('previousVersion').then(data => data.previousVersion);
-
-				// Prepare response object
-				const donationInfo = {
-					shouldShow: false,
-					versionMessage: '',
-					patchHighlights: []
-				};
-
-				// First install - don't show notification
-				if (!previousVersion) {
-					await browser.storage.local.set({ previousVersion: currentVersion });
-					return donationInfo;
-				}
-
-				// Get total tokens tracked
-				const totalTokens = await tokenStorageManager.getTotalTokens();
-
-				// Get donation thresholds from config (should be an array of increasing numbers)
-				const tokenThresholds = CONFIG.DONATION_TOKEN_THRESHOLDS
-
-				// Get already shown thresholds
-				const { shownDonationThresholds = [] } = await browser.storage.local.get('shownDonationThresholds');
-				const exceededThreshold = tokenThresholds.find(threshold =>
-					totalTokens >= threshold && !shownDonationThresholds.includes(threshold)
-				);
-
-				// Version change - show update notification with patch notes
-				if (previousVersion !== currentVersion) {
-					donationInfo.shouldShow = true;
-					donationInfo.versionMessage = `Updated from v${previousVersion} to v${currentVersion}!`;
-
-					try {
-						// Try to load patch notes from file
-						const patchNotesFile = await fetch(browser.runtime.getURL('update_patchnotes.txt'));
-						if (patchNotesFile.ok) {
-							const patchNotesText = await patchNotesFile.text();
-							donationInfo.patchHighlights = patchNotesText
-								.split('\n')
-								.filter(line => line.trim().length > 0);
-						}
-					} catch (error) {
-						await Log("error", "Failed to load patch notes:", error);
-					}
-
-					await browser.storage.local.set({ previousVersion: currentVersion });
-				}
-				else if (exceededThreshold) {
-					const tokenMillions = Math.floor(exceededThreshold / 1000000);
-					donationInfo.shouldShow = true;
-					donationInfo.versionMessage = `You've tracked over ${tokenMillions}M tokens with this extension!`;
-					donationInfo.patchHighlights = [
-						"Please consider supporting continued development with a donation!"
-					];
-
-					// Mark this threshold as shown
-					await browser.storage.local.set({
-						shownDonationThresholds: [...shownDonationThresholds, exceededThreshold]
-					});
-				}
-				return donationInfo;
+	register(messageTypeOrHandler, handlerFn = null) {
+		if (typeof messageTypeOrHandler === 'function') {
+			this.handlers.set(messageTypeOrHandler.name, messageTypeOrHandler);
+		} else {
+			this.handlers.set(messageTypeOrHandler, handlerFn);
 		}
-	})();
-	//await Log("📤 Sending response:", response);
-	return response;
+	}
+
+	async handle(message, sender) {
+		const handler = this.handlers.get(message.type);
+		if (!handler) {
+			await Log("warn", `No handler for message type: ${message.type}`);
+			return null;
+		}
+
+		// Extract common parameters
+		const orgId = message.orgId;
+		const api = new ClaudeAPI(sender.tab?.cookieStoreId);
+
+		// Pass common parameters to the handler
+		return handler(message, sender, orgId, api);
+	}
+}
+
+// Create the registry
+const messageRegistry = new MessageHandlerRegistry();
+
+// Simple handlers with inline functions
+messageRegistry.register('getConfig', () => CONFIG);
+messageRegistry.register('initOrg', (message, sender, orgId) => tokenStorageManager.addOrgId(orgId).then(() => true));
+messageRegistry.register('getCaps', (message, sender, orgId, api) => tokenStorageManager.getCaps(orgId, api));
+messageRegistry.register('resetOrgData', (message, sender, orgId) => firebaseManager.triggerReset(orgId));
+messageRegistry.register('resetHit', (message, sender, orgId, api) => {
+	tokenStorageManager.addReset(orgId, message.model, api)
+		.catch(async err => await Log("error", 'Adding reset failed:', err));
+	return true;
+});
+
+messageRegistry.register('getAPIKey', () => browser.storage.local.get('apiKey').then(data => data.apiKey));
+messageRegistry.register('setAPIKey', (message) => checkAndSetAPIKey(message.newKey));
+
+messageRegistry.register('getCapModifiers', async () => {
+	const entries = await capModifiers.entries();
+	return Object.fromEntries(entries);
+});
+messageRegistry.register('setCapModifiers', async (message) => {
+	for (const [model, value] of Object.entries(message.modifiers)) {
+		await capModifiers.set(model, value);
+	}
+	return true;
+});
+
+messageRegistry.register('needsMonkeypatching', () => isElectron ? INTERCEPT_PATTERNS : false);
+async function openDebugPage() {
+	if (browser.tabs?.create) {
+		browser.tabs.create({
+			url: browser.runtime.getURL('debug.html')
+		});
+		return true;
+	}
+	return 'fallback';
+}
+messageRegistry.register(openDebugPage);
+
+// Complex handlers that need more logic
+async function requestData(message, sender, orgId, api) {
+	const { conversationId } = message;
+	const baseData = { modelData: {} };
+
+	// Get data for all models
+	for (const model of CONFIG.MODELS) {
+		const modelData = await tokenStorageManager.getModelData(orgId, model);
+		if (modelData) {
+			baseData.modelData[model] = modelData;
+		}
+	}
+
+	if (conversationId) {
+		await Log("Requested metrics for conversation:", conversationId);
+		const key = `${orgId}:${conversationId}:metrics`;
+
+		if (!conversationLengthCache.has(key)) {
+			await Log("Conversation metrics not found, fetching...");
+			const tokens = await api.getConversationTokens(orgId, conversationId);
+			if (tokens) {
+				const profileTokens = await api.getProfileTokens();
+				const baseLength = tokens.length + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
+				const messageCost = tokens.cost + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
+
+				conversationLengthCache.set(key, {
+					length: baseLength,
+					cost: messageCost
+				});
+			}
+		}
+
+		if (conversationLengthCache.has(key)) {
+			baseData.conversationMetrics = conversationLengthCache.get(key);
+		}
+	}
+	return baseData;
+}
+messageRegistry.register(requestData);
+
+async function interceptedRequest(message, sender) {
+	await Log("Got intercepted request, are we in electron?", isElectron);
+	if (!isElectron) return false;
+	message.details.tabId = sender.tab.id;
+	message.details.cookieStoreId = sender.tab.cookieStoreId;
+	onBeforeRequestHandler(message.details);
+	return true;
+}
+messageRegistry.register(interceptedRequest);
+
+async function interceptedResponse(message, sender) {
+	await Log("Got intercepted response, are we in electron?", isElectron);
+	if (!isElectron) return false;
+	message.details.tabId = sender.tab.id;
+	message.details.cookieStoreId = sender.tab.cookieStoreId;
+	onCompletedHandler(message.details);
+	return true;
+}
+messageRegistry.register(interceptedResponse);
+
+async function shouldShowDonationNotification(message) {
+	const { currentVersion } = message;
+	let previousVersion = await browser.storage.local.get('previousVersion').then(data => data.previousVersion);
+
+	// Prepare response object
+	const donationInfo = {
+		shouldShow: false,
+		versionMessage: '',
+		patchHighlights: []
+	};
+
+	// First install - don't show notification
+	if (!previousVersion) {
+		await browser.storage.local.set({ previousVersion: currentVersion });
+		return donationInfo;
+	}
+
+	// Get total tokens tracked
+	const totalTokens = await tokenStorageManager.getTotalTokens();
+	const tokenThresholds = CONFIG.DONATION_TOKEN_THRESHOLDS;
+	const { shownDonationThresholds = [] } = await browser.storage.local.get('shownDonationThresholds');
+
+	const exceededThreshold = tokenThresholds.find(threshold =>
+		totalTokens >= threshold && !shownDonationThresholds.includes(threshold)
+	);
+
+	// Version change - show update notification with patch notes
+	if (previousVersion !== currentVersion) {
+		donationInfo.shouldShow = true;
+		donationInfo.versionMessage = `Updated from v${previousVersion} to v${currentVersion}!`;
+
+		try {
+			const patchNotesFile = await fetch(browser.runtime.getURL('update_patchnotes.txt'));
+			if (patchNotesFile.ok) {
+				const patchNotesText = await patchNotesFile.text();
+				donationInfo.patchHighlights = patchNotesText
+					.split('\n')
+					.filter(line => line.trim().length > 0);
+			}
+		} catch (error) {
+			await Log("error", "Failed to load patch notes:", error);
+		}
+
+		await browser.storage.local.set({ previousVersion: currentVersion });
+	}
+	else if (exceededThreshold) {
+		const tokenMillions = Math.floor(exceededThreshold / 1000000);
+		donationInfo.shouldShow = true;
+		donationInfo.versionMessage = `You've tracked over ${tokenMillions}M tokens with this extension!`;
+		donationInfo.patchHighlights = [
+			"Please consider supporting continued development with a donation!"
+		];
+
+		// Mark this threshold as shown
+		await browser.storage.local.set({
+			shownDonationThresholds: [...shownDonationThresholds, exceededThreshold]
+		});
+	}
+	return donationInfo;
+}
+messageRegistry.register(shouldShowDonationNotification);
+
+// Main handler function
+async function handleMessageFromContent(message, sender) {
+	return messageRegistry.handle(message, sender);
 }
 //#endregion
 
