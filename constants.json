@@ -24,10 +24,15 @@
 				"Sonnet": 1.5,
 				"Haiku": 1.5
 			},
-			"claude_max": {
+			"claude_max_5x": {
 				"Opus": 5,
 				"Sonnet": 5,
 				"Haiku": 5
+			},
+			"claude_max_20x": {
+				"Opus": 20,
+				"Sonnet": 20,
+				"Haiku": 20
 			}
 		}
 	},

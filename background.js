@@ -3,7 +3,7 @@ import './lib/o200k_base.js';
 
 const tokenizer = GPTTokenizer_o200k_base;
 const STORAGE_KEY = "claudeUsageTracker_v5"
-const FORCE_DEBUG = false;
+const FORCE_DEBUG = true;
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
 		urls: [
@@ -846,8 +846,6 @@ class FirebaseSyncManager {
 			null
 		);
 
-		// TODO: Other cleanup as needed
-
 		// Write empty data back to Firebase
 		if (cleanRemote) {
 			await this.uploadData(orgId, {}, await this.ensureDeviceId());
@@ -1532,10 +1530,19 @@ class ClaudeAPI {
 		const statsigData = await this.getRequest(`/bootstrap/${orgId}/statsig`);
 		const identifier = statsigData.user?.custom?.orgType;
 		await Log("User identifier:", identifier);
-		//TODO: Get for max 20x.
 		if (statsigData.user?.custom?.isRaven) {
 			return "claude_team";	//IDK if this is the actual identifier, so I'm just overriding it based on the old value.
+		} else if (identifier === "claude_max") {
+			//Need to differentiate between 5x and 20x - fetch the org data
+			const orgData = await this.getRequest(`/organizations/${orgId}`);
+			await Log("Org data for tier check:", orgData);
+			if (orgData?.settings?.rate_limit_tier === "default_claude_max_20x") {
+				return "claude_max_20x";
+			} else {
+				return "claude_max_5x";
+			}
 		}
+
 		return identifier;
 	}
 }
