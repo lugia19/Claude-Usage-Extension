@@ -1097,17 +1097,6 @@
 		}
 
 		async lowFrequencyUpdates() {
-			// Check for message limits
-			const messageLimitElement = document.querySelector(config.SELECTORS.USAGE_LIMIT_LINK);
-			if (messageLimitElement) {
-				const limitTextElement = messageLimitElement.closest('.text-text-400');
-				if (limitTextElement) {
-					await sendBackgroundMessage({
-						type: 'resetHit',
-						model: this.currentlyDisplayedModel
-					});
-				}
-			}
 			this.chatUI.updateResetTimeDisplay();
 		}
 
@@ -1593,8 +1582,75 @@
 			type: 'needsMonkeypatching'
 		});
 
-		if (!patterns) return;
+		// Always inject rate limit monitoring
+		await setupRateLimitMonitoring();
 
+		// Conditionally inject request/response interception
+		if (patterns) {
+			await setupRequestInterception(patterns);
+		}
+	}
+
+	async function setupRateLimitMonitoring() {
+		// Set up rate limit event listener
+		window.addEventListener('rateLimitExceeded', async (event) => {
+			await Log("Rate limit exceeded", event.detail);
+			await sendBackgroundMessage({
+				type: 'rateLimitExceeded'
+			})
+		});
+
+		const rateLimitScript = document.createElement('script');
+		rateLimitScript.textContent = `
+        (function() {
+            const originalFetch = window.fetch;
+            
+            window.fetch = async function(...args) {
+                const response = await originalFetch.apply(this, args);
+                
+                if (response.headers.get('content-type')?.includes('event-stream')) {
+                    const clone = response.clone();
+                    const reader = clone.body.getReader();
+                    const decoder = new TextDecoder();
+
+                    const readStream = async () => {
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+
+                            const chunk = decoder.decode(value);
+                            const lines = chunk.split('\\n');
+
+                            for (const line of lines) {
+                                if (line.startsWith('data:')) {
+                                    const data = line.substring(5).trim();
+                                    try {
+                                        const json = JSON.parse(data);
+                                        if (json.type === 'message_limit' && json.message_limit?.type === 'exceeded_limit') {
+                                            window.dispatchEvent(new CustomEvent('rateLimitExceeded', { 
+                                                detail: json.message_limit 
+                                            }));
+                                        }
+                                    } catch (e) {
+                                        // Not JSON, ignore
+                                    }
+                                }
+                            }
+                        }
+                    };
+
+                    readStream().catch(err => console.error('Rate limit stream reading error:', err));
+                }
+                
+                return response;
+            };
+        })();
+    `;
+		(document.head || document.documentElement).appendChild(rateLimitScript);
+		rateLimitScript.remove();
+	}
+
+	async function setupRequestInterception(patterns) {
 		// Set up event listeners in content script context
 		window.addEventListener('interceptedRequest', async (event) => {
 			await Log("Intercepted request", event.detail);

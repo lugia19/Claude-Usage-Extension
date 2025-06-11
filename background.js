@@ -1532,6 +1532,7 @@ class ClaudeAPI {
 		const statsigData = await this.getRequest(`/bootstrap/${orgId}/statsig`);
 		const identifier = statsigData.user?.custom?.orgType;
 		await Log("User identifier:", identifier);
+		//TODO: Get for max 20x.
 		if (statsigData.user?.custom?.isRaven) {
 			return "claude_team";	//IDK if this is the actual identifier, so I'm just overriding it based on the old value.
 		}
@@ -1761,8 +1762,10 @@ messageRegistry.register('getConfig', () => CONFIG);
 messageRegistry.register('initOrg', (message, sender, orgId) => tokenStorageManager.addOrgId(orgId).then(() => true));
 messageRegistry.register('getCaps', (message, sender, orgId, api) => tokenStorageManager.getCaps(orgId, api));
 messageRegistry.register('resetOrgData', (message, sender, orgId) => firebaseManager.triggerReset(orgId));
-messageRegistry.register('resetHit', (message, sender, orgId, api) => {
-	tokenStorageManager.addReset(orgId, message.model, api)
+
+
+messageRegistry.register('rateLimitExceeded', (message, sender, orgId, api) => {
+	tokenStorageManager.addReset(orgId, "Sonnet", api)
 		.catch(async err => await Log("error", 'Adding reset failed:', err));
 	return true;
 });
