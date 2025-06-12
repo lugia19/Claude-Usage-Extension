@@ -1,39 +1,14 @@
 {
 	"UI_UPDATE_INTERVAL_MS": 3000,
 	"OUTPUT_TOKEN_MULTIPLIER": 1,
-	"MODEL_CAPS": {
-		"BASELINE": {
-			"Opus": 500000,
-			"Sonnet": 1500000,
-			"Haiku": 3000000,
-			"default": 1
-		},
+	"USAGE_CAP": {
+		"BASELINE": 1500000,
 		"MULTIPLIERS": {
-			"claude_free": {
-				"Opus": 0,
-				"Sonnet": 0.2,
-				"Haiku": 0.2
-			},
-			"claude_pro": {
-				"Opus": 1,
-				"Sonnet": 1,
-				"Haiku": 1
-			},
-			"claude_team": {
-				"Opus": 1.5,
-				"Sonnet": 1.5,
-				"Haiku": 1.5
-			},
-			"claude_max_5x": {
-				"Opus": 5,
-				"Sonnet": 5,
-				"Haiku": 5
-			},
-			"claude_max_20x": {
-				"Opus": 20,
-				"Sonnet": 20,
-				"Haiku": 20
-			}
+			"claude_free": 0.2,
+			"claude_pro": 1,
+			"claude_team": 1.5,
+			"claude_max_5x": 5,
+			"claude_max_20x": 20
 		}
 	},
 	"MODELS": [
@@ -41,6 +16,11 @@
 		"Sonnet",
 		"Haiku"
 	],
+	"MODEL_WEIGHTS": {
+		"Sonnet": 1,
+		"Opus": 5,
+		"Haiku": 0.25
+	},
 	"SYNC_INTERVALS": {
 		"none": 30,
 		"inactive": 10,

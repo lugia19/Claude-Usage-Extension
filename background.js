@@ -2,7 +2,7 @@ import './lib/browser-polyfill.min.js';
 import './lib/o200k_base.js';
 
 const tokenizer = GPTTokenizer_o200k_base;
-const STORAGE_KEY = "claudeUsageTracker_v5"
+const STORAGE_KEY = "claudeUsageTracker_v6"
 const FORCE_DEBUG = true;
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
@@ -31,7 +31,7 @@ const INTERCEPT_PATTERNS = {
 let processingQueue = Promise.resolve();
 let pendingResponses;
 let capModifiers;
-let conversationLengthCache;
+let conversationInfoCache;
 let tokenStorageManager;
 let firebaseManager;
 let CONFIG = null;
@@ -566,78 +566,71 @@ class TokenStorageManager {
 		return result[key] ?? defaultValue;
 	}
 
-	async mergeModelData(localModels = {}, firebaseModels = {}) {
+	async mergeModelData(localData = {}, firebaseData = {}) {
 		await Log("MERGING...");
 		const merged = {};
-		const allModelKeys = new Set([
-			...Object.keys(localModels),
-			...Object.keys(firebaseModels)
-		]);
-
 		const currentTime = new Date().getTime();
 
-		allModelKeys.forEach(async model => {
-			const local = localModels[model];
-			const remote = firebaseModels[model];
+		// Extract reset timestamps
+		const localReset = localData.resetTimestamp;
+		const remoteReset = firebaseData.resetTimestamp;
+
+		// Determine which reset timestamp to use
+		if (!remoteReset || (localReset && localReset > remoteReset)) {
+			merged.resetTimestamp = localReset;
+		} else if (!localReset || remoteReset > localReset) {
+			merged.resetTimestamp = remoteReset;
+		} else {
+			// They're equal, use either
+			merged.resetTimestamp = localReset;
+		}
+
+		// If the merged reset timestamp is in the past, don't merge any data
+		if (merged.resetTimestamp && merged.resetTimestamp < currentTime) {
+			await Log("Reset timestamp is in the past, returning empty data");
+			return {};
+		}
+
+		// Get all model keys (excluding resetTimestamp)
+		const allModelKeys = new Set([
+			...Object.keys(localData).filter(k => k !== 'resetTimestamp'),
+			...Object.keys(firebaseData).filter(k => k !== 'resetTimestamp')
+		]);
+
+		// Merge each model's data
+		allModelKeys.forEach(model => {
+			const local = localData[model];
+			const remote = firebaseData[model];
 
 			if (!remote) {
 				merged[model] = local;
 			} else if (!local) {
 				merged[model] = remote;
 			} else {
-				// If reset times match, take the highest counts as before
-				if (local.resetTimestamp === remote.resetTimestamp) {
-					await Log("TIMESTAMP MATCHES, TAKING HIGHEST COUNTS!");
-					merged[model] = {
-						total: Math.max(local.total, remote.total),
-						messageCount: Math.max(local.messageCount, remote.messageCount),
-						resetTimestamp: local.resetTimestamp
-					};
-				} else {
-					// Get the earlier and later timestamps
-					const earlier = local.resetTimestamp < remote.resetTimestamp ? local : remote;
-					const later = local.resetTimestamp < remote.resetTimestamp ? remote : local;
-
-					// If earlier timestamp is still valid (not in past)
-					if (earlier.resetTimestamp > currentTime) {
-						await Log("EARLIER TIMESTAMP STILL VALID, COMBINING COUNTS!");
-						merged[model] = {
-							total: earlier.total + later.total,
-							messageCount: earlier.messageCount + later.messageCount,
-							resetTimestamp: earlier.resetTimestamp
-						};
-					} else {
-						// If earlier timestamp is expired, use later one
-						await Log("EARLIER TIMESTAMP EXPIRED, USING LATER ONE!");
-						merged[model] = later;
-					}
-				}
+				// Take the highest counts
+				merged[model] = {
+					total: Math.max(local.total || 0, remote.total || 0),
+					messageCount: Math.max(local.messageCount || 0, remote.messageCount || 0)
+				};
 			}
 		});
-		await Log(merged);
+
+		await Log("Merged data:", merged);
 		return merged;
 	}
 
-	async getCaps(orgId, api) {
+	async getUsageCap(orgId, api) {
 		let subscriptionTier = await this.subscriptionTiers.get(orgId);
 
-		if (!subscriptionTier || !(subscriptionTier in CONFIG.MODEL_CAPS.MULTIPLIERS)) {	//Also re-check if it's not in the caps, to update old values
+		if (!subscriptionTier || !(subscriptionTier in CONFIG.USAGE_CAP.MULTIPLIERS)) {
 			subscriptionTier = await api.getSubscriptionTier(orgId);
 			await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 60 * 1000); // 10 minutes
 		}
-		const baseline = CONFIG.MODEL_CAPS.BASELINE
-		const tierMultipliers = CONFIG.MODEL_CAPS.MULTIPLIERS[subscriptionTier];
-		const result = {};
-		if (tierMultipliers) {
-			Object.keys(tierMultipliers).forEach(model => {
-				if (baseline[model] && tierMultipliers[model] !== undefined) {
-					result[model] = baseline[model] * tierMultipliers[model];
-				}
-			});
-			return result
-		} else {
-			return baseline;
-		}
+
+		const baseline = CONFIG.USAGE_CAP.BASELINE;
+		const tierMultiplier = CONFIG.USAGE_CAP.MULTIPLIERS[subscriptionTier];
+		const modifier = await capModifiers.get("global") || 1;
+		return baseline * tierMultiplier * modifier;
 	}
 
 	async getCollapsedState() {
@@ -650,28 +643,26 @@ class TokenStorageManager {
 
 	async checkAndCleanExpiredData(orgId) {
 		const allModelData = await this.getValue(this.getStorageKey(orgId, 'models'));
-		if (!allModelData) return;
+		if (!allModelData || !allModelData.resetTimestamp) return;
 
-		const currentTime = new Date();
-		let hasChanges = false;
+		const currentTime = new Date().getTime();
 
-		for (const model in allModelData) {
-			const resetTime = new Date(allModelData[model].resetTimestamp);
-			if (currentTime >= resetTime) {
-				delete allModelData[model];
-				hasChanges = true;
-			}
-		}
-
-		if (hasChanges) {
-			await this.setValue(this.getStorageKey(orgId, 'models'), allModelData);
+		// If the shared reset timestamp has passed, clear all model data
+		if (currentTime >= allModelData.resetTimestamp) {
+			await this.setValue(this.getStorageKey(orgId, 'models'), {});
 		}
 	}
 
 	async getModelData(orgId, model) {
 		await this.checkAndCleanExpiredData(orgId);
 		const allModelData = await this.getValue(this.getStorageKey(orgId, 'models'));
-		return allModelData?.[model];
+		if (!allModelData || !allModelData[model]) return null;
+
+		// Return the model data with the shared reset timestamp
+		return {
+			...allModelData[model],
+			resetTimestamp: allModelData.resetTimestamp
+		};
 	}
 
 	async addTokensToModel(orgId, model, newTokens) {
@@ -684,23 +675,28 @@ class TokenStorageManager {
 			this.storageLock = true;
 			let allModelData = await this.getValue(this.getStorageKey(orgId, 'models'), {});
 			const stored = allModelData[model];
+			const resetTimestamp = allModelData.resetTimestamp;
 			const now = new Date();
 
-			// If stored data exists and its reset time has passed, treat as new period
-			if (stored && stored.resetTimestamp < now.getTime()) {
-				allModelData[model] = {
-					total: newTokens,
-					messageCount: 1,
+			// If reset timestamp exists and has passed, reset ALL models
+			if (resetTimestamp && resetTimestamp < now.getTime()) {
+				// Clear all model data but keep the structure
+				const newData = {
 					resetTimestamp: this.#getResetFromNow(now).getTime()
 				};
-			} else {
-				// Otherwise add to existing or create new
-				allModelData[model] = {
-					total: (stored?.total || 0) + newTokens,
-					messageCount: (stored?.messageCount || 0) + 1,
-					resetTimestamp: stored?.resetTimestamp || this.#getResetFromNow(now).getTime()
-				};
+				allModelData = newData;
 			}
+
+			// Initialize reset timestamp if it doesn't exist
+			if (!allModelData.resetTimestamp) {
+				allModelData.resetTimestamp = this.#getResetFromNow(now).getTime();
+			}
+
+			// Add tokens to the specific model
+			allModelData[model] = {
+				total: (stored?.total || 0) + newTokens,
+				messageCount: (stored?.messageCount || 0) + 1
+			};
 
 			await this.setValue(this.getStorageKey(orgId, 'models'), allModelData);
 			await browser.storage.local.set({ 'totalTokensTracked': await this.getTotalTokens() + newTokens });
@@ -763,20 +759,33 @@ class TokenStorageManager {
 
 	async addReset(orgId, model, api) {
 		await sleep(15000); // We want to ensure we get the latest data, which can take a second - so we wait 15.
-		const modelData = await this.getModelData(orgId, model);
-		if (!modelData) return;
+		const allModelData = await this.getValue(this.getStorageKey(orgId, 'models'));
+		if (!allModelData || !allModelData.resetTimestamp) return;
 
-		const key = `${orgId}:${modelData.resetTimestamp}`;
-		const cap = (await this.getCaps(orgId, api))[model];
+		const key = `${orgId}:${allModelData.resetTimestamp}`;
+		const cap = await this.getUsageCap(orgId, api);
 		const tier = await this.subscriptionTiers.get(orgId);
 		const hasApiKey = !!(await browser.storage.local.get('apiKey'))?.apiKey;
+
+		// Calculate weighted total across all models
+		let weightedTotal = 0;
+		const modelBreakdown = {};
+
+		for (const [modelName, modelData] of Object.entries(allModelData)) {
+			if (modelName !== 'resetTimestamp' && modelData?.total) {
+				const weight = CONFIG.MODEL_WEIGHTS[modelName] || 1;
+				weightedTotal += modelData.total * weight;
+				modelBreakdown[modelName] = modelData.total;
+			}
+		}
 
 		// Only add if not already present
 		if (!(await this.resetsHit.has(key))) {
 			await this.resetsHit.set(key, {
-				total: `${modelData.total}/${cap}`,
-				model: model,
-				reset_time: modelData.resetTimestamp,
+				total: `${Math.round(weightedTotal)}/${cap}`,
+				weightedTotal: Math.round(weightedTotal),
+				models: modelBreakdown,  // Add individual model totals
+				reset_time: allModelData.resetTimestamp,
 				warning_time: new Date().toISOString(),
 				tier: tier,
 				accurateCount: hasApiKey
@@ -1116,6 +1125,7 @@ class FirebaseSyncManager {
 
 		} catch (error) {
 			await Log("error", `Error syncing org ${orgId}:`, error);
+			throw error; // Re-throw to handle it in the caller
 		}
 	}
 
@@ -1191,22 +1201,37 @@ class FirebaseSyncManager {
 
 	async downloadAndMerge(orgId, localModels) {
 		await Log("Downloading remote data");
-		const modelsUrl = `${this.firebase_base_url}/users/${orgId}/models.json`;
-		const modelsResponse = await fetch(modelsUrl);
-		const remoteModels = await modelsResponse.json() || {};
-		const mergedModels = await this.tokenStorage.mergeModelData(localModels, remoteModels);
+		const usageUrl = `${this.firebase_base_url}/users/${orgId}/usage.json`;
+		const usageResponse = await fetch(usageUrl);
+		const remoteUsage = await usageResponse.json() || {};
 
+		const mergedModels = await this.tokenStorage.mergeModelData(localModels, remoteUsage);
 		return mergedModels;
 	}
 
 	async uploadData(orgId, models, deviceId) {
 		await Log("Uploading data and updating device ID");
 
-		// Upload models
-		const modelsUrl = `${this.firebase_base_url}/users/${orgId}/models.json`;
-		const writeResponse = await fetch(modelsUrl, {
+		// Calculate weighted total before uploading
+		let weightedTotal = 0;
+		for (const [modelName, modelData] of Object.entries(models)) {
+			if (modelName !== 'resetTimestamp' && modelData?.total) {
+				const weight = CONFIG.MODEL_WEIGHTS[modelName] || 1;
+				weightedTotal += modelData.total * weight;
+			}
+		}
+
+		// Add weighted total to the data structure
+		const dataToUpload = {
+			...models,
+			weightedTotal: Math.round(weightedTotal)
+		};
+
+		// Upload models with weighted total
+		const usageUrl = `${this.firebase_base_url}/users/${orgId}/usage.json`;
+		const writeResponse = await fetch(usageUrl, {
 			method: 'PUT',
-			body: JSON.stringify(models)
+			body: JSON.stringify(dataToUpload)
 		});
 
 		if (!writeResponse.ok) {
@@ -1407,7 +1432,7 @@ class ClaudeAPI {
 		);
 	}
 
-	async getConversationTokens(orgId, conversationId) {
+	async getConversationInfo(orgId, conversationId) {
 		const conversationData = await this.getConversation(orgId, conversationId);
 		// Count messages by sender
 		let humanMessagesCount = 0;
@@ -1508,10 +1533,23 @@ class ClaudeAPI {
 		if (conversationData.project_uuid) {
 			baseTokens += await this.getProjectTokens(orgId, conversationData.project_uuid);
 		}
-		await Log(`Total tokens for conversation ${conversationId}: ${baseTokens}`);
+
+		let conversationModelType = undefined;
+		let modelString = "sonnet"
+		if (conversationData.model) modelString = conversationData.model.toLowerCase();
+		for (const modelType of CONFIG.MODELS) {
+			if (modelString.includes(modelType.toLowerCase())) {
+				conversationModelType = modelType;
+				break;
+			}
+		}
+
+		await Log(`Total tokens for conversation ${conversationId}: ${baseTokens} with model ${conversationModelType}`);
+
 		return {
 			length: baseTokens,
-			cost: baseTokens + lastMessageTokens
+			cost: baseTokens + lastMessageTokens,
+			model: conversationModelType,
 		};
 	}
 
@@ -1679,20 +1717,35 @@ class StoredMap {
 async function updateAllTabs(currentCost = undefined, currentLength = undefined, lengthTabId = undefined) {
 	await Log("Updating all tabs with new data");
 	const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
+
 	for (const tab of tabs) {
 		const orgId = await requestActiveOrgId(tab);
 		await Log("Updating tab:", tab.id, "with orgId:", orgId);
-		const tabData = {
-			modelData: {}
-		};
 
-		for (const model of CONFIG.MODELS) {
-			const modelData = await tokenStorageManager.getModelData(orgId, model);
-			await Log("Got model data:", modelData, "for model:", model);
-			if (modelData) {
-				tabData.modelData[model] = modelData;
+		// Get the internal model data
+		const allModelData = await tokenStorageManager.getValue(
+			tokenStorageManager.getStorageKey(orgId, 'models')
+		) || {};
+
+		// Transform to frontend format
+		let weightedTotal = 0;
+		const resetTimestamp = allModelData.resetTimestamp;
+
+		// Calculate weighted total
+		for (const [modelName, modelData] of Object.entries(allModelData)) {
+			if (modelName !== 'resetTimestamp' && modelName !== 'weightedTotal' && modelData?.total) {
+				const weight = CONFIG.MODEL_WEIGHTS[modelName] || 1;
+				weightedTotal += modelData.total * weight;
 			}
 		}
+
+		const tabData = {
+			modelData: {
+				total: Math.round(weightedTotal),
+				resetTimestamp: resetTimestamp,
+				modelWeights: CONFIG.MODEL_WEIGHTS
+			}
+		};
 
 		if (currentCost && currentLength && lengthTabId && tab.id === lengthTabId) {
 			tabData.conversationMetrics = {
@@ -1767,7 +1820,7 @@ const messageRegistry = new MessageHandlerRegistry();
 // Simple handlers with inline functions
 messageRegistry.register('getConfig', () => CONFIG);
 messageRegistry.register('initOrg', (message, sender, orgId) => tokenStorageManager.addOrgId(orgId).then(() => true));
-messageRegistry.register('getCaps', (message, sender, orgId, api) => tokenStorageManager.getCaps(orgId, api));
+messageRegistry.register('getUsageCap', (message, sender, orgId, api) => tokenStorageManager.getUsageCap(orgId, api));
 messageRegistry.register('resetOrgData', (message, sender, orgId) => firebaseManager.triggerReset(orgId));
 
 
@@ -1780,14 +1833,11 @@ messageRegistry.register('rateLimitExceeded', (message, sender, orgId, api) => {
 messageRegistry.register('getAPIKey', () => browser.storage.local.get('apiKey').then(data => data.apiKey));
 messageRegistry.register('setAPIKey', (message) => checkAndSetAPIKey(message.newKey));
 
-messageRegistry.register('getCapModifiers', async () => {
-	const entries = await capModifiers.entries();
-	return Object.fromEntries(entries);
+messageRegistry.register('getCapModifier', async () => {
+	return await capModifiers.get('global') || 1;
 });
-messageRegistry.register('setCapModifiers', async (message) => {
-	for (const [model, value] of Object.entries(message.modifiers)) {
-		await capModifiers.set(model, value);
-	}
+messageRegistry.register('setCapModifier', async (message) => {
+	await capModifiers.set('global', message.modifier);
 	return true;
 });
 
@@ -1803,40 +1853,71 @@ async function openDebugPage() {
 }
 messageRegistry.register(openDebugPage);
 
-// Complex handlers that need more logic
+// Complex handlers
 async function requestData(message, sender, orgId, api) {
-	const { conversationId } = message;
-	const baseData = { modelData: {} };
+	const { conversationId, modelOverride } = message;
 
-	// Get data for all models
-	for (const model of CONFIG.MODELS) {
-		const modelData = await tokenStorageManager.getModelData(orgId, model);
-		if (modelData) {
-			baseData.modelData[model] = modelData;
+	// Get the internal model data
+	const allModelData = await tokenStorageManager.getValue(
+		tokenStorageManager.getStorageKey(orgId, 'models')
+	) || {};
+
+	// Transform to frontend format
+	let weightedTotal = 0;
+	const resetTimestamp = allModelData.resetTimestamp;
+
+	// Calculate weighted total
+	for (const [modelName, modelData] of Object.entries(allModelData)) {
+		if (modelName !== 'resetTimestamp' && modelName !== 'weightedTotal' && modelData?.total) {
+			const weight = CONFIG.MODEL_WEIGHTS[modelName] || 1;
+			weightedTotal += modelData.total * weight;
 		}
 	}
 
+	const baseData = {
+		modelData: {
+			total: Math.round(weightedTotal),
+			resetTimestamp: resetTimestamp,
+			modelWeights: CONFIG.MODEL_WEIGHTS
+		}
+	};
+
 	if (conversationId) {
-		await Log("Requested metrics for conversation:", conversationId);
+		await Log(`Requested metrics for conversation: ${conversationId}`);
 		const key = `${orgId}:${conversationId}:metrics`;
 
-		if (!conversationLengthCache.has(key)) {
+		if (!conversationInfoCache.has(key)) {
 			await Log("Conversation metrics not found, fetching...");
-			const tokens = await api.getConversationTokens(orgId, conversationId);
-			if (tokens) {
+			const convoInfo = await api.getConversationInfo(orgId, conversationId);
+			if (convoInfo) {
 				const profileTokens = await api.getProfileTokens();
-				const baseLength = tokens.length + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
-				const messageCost = tokens.cost + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
+				const baseLength = convoInfo.length + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
+				const messageCost = convoInfo.cost + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
 
-				conversationLengthCache.set(key, {
+				conversationInfoCache.set(key, {
 					length: baseLength,
-					cost: messageCost
+					cost: messageCost,
+					model: convoInfo.model
 				});
 			}
 		}
 
-		if (conversationLengthCache.has(key)) {
-			baseData.conversationMetrics = conversationLengthCache.get(key);
+		if (conversationInfoCache.has(key)) {
+			const cachedMetrics = conversationInfoCache.get(key);
+			let currentModel = cachedMetrics.model;
+			if (modelOverride) currentModel = modelOverride;
+			if (!currentModel) {
+				await Log("No model provided, using Sonnet fallback");
+				currentModel = "Sonnet";
+			}
+
+			const modelWeight = CONFIG.MODEL_WEIGHTS[currentModel];
+
+			// Return length as-is, but weight the cost
+			baseData.conversationMetrics = {
+				length: cachedMetrics.length,
+				cost: Math.round(cachedMetrics.cost * modelWeight)
+			};
 		}
 	}
 	return baseData;
@@ -1970,31 +2051,29 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	const api = new ClaudeAPI(details.cookieStoreId);
 	await Log("Processing response...")
 
-	const tokens = await api.getConversationTokens(orgId, conversationId);
-	if (!tokens) {
+	const convoInfo = await api.getConversationInfo(orgId, conversationId);
+	if (!convoInfo) {
 		await Log("warn", "Could not get conversation tokens, exiting...")
 		return false;
 	}
 
-
-
 	const profileTokens = await api.getProfileTokens();
-	let baseLength = tokens.length + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
-	let messageCost = tokens.cost + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
+	let baseLength = convoInfo.length + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
+	let messageCost = convoInfo.cost + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
 
 	await Log("Current base length:", baseLength);
-	await Log("Current message cost:", messageCost);
+	await Log("Current message cost (raw):", messageCost);
 
-	conversationLengthCache.set(`${orgId}:${conversationId}:metrics`, {
+	conversationInfoCache.set(`${orgId}:${conversationId}:metrics`, {
 		length: baseLength,
-		cost: messageCost
+		cost: messageCost,  // Keep raw cost in cache for now
+		model: convoInfo.model
 	});
 
 	const pendingResponse = await pendingResponses.get(responseKey);
 	const isNewMessage = pendingResponse !== undefined;
 
-	// The style is procesed _after_ we set the conversationLengthCache, as it can vary.
-	// Yes, this means the length display won't update when you change the style. Too bad!
+	// The style is processed _after_ we set the conversationLengthCache, as it can vary.
 	const styleTokens = await api.getStyleTokens(orgId, pendingResponse?.styleId, tabId);
 	messageCost += styleTokens;
 	await Log("Added style tokens:", styleTokens);
@@ -2006,37 +2085,36 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 				`${tool.name} ${tool.description} ${tool.schema}`
 			);
 		}
-		await Log("Added tool definition tokens;:", toolTokens);
+		await Log("Added tool definition tokens:", toolTokens);
 		messageCost += toolTokens;
 	}
 
 	if (isNewMessage) {
-		const model = pendingResponse.model;
+		const model = pendingResponse.model;	//This should be more reliable than using the conversation model.
+		const modelWeight = CONFIG.MODEL_WEIGHTS[model] || 1;
+		const weightedCost = messageCost * modelWeight;
+
+		await Log(`Raw message cost: ${messageCost}, Model weight: ${modelWeight}, Weighted cost: ${weightedCost}`);
+
 		const requestTime = pendingResponse.requestTimestamp;
 		const conversationData = await api.getConversation(orgId, conversationId);
 		const latestMessageTime = new Date(conversationData.chat_messages[conversationData.chat_messages.length - 1].created_at).getTime();
 		if (latestMessageTime < requestTime - 5000) {
 			await Log("Message appears to be older than our request, likely an error");
 		} else {
-			await Log(`=============Adding tokens for model: ${model}, Total tokens: ${messageCost}============`);
+			await Log(`=============Adding tokens for model: ${model}, Raw tokens: ${messageCost}, Weighted tokens: ${weightedCost}============`);
+			// Store the raw tokens internally (backend will handle weighting for display)
 			await tokenStorageManager.addTokensToModel(orgId, model, messageCost);
 		}
 	}
 
-	// Prep base data that goes to all tabs
-	const baseData = {
-		modelData: {}
-	};
+	// Update the cache with the weighted cost for the current model
+	const currentModel = pendingResponse?.model || "Sonnet";
+	const modelWeight = CONFIG.MODEL_WEIGHTS[currentModel] || 1;
+	const weightedMessageCost = messageCost * modelWeight;
 
-	// Get data for all models
-	for (const model of CONFIG.MODELS) {
-		const modelData = await tokenStorageManager.getModelData(orgId, model);
-		if (modelData) {
-			baseData.modelData[model] = modelData;
-		}
-	}
-
-	await updateAllTabs(messageCost, baseLength, tabId);
+	// Update all tabs with the raw length but weighted cost
+	await updateAllTabs(weightedMessageCost, baseLength, tabId);
 
 	return true;
 }
@@ -2188,7 +2266,7 @@ async function addFirefoxContainerFixListener() {
 //#region Variable fill in and initialization
 pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
 capModifiers = new StoredMap('capModifiers');
-conversationLengthCache = new Map();
+conversationInfoCache = new Map();
 tokenStorageManager = new TokenStorageManager();
 firebaseManager = tokenStorageManager.firebaseManager
 

@@ -2,7 +2,7 @@
 	'use strict';
 	const BLUE_HIGHLIGHT = '#3b82f6';
 	const RED_WARNING = "#ef4444";
-	const FORCE_DEBUG = false;
+	const FORCE_DEBUG = true;
 
 	async function Log(...args) {
 		const sender = `content:${document.title.substring(0, 20)}${document.title.length > 20 ? '...' : ''}`;
@@ -253,9 +253,8 @@
 	}
 
 
-	class ModelSection {
-		constructor(modelName) {
-			this.modelName = modelName;
+	class UsageSection {
+		constructor() {
 			this.isEnabled = true;
 			this.resetTime = null;
 			this.buildSection();
@@ -265,96 +264,72 @@
 			// Main container stays the same
 			this.container = document.createElement('div');
 			this.container.style.cssText = `
-				margin-bottom: 8px;
-				padding-bottom: 4px;
-				opacity: 1;
-				transition: opacity 0.2s;
-				position: relative;
-			`;
+            margin-bottom: 8px;
+            padding-bottom: 4px;
+            opacity: 1;
+            transition: opacity 0.2s;
+            position: relative;
+        `;
 
 			// Top line with flexbox layout
 			const topLine = document.createElement('div');
 			topLine.style.cssText = `
-				display: flex;
-				align-items: center;
-				color: white;
-				font-size: 12px;
-				margin-bottom: 4px;
-				user-select: none;
-			`;
+            display: flex;
+            align-items: center;
+            color: white;
+            font-size: 12px;
+            margin-bottom: 4px;
+            user-select: none;
+        `;
 
-			// Model name container - fixed percentage width
+			// Name container - fixed percentage width
 			const nameContainer = document.createElement('div');
 			nameContainer.style.cssText = `
-				width: 35%;
-				display: flex;
-				align-items: center;
-			`;
+            width: 35%;
+            display: flex;
+            align-items: center;
+        `;
 
-			// Create model name
+			// Create "All" label
 			const title = document.createElement('span');
-			title.textContent = `${this.modelName}:`;
+			title.textContent = 'All:';
 
-			// Create percentage display next to model name
+			// Create percentage display next to label
 			this.percentageDisplay = document.createElement('span');
 			this.percentageDisplay.style.cssText = `
-				margin-left: 6px;
-				font-size: 11px;
-				white-space: nowrap;
-			`;
+            margin-left: 6px;
+            font-size: 11px;
+            white-space: nowrap;
+        `;
 
 			// Add both to the name container
 			nameContainer.appendChild(title);
 			nameContainer.appendChild(this.percentageDisplay);
 
-			// Stats container with fixed column widths for alignment
+			// Stats container - simplified without message counter
 			const statsContainer = document.createElement('div');
 			statsContainer.style.cssText = `
-				display: flex;
-				flex-grow: 1;
-				align-items: center;
-				color: #888;
-				font-size: 11px;
-			`;
+            display: flex;
+            flex-grow: 1;
+            align-items: center;
+            color: #888;
+            font-size: 11px;
+        `;
 
-			// Message counter - fixed width column for alignment
-			this.messageCounter = document.createElement('div');
-			this.messageCounter.style.cssText = `
-				width: 35%;
-				text-align: left;
-				white-space: nowrap;
-			`;
-			this.messageCounter.textContent = 'Msgs: 0';
-
-			// Reset time display
+			// Reset time display - now takes full width of stats container
 			this.resetTimeDisplay = document.createElement('div');
 			this.resetTimeDisplay.style.cssText = `
-				width: 30%;
-				text-align: left;
-				white-space: nowrap;
-			`;
+            width: 100%;
+            text-align: left;
+            white-space: nowrap;
+        `;
 			this.resetTimeDisplay.textContent = 'Reset in: Not set';
 
-			// Active indicator
-			this.activeIndicator = document.createElement('div');
-			this.activeIndicator.style.cssText = `
-				width: 8px;
-				height: 8px;
-				border-radius: 50%;
-				background: #3b82f6;
-				opacity: 1;
-				transition: opacity 0.2s;
-				margin-left: 2%;
-				flex-shrink: 0;
-			`;
-
 			// Assemble the top line
-			statsContainer.appendChild(this.messageCounter);
 			statsContainer.appendChild(this.resetTimeDisplay);
 
 			topLine.appendChild(nameContainer);
 			topLine.appendChild(statsContainer);
-			topLine.appendChild(this.activeIndicator);
 
 			// Create progress bar
 			this.progressBar = new ProgressBar();
@@ -365,27 +340,16 @@
 		}
 
 		async updateProgress(total, maxTokens) {
-			// Get modifiers
-			const result = await sendBackgroundMessage({ type: 'getCapModifiers' });
-			const modifiers = result || {};
-
-			// Apply modifier if it exists
-			const adjustedMax = modifiers[this.modelName] ? maxTokens * modifiers[this.modelName] : maxTokens;
-
 			// Calculate percentage
-			const percentage = (total / adjustedMax) * 100;
+			const percentage = (total / maxTokens) * 100;
 
 			// Update progress bar
-			this.progressBar.updateProgress(total, adjustedMax);
+			this.progressBar.updateProgress(total, maxTokens);
 
 			// Update percentage display
-			const color = percentage >= config.WARNING_THRESHOLD * 100 ? '#ef4444' : '#3b82f6';
+			const color = percentage >= config.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
 			this.percentageDisplay.textContent = `${percentage.toFixed(1)}%`;
 			this.percentageDisplay.style.color = color;
-		}
-
-		updateMessageCount(count) {
-			this.messageCounter.textContent = `Msgs: ${count}`;
 		}
 
 		updateResetTime(timestamp) {
@@ -394,10 +358,6 @@
 			this.resetTimeDisplay.innerHTML = timestamp ?
 				`Reset in: <span style="color: ${BLUE_HIGHLIGHT}">${formatTimeRemaining(timestamp)}</span>` :
 				'Reset in: Not Set';
-		}
-
-		setActive(active) {
-			this.activeIndicator.style.opacity = active ? '1' : '0';
 		}
 	}
 
@@ -610,14 +570,14 @@
 			const input = document.createElement('input');
 			input.type = 'password';
 			input.style.cssText = `
-				width: calc(100% - 12px);
-				padding: 6px;
-				margin-bottom: 12px;
-				background: #3B3B3B;
-				border: 1px solid #4B4B4B;
-				border-radius: 4px;
-				color: white;
-			`;
+            width: calc(100% - 12px);
+            padding: 6px;
+            margin-bottom: 12px;
+            background: #3B3B3B;
+            border: 1px solid #4B4B4B;
+            border-radius: 4px;
+            color: white;
+        `;
 
 			let apiKey = await sendBackgroundMessage({ type: 'getAPIKey' })
 			if (apiKey) input.value = apiKey
@@ -625,37 +585,35 @@
 			const saveButton = document.createElement('button');
 			saveButton.textContent = 'Save';
 			saveButton.style.cssText = `
-				background: ${BLUE_HIGHLIGHT};
-				border: none;
-				border-radius: 4px;
-				color: white;
-				cursor: pointer;
-				padding: 6px 12px;
-			`;
+            background: ${BLUE_HIGHLIGHT};
+            border: none;
+            border-radius: 4px;
+            color: white;
+            cursor: pointer;
+            padding: 6px 12px;
+        `;
 
 			saveButton.addEventListener('click', async () => {
-				// Collect modifiers
-				const modifiers = {};
-				modifiersContainer.querySelectorAll('input').forEach(input => {
-					const value = input.value.replace('%', '');
-					if (!isNaN(value)) {
-						modifiers[input.dataset.model] = parseFloat(value) / 100;
-					}
-				});
+				// Get the cap modifier value
+				const modifierValue = modifierInput.value.replace('%', '');
+				let modifier = 1; // default
+				if (!isNaN(modifierValue)) {
+					modifier = parseFloat(modifierValue) / 100;
+				}
 
-				// Save modifiers
+				// Save cap modifier
 				await sendBackgroundMessage({
-					type: 'setCapModifiers',
-					modifiers
+					type: 'setCapModifier',
+					modifier
 				});
 
 				let result = await sendBackgroundMessage({ type: 'setAPIKey', newKey: input.value })
 				if (!result) {
 					const errorMsg = document.createElement('div');
 					errorMsg.style.cssText = `
-						color: ${RED_WARNING};
-						font-size: 14px;
-					`;
+                    color: ${RED_WARNING};
+                    font-size: 14px;
+                `;
 					if (input.value.startsWith('sk-ant')) {
 						errorMsg.textContent = 'Inactive API key. Have you ever loaded credits to the account?';
 					} else {
@@ -676,77 +634,60 @@
 			// Create a container for the buttons
 			const buttonContainer = document.createElement('div');
 			buttonContainer.style.cssText = `
-				display: flex;
-				gap: 8px;
-				align-items: center;
-			`;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        `;
 			buttonContainer.appendChild(saveButton);
-			const separatorText = document.createElement('div');
-			separatorText.textContent = 'Model Cap Modifiers:';
-			separatorText.style.cssText = `
-				font-size: 12px;
-				margin-bottom: 8px;
-			`;
 
-			// Add model modifiers
-			const modifiersContainer = document.createElement('div');
-			modifiersContainer.style.cssText = `
-				display: flex;
-				flex-direction: row;
-				gap: 12px;
-				margin-bottom: 12px;
-			`;
+			// Add cap modifier
+			const modifierContainer = document.createElement('div');
+			modifierContainer.style.cssText = `
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        `;
 
-			// Get stored modifiers
-			const result = await sendBackgroundMessage({ type: 'getCapModifiers' });
-			const storedModifiers = result || {};
-			// Create input for each model
-			config.MODELS.forEach(model => {
-				const row = document.createElement('div');
-				row.style.cssText = `
-					display: flex;
-					align-items: center;
-					gap: 4px;
-				`;
+			const modifierLabel = document.createElement('label');
+			modifierLabel.textContent = 'Cap Modifier:';
+			modifierLabel.style.color = '#FFF';
+			modifierLabel.style.fontSize = '12px';
 
-				const label = document.createElement('label');
-				label.textContent = `${model}:`;
-				label.style.color = '#FFF';
-				label.style.fontSize = '12px';
+			const modifierInput = document.createElement('input');
+			modifierInput.type = 'text';
+			modifierInput.style.cssText = `
+            width: 60px;
+            padding: 4px;
+            background: #3B3B3B;
+            border: 1px solid #4B4B4B;
+            border-radius: 4px;
+            color: white;
+            font-size: 12px;
+        `;
 
-				const input = document.createElement('input');
-				input.type = 'text';
-				input.value = storedModifiers[model] !== undefined ? `${(storedModifiers[model] * 100)}%` : '100%';
-				input.style.cssText = `
-					width: 45px;
-					padding: 4px;
-					background: #3B3B3B;
-					border: 1px solid #4B4B4B;
-					border-radius: 4px;
-					color: white;
-					font-size: 12px;
-				`;
-				input.dataset.model = model;
+			// Get stored modifier
+			const result = await sendBackgroundMessage({ type: 'getCapModifier' });
+			const storedModifier = result || 1;
+			modifierInput.value = `${(storedModifier * 100)}%`;
 
-				row.appendChild(label);
-				row.appendChild(input);
-				modifiersContainer.appendChild(row);
-			});
+			modifierContainer.appendChild(modifierLabel);
+			modifierContainer.appendChild(modifierInput);
 
-			this.element.appendChild(separatorText);
-			this.element.appendChild(modifiersContainer);
+			this.element.appendChild(modifierContainer);
+
 			// Create and add debug button to container
 			const debugButton = document.createElement('button');
 			debugButton.textContent = 'Debug Logs';
 			debugButton.style.cssText = `
-				background: #3B3B3B;
-				border: 1px solid #4B4B4B;
-				border-radius: 4px;
-				color: #888;
-				cursor: pointer;
-				padding: 6px 12px;
-				font-size: 12px;
-			`;
+            background: #3B3B3B;
+            border: 1px solid #4B4B4B;
+            border-radius: 4px;
+            color: #888;
+            cursor: pointer;
+            padding: 6px 12px;
+            font-size: 12px;
+        `;
 
 			debugButton.addEventListener('click', async () => {
 				const result = await sendBackgroundMessage({
@@ -766,20 +707,20 @@
 			const resetButton = document.createElement('button');
 			resetButton.textContent = 'Reset Quota';
 			resetButton.style.cssText = `
-				background: ${RED_WARNING};
-				border: none;
-				border-radius: 4px;
-				color: white;
-				cursor: pointer;
-				padding: 6px 12px;
-				font-size: 12px;
-			`;
+            background: ${RED_WARNING};
+            border: none;
+            border-radius: 4px;
+            color: white;
+            cursor: pointer;
+            padding: 6px 12px;
+            font-size: 12px;
+        `;
 
 			resetButton.addEventListener('click', async () => {
 				// Show confirmation dialog
 				const confirmation = confirm(
 					'Are you sure you want to reset usage data for this organization?\n\n' +
-					'This will reset ALL models\' usage counters to zero and sync this reset across all your devices. ' +
+					'This will reset the usage counter to zero and sync this reset across all your devices. ' +
 					'This action cannot be undone.'
 				);
 
@@ -828,18 +769,16 @@
 			// Add the container instead of just the save button
 			this.element.appendChild(buttonContainer);
 
-
-
 			this.addCloseButton();
 
 			// Make the card draggable by the label area
 			const dragHandle = document.createElement('div');
 			dragHandle.style.cssText = `
-				padding: 8px;
-				margin: -12px -12px 8px -12px;
-				border-bottom: 1px solid #3B3B3B;
-				cursor: move;
-			`;
+            padding: 8px;
+            margin: -12px -12px 8px -12px;
+            border-bottom: 1px solid #3B3B3B;
+            cursor: move;
+        `;
 			dragHandle.textContent = 'Settings';
 
 			this.element.insertBefore(dragHandle, this.element.firstChild);
@@ -876,7 +815,6 @@
 				SettingsCard.currentInstance = null;
 			}
 		}
-
 	}
 
 	class ProgressBar {
@@ -960,7 +898,7 @@
 		updateProgress(total, maxTokens) {
 			const percentage = (total / maxTokens) * 100;
 			this.bar.style.width = `${Math.min(percentage, 100)}%`;
-			this.bar.style.background = total >= maxTokens * config.WARNING.PERCENT_THRESHOLD ? '#ef4444' : '#3b82f6';
+			this.bar.style.background = total >= maxTokens * config.WARNING.PERCENT_THRESHOLD ? RED_WARNING : BLUE_HIGHLIGHT;
 			this.tooltip.textContent = `${total.toLocaleString()} / ${maxTokens.toLocaleString()} tokens (${percentage.toFixed(1)}%)`;
 		}
 	}
@@ -1061,8 +999,12 @@
 		async highFrequencyUpdates() {
 			const currConversation = getConversationId();
 			const newModel = await getCurrentModel(200);
-			if (newModel !== this.currentlyDisplayedModel) {
-				await this.updateUI(await sendBackgroundMessage({ type: 'requestData', conversationId: currConversation }));
+			if (newModel && newModel !== this.currentlyDisplayedModel) {
+				await this.updateUI(await sendBackgroundMessage({
+					type: 'requestData',
+					conversationId: currConversation,
+					modelOverride: newModel
+				}));
 				this.currentlyDisplayedModel = newModel;
 			}
 
@@ -1070,8 +1012,6 @@
 			const sidebarContainers = await findSidebarContainers();
 			await this.sidebarUI.checkAndReinject(sidebarContainers);
 			await this.chatUI.checkAndReinject();
-
-			this.sidebarUI.updateModelStates(this.currentlyDisplayedModel);
 		}
 
 		async mediumFrequencyUpdates() {
@@ -1097,6 +1037,17 @@
 		}
 
 		async lowFrequencyUpdates() {
+			// Check for message limits
+			const messageLimitElement = document.querySelector(config.SELECTORS.USAGE_LIMIT_LINK);
+			if (messageLimitElement) {
+				const limitTextElement = messageLimitElement.closest('.text-text-400');
+				if (limitTextElement) {
+					await sendBackgroundMessage({
+						type: 'resetHit',
+						model: this.currentlyDisplayedModel
+					});
+				}
+			}
 			this.chatUI.updateResetTimeDisplay();
 		}
 
@@ -1110,14 +1061,13 @@
 			// Update current model
 			this.currentlyDisplayedModel = await getCurrentModel() || this.currentlyDisplayedModel
 
-			// Get the token cap for current model
-			const modelCaps = await sendBackgroundMessage({ type: 'getCaps' });
+			// Get the usage cap from backend
+			const usageCap = await sendBackgroundMessage({ type: 'getUsageCap' });
 
 			// Update both UIs
-			await this.sidebarUI.updateProgressBars(data, this.currentlyDisplayedModel, modelCaps);
-			await this.chatUI.updateChatUI(data, this.currentlyDisplayedModel, modelCaps);
+			await this.sidebarUI.updateProgressBars(data, usageCap);
+			await this.chatUI.updateChatUI(data, this.currentlyDisplayedModel, usageCap);
 		}
-
 	}
 
 	class ChatUI {
@@ -1143,13 +1093,11 @@
 			this.statLine.style.userSelect = 'none'; // Make the whole line unselectable by default
 
 			// Add label for progress bar
-			//if (!isMobileView() || true) {
 			this.usageLabel = document.createElement('div');
 			this.usageLabel.className = 'text-text-400 text-xs mr-2';
 			this.usageLabel.textContent = 'Quota:';
 			this.usageLabel.style.userSelect = 'none';
 			this.statLine.appendChild(this.usageLabel);
-
 
 			// Create progress bar
 			this.progressBar = new ProgressBar({
@@ -1240,37 +1188,29 @@
 			}
 		}
 
-		async updateChatUI(data, currentModel, modelCaps) {
+		async updateChatUI(data, currentModel, usageCap) {
 			if (data.conversationMetrics) {
 				this.updateCostAndLength(data.conversationMetrics);
 				this.lastMessageCost = data.conversationMetrics.cost;
-				this.updateEstimate(data.modelData, currentModel, modelCaps, data.conversationMetrics.cost);
+				this.updateEstimate(data.modelData, currentModel, usageCap, data.conversationMetrics.cost);
 			} else if (this.lastMessageCost) {
-				this.updateEstimate(data.modelData, currentModel, modelCaps, this.lastMessageCost);
+				this.updateEstimate(data.modelData, currentModel, usageCap, this.lastMessageCost);
 			}
-			await this.updateProgressBar(data.modelData, currentModel, modelCaps);
-			this.updateResetTime(data.modelData, currentModel);
+			await this.updateProgressBar(data.modelData, usageCap);
+			this.updateResetTime(data.modelData);
 		}
 
-		async updateProgressBar(modelData, currentModel, modelCaps) {
+		async updateProgressBar(modelData, usageCap) {
 			if (!this.progressBar) return;
 
-			const maxTokens = modelCaps[currentModel] || modelCaps.default;
-			const currentModelData = modelData[currentModel];
-			const modelTotal = currentModelData?.total || 0;
-
-			// Get modifiers
-			const result = await sendBackgroundMessage({ type: 'getCapModifiers' });
-			const modifiers = result || {};
-
-			// Apply modifier if it exists
-			const adjustedMax = modifiers[currentModel] ? maxTokens * modifiers[currentModel] : maxTokens;
+			const { total } = modelData;
+			const modelTotal = total || 0;
 
 			// Calculate percentage
-			const percentage = (modelTotal / adjustedMax) * 100;
+			const percentage = (modelTotal / usageCap) * 100;
 
 			// Update progress bar
-			this.progressBar.updateProgress(modelTotal, adjustedMax);
+			this.progressBar.updateProgress(modelTotal, usageCap);
 
 			// Update the usage label with percentage
 			if (this.usageLabel) {
@@ -1280,7 +1220,6 @@
 				} else {
 					this.usageLabel.innerHTML = `Quota: <span style="color: ${color}">${percentage.toFixed(1)}%</span>`;
 				}
-
 			}
 		}
 
@@ -1292,33 +1231,29 @@
 					return;
 				}
 
-				const hasCost = config.OUTPUT_TOKEN_MULTIPLIER != 1 || metrics.cost != metrics.length;
 				const lengthColor = metrics.length >= config.WARNING.LENGTH ? RED_WARNING : BLUE_HIGHLIGHT;
 				const costColor = metrics.cost >= config.WARNING.COST ? RED_WARNING : BLUE_HIGHLIGHT;
 
-				/*this.costAndLengthDisplay.innerHTML =
-					`Length: <span style="color: ${lengthColor}">${metrics.length.toLocaleString()}</span> tokens` +
-					`${hasCost ? `${separator}Cost: <span style="color: ${costColor}">${metrics.cost.toLocaleString()}</span> tokens` : ""}`;
-				*/
 				this.costAndLengthDisplay.innerHTML =
 					`Length: <span style="color: ${lengthColor}">${metrics.length.toLocaleString()}</span> tokens` +
 					`${separator}Cost: <span style="color: ${costColor}">${metrics.cost.toLocaleString()}</span> tokens`;
 			}
 		}
 
-		updateEstimate(modelData, currentModel, modelCaps, messageCost) {
+		updateEstimate(modelData, currentModel, usageCap, messageCost) {
 			if (!this.estimateDisplay) return;
 			if (!getConversationId()) {
 				this.estimateDisplay.innerHTML = `${isMobileView() ? "Est. Msgs" : "Est. messages"}: <span>N/A</span>`;
 				return
 			}
-			const maxTokens = modelCaps[currentModel] || modelCaps.default;
-			const currentModelData = modelData[currentModel];
-			const modelTotal = currentModelData?.total || 0;
-			const remainingTokens = maxTokens - modelTotal;
+
+			const { total } = modelData;
+			const modelTotal = total || 0;
+			const remainingTokens = usageCap - modelTotal;
 
 			let estimate;
 			if (messageCost > 0 && currentModel) {
+				// Adjust the message cost by the current model's weight for estimate
 				estimate = Math.max(0, remainingTokens / messageCost);
 				estimate = estimate.toFixed(1);
 			} else {
@@ -1329,11 +1264,11 @@
 			this.estimateDisplay.innerHTML = `${isMobileView() ? "Est. Msgs" : "Est. messages"}: <span style="color: ${color}">${estimate}</span>`;
 		}
 
-		updateResetTime(modelData, currentModel) {
+		updateResetTime(modelData) {
 			if (!this.resetDisplay) return;
 
-			const currentModelInfo = modelData[currentModel];
-			this.lastResetTimestamp = currentModelInfo?.resetTimestamp || null;
+			const { resetTimestamp } = modelData;
+			this.lastResetTimestamp = resetTimestamp || null;
 			this.updateResetTimeDisplay();
 		}
 
@@ -1359,7 +1294,7 @@
 	class SidebarUI {
 		constructor(ui) {
 			this.container = null;
-			this.modelSections = {};
+			this.usageSection = null;
 			this.uiReady = false;
 			this.parentUI = ui;
 			this.pendingUpdates = [];
@@ -1389,21 +1324,8 @@
 			// Process any updates that arrived before UI was ready
 			while (this.pendingUpdates.length > 0) {
 				const update = this.pendingUpdates.shift();
-				await this.updateProgressBars(
-					update.data,
-					update.currentlyDisplayedModel,
-					update.modelCaps
-				);
+				await this.updateProgressBars(update.data);
 			}
-
-			// Initialize model section visibility
-			config.MODELS.forEach(modelName => {
-				const section = this.modelSections[modelName];
-				if (section) {
-					const isActiveModel = modelName === this.parentUI.currentlyDisplayedModel;
-					section.setActive(isActiveModel);
-				}
-			});
 
 			// Check for version notification
 			const donationInfo = await sendBackgroundMessage({
@@ -1418,9 +1340,11 @@
 		}
 
 		async buildHeader() {
+			// No changes needed here - keeping as is
 			const header = document.createElement('div');
 			header.className = 'flex items-center justify-between pb-2 pl-2 sticky top-0 bg-gradient-to-b from-bg-200 from-50% to-bg-200/40';
 			header.style.zIndex = "9999"
+
 			// Create title
 			const title = document.createElement('h3');
 			title.textContent = 'Usage';
@@ -1431,10 +1355,10 @@
 			settingsButton.className = 'inline-flex items-center justify-center relative shrink-0 can-focus select-none text-text-300 border-transparent transition font-styrene duration-300 ease-[cubic-bezier(0.165,0.85,0.45,1)] hover:bg-bg-400 hover:text-text-100 h-8 w-8 rounded-md active:scale-95';
 			settingsButton.style.color = BLUE_HIGHLIGHT;
 			settingsButton.innerHTML = `
-				<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
-					<path d="M19.43 12.98c.04-.32.07-.64.07-.98 0-.34-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98 0 .33.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
-				</svg>
-			`;
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M19.43 12.98c.04-.32.07-.64.07-.98 0-.34-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98 0 .33.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
+            </svg>
+        `;
 			settingsButton.addEventListener('click', async () => {
 				if (SettingsCard.currentInstance) {
 					SettingsCard.currentInstance.remove();
@@ -1460,48 +1384,33 @@
 			const content = document.createElement('div');
 			content.className = 'flex min-h-0 flex-col pl-2';
 
-			// Container for model sections
+			// Container for usage section
 			const sectionsContainer = document.createElement('ul');
 			sectionsContainer.className = '-mx-1.5 flex flex-1 flex-col px-1.5 gap-px';
 
-			// Create model sections
-			config.MODELS.forEach(model => {
-				const section = new ModelSection(model);
-				this.modelSections[model] = section;
-				sectionsContainer.appendChild(section.container);
-			});
+			// Create single usage section
+			this.usageSection = new UsageSection();
+			sectionsContainer.appendChild(this.usageSection.container);
 
 			content.appendChild(sectionsContainer);
 
 			return content;
 		}
 
-		async updateProgressBars(data, currentlyDisplayedModel, modelCaps) {
+		async updateProgressBars(data, usageCap) {
 			if (!this.uiReady) {
 				await Log("UI not ready, pushing to pending updates...");
-				this.pendingUpdates.push({
-					data,
-					currentlyDisplayedModel,
-					modelCaps
-				});
+				this.pendingUpdates.push({ data, usageCap });
 				return;
 			}
 
+			// Expecting data to have modelData with total and resetTimestamp
 			const { modelData } = data;
+			const { total, resetTimestamp } = modelData;
 
-			// Update each model section
-			await Log("Updating model sections...");
-			for (const [modelName, section] of Object.entries(this.modelSections)) {
-				const modelInfo = modelData[modelName] || {};
-				const modelTotal = modelInfo.total || 0;
-				const messageCount = modelInfo.messageCount || 0;
-				const maxTokens = modelCaps[modelName];
-
-				await section.updateProgress(modelTotal, maxTokens);
-				section.updateMessageCount(messageCount);
-				section.updateResetTime(modelInfo.resetTimestamp);
-				section.container.style.display = maxTokens === 0 ? 'none' : '';
-			}
+			await Log("Updating usage section...");
+			await this.usageSection.updateProgress(total || 0, usageCap);
+			this.usageSection.updateResetTime(resetTimestamp);
 		}
 
 		async checkAndReinject(sidebarContainers) {
@@ -1515,13 +1424,6 @@
 				return false;
 			}
 			return true;
-		}
-
-		updateModelStates(currentlyDisplayedModel) {
-			for (const [modelName, section] of Object.entries(this.modelSections)) {
-				const isActiveModel = modelName === currentlyDisplayedModel;
-				section.setActive(isActiveModel);
-			}
 		}
 	}
 
