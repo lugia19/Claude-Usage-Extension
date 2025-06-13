@@ -1398,32 +1398,8 @@ class ClaudeAPI {
 	}
 
 	async getProjectTokens(orgId, projectId) {
-		//These are all text. No point in employing caching as it'll only take up one request anyway.
-		let project_text = "";
-		const projectData = await this.getRequest(`/organizations/${orgId}/projects/${projectId}`);
-
-		if (projectData.prompt_template) {
-			project_text += projectData.prompt_template;
-		}
-
-		const docsData = await this.getRequest(`/organizations/${orgId}/projects/${projectId}/docs`);
-		for (const doc of docsData) {
-			await Log("Doc:", doc.uuid);
-			project_text += doc.content;
-			await Log("Doc tokens:", await getTextTokens(doc.content, true));
-		}
-
-		const syncData = await this.getRequest(`/organizations/${orgId}/projects/${projectId}/syncs`);
-		for (const sync of syncData) {
-			await Log("Sync:", sync.uuid);
-			const syncText = await this.getSyncText(orgId, sync);
-			project_text += syncText;
-			await Log("Sync tokens:", await getTextTokens(syncText, true));
-		}
-
-		let total_tokens = await getTextTokens(project_text);
-		await Log(`Total tokens for project ${projectId}: ${total_tokens}`);
-		return total_tokens;
+		const projectStats = await this.getRequest(`/organizations/${orgId}/projects/${projectId}/kb/stats`);
+		return projectStats.use_project_knowledge_search ? 0 : projectStats.knowledge_size
 	}
 
 	async getConversation(orgId, conversationId, full_tree = false) {
