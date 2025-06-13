@@ -3,7 +3,7 @@ import './lib/o200k_base.js';
 
 const tokenizer = GPTTokenizer_o200k_base;
 const STORAGE_KEY = "claudeUsageTracker_v6"
-const FORCE_DEBUG = true;
+const FORCE_DEBUG = false;
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
 		urls: [
@@ -360,7 +360,7 @@ async function countTokensViaAPI(userMessages = [], assistantMessages = [], file
 		}
 	}
 	try {
-		await Log("CALLING API!", userMessages, assistantMessages, file)
+		await Log("Calling API for token counting...")
 		const messages = [];
 
 		if (file && userMessages.length === 0) {
@@ -1753,7 +1753,7 @@ async function updateAllTabs(currentCost = undefined, currentLength = undefined,
 				length: currentLength
 			};
 		}
-
+		await Log("Updating tab with data:", JSON.stringify(tabData));
 		sendTabMessage(tab.id, {
 			type: 'updateUsage',
 			data: tabData
@@ -1856,7 +1856,6 @@ messageRegistry.register(openDebugPage);
 // Complex handlers
 async function requestData(message, sender, orgId, api) {
 	const { conversationId, modelOverride } = message;
-
 	// Get the internal model data
 	const allModelData = await tokenStorageManager.getValue(
 		tokenStorageManager.getStorageKey(orgId, 'models')
@@ -1893,7 +1892,7 @@ async function requestData(message, sender, orgId, api) {
 				const profileTokens = await api.getProfileTokens();
 				const baseLength = convoInfo.length + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
 				const messageCost = convoInfo.cost + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
-
+				await Log("Fetched conversation, model is:", convoInfo.model);
 				conversationInfoCache.set(key, {
 					length: baseLength,
 					cost: messageCost,
@@ -1910,7 +1909,7 @@ async function requestData(message, sender, orgId, api) {
 				await Log("No model provided, using Sonnet fallback");
 				currentModel = "Sonnet";
 			}
-
+			await Log("Fetched conversation from cache, model is:", currentModel);
 			const modelWeight = CONFIG.MODEL_WEIGHTS[currentModel];
 
 			// Return length as-is, but weight the cost
@@ -1920,6 +1919,7 @@ async function requestData(message, sender, orgId, api) {
 			};
 		}
 	}
+	await Log("Returning base data:", baseData);
 	return baseData;
 }
 messageRegistry.register(requestData);
@@ -2109,7 +2109,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	}
 
 	// Update the cache with the weighted cost for the current model
-	const currentModel = pendingResponse?.model || "Sonnet";
+	const currentModel = pendingResponse?.model || convoInfo?.model || "Sonnet";
 	const modelWeight = CONFIG.MODEL_WEIGHTS[currentModel] || 1;
 	const weightedMessageCost = messageCost * modelWeight;
 
