@@ -1,14 +1,9 @@
 (function () {
 	'use strict';
-	const BLUE_HIGHLIGHT = `hsl(${getComputedStyle(document.documentElement).getPropertyValue('--accent-secondary-100')})`;
-	const RED_WARNING = (() => {
-		const dangerLight = getComputedStyle(document.documentElement).getPropertyValue('--danger-000');
-		const [h, s, l] = dangerLight.trim().split(/\s+/).map(v => parseFloat(v));
-		// Reduce lightness by 15% to make it darker
-		return `hsl(${h}, ${s}%, ${l - 15}%)`;
-	})();
+	const BLUE_HIGHLIGHT = "#2c84db";
+	const RED_WARNING = "#de2929";
 
-	const FORCE_DEBUG = true;
+	const FORCE_DEBUG = false;
 
 	async function Log(...args) {
 		const sender = `content:${document.title.substring(0, 20)}${document.title.length > 20 ? '...' : ''}`;
@@ -267,80 +262,41 @@
 		}
 
 		buildSection() {
-			// Main container stays the same
 			this.container = document.createElement('div');
-			this.container.style.cssText = `
-            margin-bottom: 8px;
-            padding-bottom: 4px;
-            opacity: 1;
-            transition: opacity 0.2s;
-            position: relative;
-        `;
+			this.container.className = 'ut-container';
 
-			// Top line with flexbox layout
 			const topLine = document.createElement('div');
-			topLine.className = 'text-text-000';
-			topLine.style.cssText = `
-				display: flex;
-				align-items: center;
-				font-size: 12px;
-				margin-bottom: 4px;
-				user-select: none;
-			`;
+			topLine.className = 'text-text-000 ut-row ut-text-base ut-mb-1 ut-select-none';
 
-			// Name container - fixed percentage width
 			const nameContainer = document.createElement('div');
-			nameContainer.style.cssText = `
-            width: 35%;
-            display: flex;
-            align-items: center;
-        `;
+			nameContainer.className = 'ut-row';
+			nameContainer.style.width = '35%';
 
-			// Create "All" label
 			const title = document.createElement('span');
 			title.textContent = 'All:';
 
-			// Create percentage display next to label
 			this.percentageDisplay = document.createElement('span');
-			this.percentageDisplay.style.cssText = `
-            margin-left: 6px;
-            font-size: 11px;
-            white-space: nowrap;
-        `;
+			this.percentageDisplay.className = 'ut-text-sm';
+			this.percentageDisplay.style.marginLeft = '6px';
+			this.percentageDisplay.style.whiteSpace = 'nowrap';
 
-			// Add both to the name container
 			nameContainer.appendChild(title);
 			nameContainer.appendChild(this.percentageDisplay);
 
-			// Stats container - simplified without message counter
 			const statsContainer = document.createElement('div');
-			statsContainer.className = 'text-text-400';
-			statsContainer.style.cssText = `
-				display: flex;
-				flex-grow: 1;
-				align-items: center;
-				font-size: 11px;
-			`;
+			statsContainer.className = 'text-text-400 ut-row ut-flex-grow ut-text-sm';
 
-			// Reset time display - now takes full width of stats container
 			this.resetTimeDisplay = document.createElement('div');
-			this.resetTimeDisplay.style.cssText = `
-            width: 100%;
-            text-align: right;
-            white-space: nowrap;
-        `;
+			this.resetTimeDisplay.className = 'ut-w-full ut-text-right';
+			this.resetTimeDisplay.style.whiteSpace = 'nowrap';
 			this.resetTimeDisplay.textContent = 'Reset in: Not set';
 
-			// Assemble the top line
 			statsContainer.appendChild(this.resetTimeDisplay);
-
 			topLine.appendChild(nameContainer);
 			topLine.appendChild(statsContainer);
 
-			// Create progress bar
 			this.progressBar = new ProgressBar();
 
-			// Assemble everything
 			this.container.appendChild(topLine);
 			this.container.appendChild(this.progressBar.container);
 		}
@@ -371,35 +327,14 @@
 		constructor() {
 			this.defaultPosition = { top: '20px', right: '20px' }
 			this.element = document.createElement('div');
-			this.setupBaseStyles();
-		}
-
-		setupBaseStyles() {
-			this.element.className = 'bg-bg-100 border border-border-400 text-text-000';
-			this.element.style.cssText = `
-				position: fixed;
-				border-radius: 8px;
-				padding: 12px;
-				font-size: 12px;
-				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-				z-index: 99999;
-				user-select: none;
-			`;
+			this.element.className = 'bg-bg-100 border border-border-400 text-text-000 ut-card';
 		}
 
 		addCloseButton() {
 			const closeButton = document.createElement('button');
-			closeButton.style.cssText = `
-				position: absolute;
-				top: 0px;
-				right: 8px;
-				background: none;
-				border: none;
-				color: ${BLUE_HIGHLIGHT};
-				cursor: pointer;
-				font-size: 14px;
-				padding: 4px 8px;
-			`;
+			closeButton.className = 'ut-button ut-close ut-text-lg';
+			closeButton.style.color = BLUE_HIGHLIGHT;
+			closeButton.style.background = 'none';
 			closeButton.textContent = '×';
 			closeButton.addEventListener('click', () => this.remove());
 			this.element.appendChild(closeButton);
@@ -441,116 +376,77 @@
 		constructor(donationInfo) {
 			super();
 			this.donationInfo = donationInfo;
-			this.element.style.textAlign = 'center';
+			this.element.classList.add('ut-text-center');
 			this.element.style.maxWidth = '250px';
 			this.build();
 		}
 
 		build() {
-			// Create and style the header/drag handle
 			const dragHandle = document.createElement('div');
-			dragHandle.className = 'border-b border-border-400';
-			dragHandle.style.cssText = `
-				padding: 8px;
-				margin: -12px -12px 8px -12px;
-				cursor: move;
-			`;
+			dragHandle.className = 'border-b border-border-400 ut-header';
 			dragHandle.textContent = 'Usage Tracker';
 
-			// Add version message
 			const message = document.createElement('div');
-			message.style.marginBottom = '10px';
+			message.className = 'ut-mb-2';
 			message.textContent = this.donationInfo.versionMessage;
 
-			// Create patch notes container if needed
 			let patchContainer = null;
-			if (this.donationInfo.patchHighlights && this.donationInfo.patchHighlights.length > 0) {
+			if (this.donationInfo.patchHighlights?.length > 0) {
 				patchContainer = document.createElement('div');
-				patchContainer.className = 'bg-bg-000';
-				patchContainer.style.cssText = `
-					text-align: left;
-					margin-bottom: 10px;
-					max-height: 150px;
-					overflow-y: auto;
-					padding: 8px;
-					border-radius: 4px;
-					font-size: 12px;
-				`;
+				patchContainer.className = 'bg-bg-000 ut-content-box ut-text-left ut-mb-2';
+				patchContainer.style.maxHeight = '150px';
 
-				if (!(this.donationInfo.patchHighlights[0].includes("donation"))) {
+				if (!this.donationInfo.patchHighlights[0].includes("donation")) {
 					const patchTitle = document.createElement('div');
 					patchTitle.textContent = "What's New:";
 					patchTitle.style.fontWeight = 'bold';
-					patchTitle.style.marginBottom = '5px';
+					patchTitle.className = 'ut-mb-1';
 					patchContainer.appendChild(patchTitle);
 				}
 
-
 				const patchList = document.createElement('ul');
-				patchList.style.cssText = `
-					padding-left: 12px; /* Reduced from 20px */
-					margin: 0;
-					list-style-type: disc; /* Explicitly set bullet style */
-					list-style-position: outside; /* Keep bullets outside */
-				`;
+				patchList.style.paddingLeft = '12px';
+				patchList.style.margin = '0';
+				patchList.style.listStyleType = 'disc';
 
 				this.donationInfo.patchHighlights.forEach(highlight => {
 					const item = document.createElement('li');
 					item.textContent = highlight;
-					item.style.marginBottom = '3px'; /* Add some spacing between items */
-					item.style.paddingLeft = '3px'; /* Add a bit of padding after the bullet */
+					item.style.marginBottom = '3px';
+					item.style.paddingLeft = '3px';
 					patchList.appendChild(item);
 				});
 
 				patchContainer.appendChild(patchList);
 			}
 
-			// Add patch notes link
 			const patchNotesLink = document.createElement('a');
 			patchNotesLink.href = 'https://github.com/lugia19/Claude-Usage-Extension/releases';
 			patchNotesLink.target = '_blank';
-			patchNotesLink.style.cssText = `
-				color: ${BLUE_HIGHLIGHT};
-				text-decoration: underline;
-				cursor: pointer;
-				display: block;
-				margin-bottom: 10px;
-				font-size: 12px;
-			`;
+			patchNotesLink.className = 'ut-link ut-block ut-mb-2';
+			patchNotesLink.style.color = BLUE_HIGHLIGHT;
 			patchNotesLink.textContent = 'View full release notes';
 
-			// Add Ko-fi button
 			const kofiButton = document.createElement('a');
 			kofiButton.href = 'https://ko-fi.com/R6R14IUBY';
 			kofiButton.target = '_blank';
-			kofiButton.style.cssText = `
-        display: block;
-        text-align: center;
-        margin-top: 10px;
-    `;
+			kofiButton.className = 'ut-block ut-text-center';
+			kofiButton.style.marginTop = '10px';
 
 			const kofiImg = document.createElement('img');
 			kofiImg.src = browser.runtime.getURL('kofi-button.png');
 			kofiImg.height = 36;
 			kofiImg.style.border = '0';
 			kofiImg.alt = 'Buy Me a Coffee at ko-fi.com';
-
 			kofiButton.appendChild(kofiImg);
 
-			// Add elements to the card in the correct order
+			// Assemble
 			this.element.appendChild(dragHandle);
 			this.element.appendChild(message);
-
-			// Add patch notes if available
-			if (patchContainer) {
-				this.element.appendChild(patchContainer);
-			}
-
+			if (patchContainer) this.element.appendChild(patchContainer);
 			this.element.appendChild(patchNotesLink);
 			this.element.appendChild(kofiButton);
 			this.addCloseButton();
-
-			// Make the card draggable by the header
 			this.makeCardDraggable(dragHandle);
 		}
 	}
@@ -565,127 +461,63 @@
 		}
 
 		async build() {
+			const dragHandle = document.createElement('div');
+			dragHandle.className = 'border-b border-border-400 ut-header';
+			dragHandle.textContent = 'Settings';
+			this.element.appendChild(dragHandle);
+
 			const label = document.createElement('label');
+			label.className = 'ut-label';
 			label.textContent = 'API Key (more accurate):';
-			label.style.display = 'block';
-			label.style.marginBottom = '8px';
 
 			const input = document.createElement('input');
 			input.type = 'password';
-			input.className = 'bg-bg-000 border border-border-400 text-text-000';
-			input.style.cssText = `
-				width: calc(100% - 12px);
-				padding: 6px;
-				margin-bottom: 12px;
-				border-radius: 4px;
-			`;
-
+			input.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input ut-w-full';
 			let apiKey = await sendBackgroundMessage({ type: 'getAPIKey' })
 			if (apiKey) input.value = apiKey
 
 			const saveButton = document.createElement('button');
 			saveButton.textContent = 'Save';
-			saveButton.style.cssText = `
-            background: ${BLUE_HIGHLIGHT};
-            border: none;
-            border-radius: 4px;
-            color: white;
-            cursor: pointer;
-            padding: 6px 12px;
-        `;
+			saveButton.className = 'ut-button';
+			saveButton.style.background = BLUE_HIGHLIGHT;
+			saveButton.style.color = 'white';
 
-			saveButton.addEventListener('click', async () => {
-				// Get the cap modifier value
-				const modifierValue = modifierInput.value.replace('%', '');
-				let modifier = 1; // default
-				if (!isNaN(modifierValue)) {
-					modifier = parseFloat(modifierValue) / 100;
-				}
-
-				// Save cap modifier
-				await sendBackgroundMessage({
-					type: 'setCapModifier',
-					modifier
-				});
-
-				let result = await sendBackgroundMessage({ type: 'setAPIKey', newKey: input.value })
-				if (!result) {
-					const errorMsg = document.createElement('div');
-					errorMsg.style.cssText = `
-                    color: ${RED_WARNING};
-                    font-size: 14px;
-                `;
-					if (input.value.startsWith('sk-ant')) {
-						errorMsg.textContent = 'Inactive API key. Have you ever loaded credits to the account?';
-					} else {
-						errorMsg.textContent = 'Invalid API key. Format looks wrong, it should start with sk-ant.';
-					}
-
-					input.after(errorMsg);
-					setTimeout(() => errorMsg.remove(), 3000);
-					return;
-				}
-
-				location.reload();
-			});
-
-			this.element.appendChild(label);
-			this.element.appendChild(input);
-
-			// Create a container for the buttons
-			const buttonContainer = document.createElement('div');
-			buttonContainer.style.cssText = `
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        `;
-			buttonContainer.appendChild(saveButton);
-
-			// Add cap modifier
+			// Modifier section
 			const modifierContainer = document.createElement('div');
-			modifierContainer.style.cssText = `
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 12px;
-        `;
+			modifierContainer.className = 'ut-row ut-mb-3';
 
 			const modifierLabel = document.createElement('label');
 			modifierLabel.textContent = 'Cap Modifier:';
-			modifierLabel.className = 'text-text-000';
-			modifierLabel.style.fontSize = '12px';
+			modifierLabel.className = 'text-text-000 ut-text-base';
 
 			const modifierInput = document.createElement('input');
 			modifierInput.type = 'text';
-			modifierInput.className = 'bg-bg-000 border border-border-400 text-text-000';
-			modifierInput.style.cssText = `
-				width: 60px;
-				padding: 4px;
-				border-radius: 4px;
-				font-size: 12px;
-			`;
+			modifierInput.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input ut-mb-0';
+			modifierInput.style.width = '60px';
 
-			// Get stored modifier
 			const result = await sendBackgroundMessage({ type: 'getCapModifier' });
-			const storedModifier = result || 1;
-			modifierInput.value = `${(storedModifier * 100)}%`;
+			modifierInput.value = `${((result || 1) * 100)}%`;
 
 			modifierContainer.appendChild(modifierLabel);
 			modifierContainer.appendChild(modifierInput);
 
-			this.element.appendChild(modifierContainer);
+			// Button container
+			const buttonContainer = document.createElement('div');
+			buttonContainer.className = 'ut-row';
 
-			// Create and add debug button to container
 			const debugButton = document.createElement('button');
 			debugButton.textContent = 'Debug Logs';
-			debugButton.className = 'bg-bg-000 border border-border-400 text-text-400';
-			debugButton.style.cssText = `
-				border-radius: 4px;
-				cursor: pointer;
-				padding: 6px 12px;
-				font-size: 12px;
-			`;
+			debugButton.className = 'bg-bg-400 border border-border-400 text-text-400 ut-button ut-text-base';
 
+
+
+			const resetButton = document.createElement('button');
+			resetButton.textContent = 'Reset Quota';
+			resetButton.className = 'ut-button ut-text-base';
+			resetButton.style.background = RED_WARNING;
+			resetButton.style.color = 'white';
+
+			// Event listeners remain the same...
 			debugButton.addEventListener('click', async () => {
 				const result = await sendBackgroundMessage({
 					type: 'openDebugPage'
@@ -698,26 +530,11 @@
 				}
 			});
 
-			buttonContainer.appendChild(debugButton);
-
-			// Create reset button with warning styling
-			const resetButton = document.createElement('button');
-			resetButton.textContent = 'Reset Quota';
-			resetButton.style.cssText = `
-            background: ${RED_WARNING};
-            border: none;
-            border-radius: 4px;
-            color: white;
-            cursor: pointer;
-            padding: 6px 12px;
-            font-size: 12px;
-        `;
-
 			resetButton.addEventListener('click', async () => {
 				// Show confirmation dialog
 				const confirmation = confirm(
 					'Are you sure you want to reset usage data for this organization?\n\n' +
-					'This will reset the usage counter to zero and sync this reset across all your devices. ' +
+					'This will reset ALL models\' usage counters to zero and sync this reset across all your devices. ' +
 					'This action cannot be undone.'
 				);
 
@@ -736,7 +553,7 @@
 						if (result) {
 							// Show success message
 							resetButton.textContent = 'Reset Complete!';
-							resetButton.style.background = `hsl(${getComputedStyle(document.documentElement).getPropertyValue('--accent-main-000')})`;
+							resetButton.style.background = '#22c55e'; // Success green
 
 							// Reset button after delay
 							setTimeout(() => {
@@ -761,24 +578,40 @@
 				}
 			});
 
-			buttonContainer.appendChild(resetButton);
+			saveButton.addEventListener('click', async () => {
+				const modifierValue = modifierInput.value.replace('%', '');
+				let modifier = 1;
+				if (!isNaN(modifierValue)) {
+					modifier = parseFloat(modifierValue) / 100;
+				}
 
-			// Add the container instead of just the save button
+				await sendBackgroundMessage({ type: 'setCapModifier', modifier });
+				let result = await sendBackgroundMessage({ type: 'setAPIKey', newKey: input.value });
+
+				if (!result) {
+					const errorMsg = document.createElement('div');
+					errorMsg.className = 'ut-text-lg';
+					errorMsg.style.color = RED_WARNING;
+					errorMsg.textContent = input.value.startsWith('sk-ant')
+						? 'Inactive API key. Have you ever loaded credits to the account?'
+						: 'Invalid API key. Format looks wrong, it should start with sk-ant.';
+					input.after(errorMsg);
+					setTimeout(() => errorMsg.remove(), 3000);
+					return;
+				}
+				location.reload();
+			});
+
+			// Assemble
+			this.element.appendChild(label);
+			this.element.appendChild(input);
+			this.element.appendChild(modifierContainer);
+			buttonContainer.appendChild(saveButton);
+			buttonContainer.appendChild(debugButton);
+			buttonContainer.appendChild(resetButton);
 			this.element.appendChild(buttonContainer);
 
 			this.addCloseButton();
-
-			// Make the card draggable by the label area
-			const dragHandle = document.createElement('div');
-			dragHandle.className = 'border-b border-border-400';
-			dragHandle.style.cssText = `
-				padding: 8px;
-				margin: -12px -12px 8px -12px;
-				cursor: move;
-			`;
-			dragHandle.textContent = 'Settings';
-
-			this.element.insertBefore(dragHandle, this.element.firstChild);
 			this.makeCardDraggable(dragHandle);
 		}
 
@@ -822,41 +655,19 @@
 			} = options;
 
 			this.container = document.createElement('div');
-			this.container.className = 'bg-bg-500';
-			this.container.style.cssText = `
-				height: ${height};
-				border-radius: 3px;
-				overflow: hidden;
-				width: ${width};
-				user-select: none;
-			`;
+			this.container.className = 'bg-bg-500 ut-progress';
+			if (width !== '100%') this.container.style.width = width;
+			if (height !== '6px') this.container.style.height = height;
 
 			this.bar = document.createElement('div');
-			this.bar.style.cssText = `
-				width: 0%;
-				height: 100%;
-				background: ${BLUE_HIGHLIGHT};
-				transition: width 0.3s ease, background-color 0.3s ease;
-			`;
+			this.bar.className = 'ut-progress-bar';
+			this.bar.style.background = BLUE_HIGHLIGHT;
 
 			this.tooltip = document.createElement('div');
-			this.tooltip.className = 'bg-bg-500 text-text-000';
-			this.tooltip.style.cssText = `
-				position: fixed;
-				padding: 4px 8px;
-				border-radius: 4px;
-				font-size: 12px;
-				opacity: 0;
-				transition: opacity 0.2s;
-				pointer-events: none;
-				white-space: nowrap;
-				z-index: 9999;
-				user-select: none;
-			`;
+			this.tooltip.className = 'bg-bg-500 text-text-000 ut-tooltip';
 
 			this.container.appendChild(this.bar);
 			document.body.appendChild(this.tooltip);
-
 			this.setupEventListeners();
 		}
 
@@ -1079,47 +890,37 @@
 
 		initialize() {
 			this.costAndLengthDisplay = document.createElement('div');
-			this.costAndLengthDisplay.className = 'text-text-500 text-xs';
-			this.costAndLengthDisplay.style.cssText = "margin-top: 2px; font-size: 11px;";
+			this.costAndLengthDisplay.className = 'text-text-500 text-xs ut-text-sm';
+			this.costAndLengthDisplay.style.marginTop = '2px';
 
-			// Create container for estimate and reset time
 			this.statLine = document.createElement('div');
-			this.statLine.className = 'flex items-center min-w-0 max-w-full';
-			this.statLine.style.userSelect = 'none'; // Make the whole line unselectable by default
+			this.statLine.className = 'ut-row ut-select-none';
 
-			// Add label for progress bar
 			this.usageLabel = document.createElement('div');
-			this.usageLabel.className = 'text-text-400 text-xs mr-2';
+			this.usageLabel.className = 'text-text-400 text-xs ut-select-none';
+			this.usageLabel.style.marginRight = '8px';
 			this.usageLabel.textContent = 'Quota:';
-			this.usageLabel.style.userSelect = 'none';
-			this.statLine.appendChild(this.usageLabel);
 
-			// Create progress bar
-			this.progressBar = new ProgressBar({
-				width: "25%",
-			});
+			this.progressBar = new ProgressBar({ width: "25%" });
 			this.progressBar.container.classList.remove('bg-bg-500');
 			this.progressBar.container.classList.add('bg-bg-200');
 			this.progressBar.container.style.marginRight = '12px';
-			this.statLine.appendChild(this.progressBar.container);
 
-			// Add spacer
 			const spacer = document.createElement('div');
-			spacer.className = 'flex-1';
-			spacer.style.userSelect = 'none';
-			this.statLine.appendChild(spacer);
+			spacer.className = 'ut-flex-1 ut-select-none';
 
-			// Create estimate display
 			this.estimateDisplay = document.createElement('div');
-			this.estimateDisplay.className = 'text-text-400 text-xs mr-2';
-			this.estimateDisplay.style.userSelect = 'text';  // Make text selectable
-			this.estimateDisplay.innerHTML = `${isMobileView() ? "Est. Msgs" : "Est. messages"}: <span>N/A</span>`;
-			this.statLine.appendChild(this.estimateDisplay);
+			this.estimateDisplay.className = 'text-text-400 text-xs ut-select-text';
+			this.estimateDisplay.style.marginRight = '8px';
 
-			// Create reset display
 			this.resetDisplay = document.createElement('div');
-			this.resetDisplay.className = 'text-text-400 text-xs mr-2';
-			this.resetDisplay.style.userSelect = 'text';  // Make text selectable
+			this.resetDisplay.className = 'text-text-400 text-xs ut-select-text';
+			this.resetDisplay.style.marginRight = '8px';
+
+			this.statLine.appendChild(this.usageLabel);
+			this.statLine.appendChild(this.progressBar.container);
+			this.statLine.appendChild(spacer);
+			this.statLine.appendChild(this.estimateDisplay);
 			this.statLine.appendChild(this.resetDisplay);
 		}
 
@@ -1336,25 +1137,28 @@
 		}
 
 		async buildHeader() {
-			// No changes needed here - keeping as is
 			const header = document.createElement('div');
-			header.className = 'flex items-center justify-between pb-2 pl-2 sticky top-0 bg-gradient-to-b from-bg-200 from-50% to-bg-200/40';
-			header.style.zIndex = "9999"
+			header.className = 'ut-row ut-justify-between ut-sticky';
+			header.style.cssText = `
+				padding-bottom: 8px;
+				padding-left: 8px;
+				z-index: 9999;
+				background: linear-gradient(to bottom, var(--bg-200) 50%, var(--bg-200) 40%);
+			`;
 
-			// Create title
 			const title = document.createElement('h3');
 			title.textContent = 'Usage';
-			title.className = 'text-text-300 flex items-center gap-1.5 text-xs select-none z-10 bg-gradient-to-b from-bg-200 from-50% to-bg-200/40';
+			title.className = 'text-text-300 flex items-center gap-1.5 text-xs select-none z-10';
 
-			// Add settings button
 			const settingsButton = document.createElement('button');
-			settingsButton.className = 'inline-flex items-center justify-center relative shrink-0 can-focus select-none text-text-300 border-transparent transition font-styrene duration-300 ease-[cubic-bezier(0.165,0.85,0.45,1)] hover:bg-bg-400 hover:text-text-100 h-8 w-8 rounded-md active:scale-95';
+			settingsButton.className = 'ut-button ut-button-icon hover:bg-bg-400 hover:text-text-100';
 			settingsButton.style.color = BLUE_HIGHLIGHT;
 			settingsButton.innerHTML = `
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M19.43 12.98c.04-.32.07-.64.07-.98 0-.34-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98 0 .33.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
             </svg>
         `;
+
 			settingsButton.addEventListener('click', async () => {
 				if (SettingsCard.currentInstance) {
 					SettingsCard.currentInstance.remove();
@@ -1371,7 +1175,6 @@
 
 			header.appendChild(title);
 			header.appendChild(settingsButton);
-
 			return header;
 		}
 
@@ -1644,9 +1447,23 @@
 	}
 	//#endregion
 
-	async function initialize() {
-		const LOGIN_CHECK_DELAY = 10000;
+	async function injectStyles() {
+		if (document.getElementById('ut-styles')) return;
 
+		try {
+			const cssContent = await fetch(browser.runtime.getURL('tracker-styles.css')).then(r => r.text());
+			const style = document.createElement('style');
+			style.id = 'ut-styles';
+			style.textContent = cssContent;
+			document.head.appendChild(style);
+		} catch (error) {
+			await Log("error", 'Failed to load tracker styles:', error);
+		}
+	}
+
+	async function initialize_extension() {
+		const LOGIN_CHECK_DELAY = 10000;
+		await injectStyles();
 		// Load and assign configuration to global variables
 		config = await sendBackgroundMessage({ type: 'getConfig' });
 		await Log("Config received...")
@@ -1693,7 +1510,7 @@
 
 	(async () => {
 		try {
-			await initialize();
+			await initialize_extension();
 		} catch (error) {
 			await Log("error", 'Failed to initialize Chat Token Counter:', error);
 		}

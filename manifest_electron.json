@@ -45,7 +45,8 @@
         "lib/o200k_base.js",
         "kofi-button.png",
         "debug.html",
-        "update_patchnotes.txt"
+        "update_patchnotes.txt",
+        "tracker-styles.css"
     ],
     "icons": {
         "512": "icon512.png",
