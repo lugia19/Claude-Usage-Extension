@@ -1,7 +1,13 @@
 (function () {
 	'use strict';
-	const BLUE_HIGHLIGHT = '#3b82f6';
-	const RED_WARNING = "#ef4444";
+	const BLUE_HIGHLIGHT = `hsl(${getComputedStyle(document.documentElement).getPropertyValue('--accent-secondary-100')})`;
+	const RED_WARNING = (() => {
+		const dangerLight = getComputedStyle(document.documentElement).getPropertyValue('--danger-000');
+		const [h, s, l] = dangerLight.trim().split(/\s+/).map(v => parseFloat(v));
+		// Reduce lightness by 15% to make it darker
+		return `hsl(${h}, ${s}%, ${l - 15}%)`;
+	})();
+
 	const FORCE_DEBUG = true;
 
 	async function Log(...args) {
@@ -273,14 +279,14 @@
 
 			// Top line with flexbox layout
 			const topLine = document.createElement('div');
+			topLine.className = 'text-text-000';
 			topLine.style.cssText = `
-            display: flex;
-            align-items: center;
-            color: white;
-            font-size: 12px;
-            margin-bottom: 4px;
-            user-select: none;
-        `;
+				display: flex;
+				align-items: center;
+				font-size: 12px;
+				margin-bottom: 4px;
+				user-select: none;
+			`;
 
 			// Name container - fixed percentage width
 			const nameContainer = document.createElement('div');
@@ -308,19 +314,19 @@
 
 			// Stats container - simplified without message counter
 			const statsContainer = document.createElement('div');
+			statsContainer.className = 'text-text-400';
 			statsContainer.style.cssText = `
-            display: flex;
-            flex-grow: 1;
-            align-items: center;
-            color: #888;
-            font-size: 11px;
-        `;
+				display: flex;
+				flex-grow: 1;
+				align-items: center;
+				font-size: 11px;
+			`;
 
 			// Reset time display - now takes full width of stats container
 			this.resetTimeDisplay = document.createElement('div');
 			this.resetTimeDisplay.style.cssText = `
             width: 100%;
-            text-align: left;
+            text-align: right;
             white-space: nowrap;
         `;
 			this.resetTimeDisplay.textContent = 'Reset in: Not set';
@@ -369,14 +375,11 @@
 		}
 
 		setupBaseStyles() {
-			// Start with basic styles that aren't position-related
+			this.element.className = 'bg-bg-100 border border-border-400 text-text-000';
 			this.element.style.cssText = `
 				position: fixed;
-				background: #2D2D2D;
-				border: 1px solid #3B3B3B;
 				border-radius: 8px;
 				padding: 12px;
-				color: white;
 				font-size: 12px;
 				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 				z-index: 99999;
@@ -446,12 +449,12 @@
 		build() {
 			// Create and style the header/drag handle
 			const dragHandle = document.createElement('div');
+			dragHandle.className = 'border-b border-border-400';
 			dragHandle.style.cssText = `
-        padding: 8px;
-        margin: -12px -12px 8px -12px;
-        border-bottom: 1px solid #3B3B3B;
-        cursor: move;
-    `;
+				padding: 8px;
+				margin: -12px -12px 8px -12px;
+				cursor: move;
+			`;
 			dragHandle.textContent = 'Usage Tracker';
 
 			// Add version message
@@ -463,12 +466,12 @@
 			let patchContainer = null;
 			if (this.donationInfo.patchHighlights && this.donationInfo.patchHighlights.length > 0) {
 				patchContainer = document.createElement('div');
+				patchContainer.className = 'bg-bg-000';
 				patchContainer.style.cssText = `
 					text-align: left;
 					margin-bottom: 10px;
 					max-height: 150px;
 					overflow-y: auto;
-					background: #3B3B3B;
 					padding: 8px;
 					border-radius: 4px;
 					font-size: 12px;
@@ -569,15 +572,13 @@
 
 			const input = document.createElement('input');
 			input.type = 'password';
+			input.className = 'bg-bg-000 border border-border-400 text-text-000';
 			input.style.cssText = `
-            width: calc(100% - 12px);
-            padding: 6px;
-            margin-bottom: 12px;
-            background: #3B3B3B;
-            border: 1px solid #4B4B4B;
-            border-radius: 4px;
-            color: white;
-        `;
+				width: calc(100% - 12px);
+				padding: 6px;
+				margin-bottom: 12px;
+				border-radius: 4px;
+			`;
 
 			let apiKey = await sendBackgroundMessage({ type: 'getAPIKey' })
 			if (apiKey) input.value = apiKey
@@ -651,20 +652,18 @@
 
 			const modifierLabel = document.createElement('label');
 			modifierLabel.textContent = 'Cap Modifier:';
-			modifierLabel.style.color = '#FFF';
+			modifierLabel.className = 'text-text-000';
 			modifierLabel.style.fontSize = '12px';
 
 			const modifierInput = document.createElement('input');
 			modifierInput.type = 'text';
+			modifierInput.className = 'bg-bg-000 border border-border-400 text-text-000';
 			modifierInput.style.cssText = `
-            width: 60px;
-            padding: 4px;
-            background: #3B3B3B;
-            border: 1px solid #4B4B4B;
-            border-radius: 4px;
-            color: white;
-            font-size: 12px;
-        `;
+				width: 60px;
+				padding: 4px;
+				border-radius: 4px;
+				font-size: 12px;
+			`;
 
 			// Get stored modifier
 			const result = await sendBackgroundMessage({ type: 'getCapModifier' });
@@ -679,15 +678,13 @@
 			// Create and add debug button to container
 			const debugButton = document.createElement('button');
 			debugButton.textContent = 'Debug Logs';
+			debugButton.className = 'bg-bg-000 border border-border-400 text-text-400';
 			debugButton.style.cssText = `
-            background: #3B3B3B;
-            border: 1px solid #4B4B4B;
-            border-radius: 4px;
-            color: #888;
-            cursor: pointer;
-            padding: 6px 12px;
-            font-size: 12px;
-        `;
+				border-radius: 4px;
+				cursor: pointer;
+				padding: 6px 12px;
+				font-size: 12px;
+			`;
 
 			debugButton.addEventListener('click', async () => {
 				const result = await sendBackgroundMessage({
@@ -739,7 +736,7 @@
 						if (result) {
 							// Show success message
 							resetButton.textContent = 'Reset Complete!';
-							resetButton.style.background = '#22c55e'; // Success green
+							resetButton.style.background = `hsl(${getComputedStyle(document.documentElement).getPropertyValue('--accent-main-000')})`;
 
 							// Reset button after delay
 							setTimeout(() => {
@@ -773,12 +770,12 @@
 
 			// Make the card draggable by the label area
 			const dragHandle = document.createElement('div');
+			dragHandle.className = 'border-b border-border-400';
 			dragHandle.style.cssText = `
-            padding: 8px;
-            margin: -12px -12px 8px -12px;
-            border-bottom: 1px solid #3B3B3B;
-            cursor: move;
-        `;
+				padding: 8px;
+				margin: -12px -12px 8px -12px;
+				cursor: move;
+			`;
 			dragHandle.textContent = 'Settings';
 
 			this.element.insertBefore(dragHandle, this.element.firstChild);
@@ -821,13 +818,12 @@
 		constructor(options = {}) {
 			const {
 				width = '100%',
-				backgroundColor = '#3B3B3B',
 				height = '6px'
 			} = options;
 
 			this.container = document.createElement('div');
+			this.container.className = 'bg-bg-500';
 			this.container.style.cssText = `
-				background: ${backgroundColor};
 				height: ${height};
 				border-radius: 3px;
 				overflow: hidden;
@@ -839,15 +835,14 @@
 			this.bar.style.cssText = `
 				width: 0%;
 				height: 100%;
-				background: #3b82f6;
+				background: ${BLUE_HIGHLIGHT};
 				transition: width 0.3s ease, background-color 0.3s ease;
 			`;
 
 			this.tooltip = document.createElement('div');
+			this.tooltip.className = 'bg-bg-500 text-text-000';
 			this.tooltip.style.cssText = `
 				position: fixed;
-				background: rgba(0, 0, 0, 0.9);
-				color: white;
 				padding: 4px 8px;
 				border-radius: 4px;
 				font-size: 12px;
@@ -1101,9 +1096,10 @@
 
 			// Create progress bar
 			this.progressBar = new ProgressBar({
-				backgroundColor: '#2D2D2D',  // Slightly darker background
 				width: "25%",
 			});
+			this.progressBar.container.classList.remove('bg-bg-500');
+			this.progressBar.container.classList.add('bg-bg-200');
 			this.progressBar.container.style.marginRight = '12px';
 			this.statLine.appendChild(this.progressBar.container);
 
