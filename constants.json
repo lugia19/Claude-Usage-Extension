@@ -52,7 +52,8 @@
 		"enabled_sourdough": 900,
 		"enabled_focaccia": 1350,
 		"enabled_web_search": 10250,
-		"citation_info": 450
+		"citation_info": 450,
+		"compass_mode": 1000
 	},
 	"DONATION_TOKEN_THRESHOLDS": [
 		10000000,

@@ -1,3 +1,3 @@
-Added support for web search
-Added support for google integrations
-Reworked version update notifications (this!)
+Unified limits across models
+UI refactor with separate CSS
+Research 'support' (partial)
