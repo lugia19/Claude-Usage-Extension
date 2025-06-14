@@ -2,7 +2,7 @@
 	"UI_UPDATE_INTERVAL_MS": 3000,
 	"OUTPUT_TOKEN_MULTIPLIER": 1,
 	"USAGE_CAP": {
-		"BASELINE": 1500000,
+		"BASELINE": 3000000,
 		"MULTIPLIERS": {
 			"claude_free": 0.2,
 			"claude_pro": 1,
