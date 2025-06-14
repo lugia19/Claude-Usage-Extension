@@ -1340,7 +1340,7 @@
                         }
                     };
 
-                    readStream().catch(err => console.error('Rate limit stream reading error:', err));
+                    readStream().catch(err => err.name !== 'AbortError' && console.error('Rate limit stream reading error:', err));
                 }
                 
                 return response;
@@ -1452,9 +1452,13 @@
 
 		try {
 			const cssContent = await fetch(browser.runtime.getURL('tracker-styles.css')).then(r => r.text());
-			const style = document.createElement('style');
+
+			// Just change these lines:
+			const style = document.createElement('link');
+			style.rel = 'stylesheet';
 			style.id = 'ut-styles';
-			style.textContent = cssContent;
+			style.href = `data:text/css;charset=utf-8,${encodeURIComponent(cssContent)}`;
+
 			document.head.appendChild(style);
 		} catch (error) {
 			await Log("error", 'Failed to load tracker styles:', error);
