@@ -30,7 +30,7 @@
 	"WARNING": {
 		"PERCENT_THRESHOLD": 0.9,
 		"LENGTH": 50000,
-		"COST": 50000
+		"COST": 250000
 	},
 	"SELECTORS": {
 		"MODEL_PICKER": "[data-testid=\"model-selector-dropdown\"]",

@@ -266,17 +266,18 @@
 			this.container.className = 'ut-container';
 
 			const topLine = document.createElement('div');
-			topLine.className = 'text-text-000 ut-row ut-text-base ut-mb-1 ut-select-none';
+			topLine.className = 'text-text-000 ut-row text-sm ut-mb-1 ut-select-none';
 
 			const nameContainer = document.createElement('div');
 			nameContainer.className = 'ut-row';
 			nameContainer.style.width = '35%';
 
 			const title = document.createElement('span');
+			title.className = 'text-xs';
 			title.textContent = 'All:';
 
 			this.percentageDisplay = document.createElement('span');
-			this.percentageDisplay.className = 'ut-text-sm';
+			this.percentageDisplay.className = 'text-xs';
 			this.percentageDisplay.style.marginLeft = '6px';
 			this.percentageDisplay.style.whiteSpace = 'nowrap';
 
@@ -284,7 +285,7 @@
 			nameContainer.appendChild(this.percentageDisplay);
 
 			const statsContainer = document.createElement('div');
-			statsContainer.className = 'text-text-400 ut-row ut-flex-grow ut-text-sm';
+			statsContainer.className = 'text-text-400 ut-row ut-flex-grow text-xs';
 
 			this.resetTimeDisplay = document.createElement('div');
 			this.resetTimeDisplay.className = 'ut-w-full ut-text-right';
@@ -332,7 +333,7 @@
 
 		addCloseButton() {
 			const closeButton = document.createElement('button');
-			closeButton.className = 'ut-button ut-close ut-text-lg';
+			closeButton.className = 'ut-button ut-close text-base';
 			closeButton.style.color = BLUE_HIGHLIGHT;
 			closeButton.style.background = 'none';
 			closeButton.textContent = '×';
@@ -462,12 +463,12 @@
 
 		async build() {
 			const dragHandle = document.createElement('div');
-			dragHandle.className = 'border-b border-border-400 ut-header';
+			dragHandle.className = 'border-b border-border-400 ut-header text-sm';
 			dragHandle.textContent = 'Settings';
 			this.element.appendChild(dragHandle);
 
 			const label = document.createElement('label');
-			label.className = 'ut-label';
+			label.className = 'ut-label text-sm';
 			label.textContent = 'API Key (more accurate):';
 
 			const input = document.createElement('input');
@@ -478,7 +479,7 @@
 
 			const saveButton = document.createElement('button');
 			saveButton.textContent = 'Save';
-			saveButton.className = 'ut-button';
+			saveButton.className = 'ut-button text-sm';
 			saveButton.style.background = BLUE_HIGHLIGHT;
 			saveButton.style.color = 'white';
 
@@ -488,11 +489,11 @@
 
 			const modifierLabel = document.createElement('label');
 			modifierLabel.textContent = 'Cap Modifier:';
-			modifierLabel.className = 'text-text-000 ut-text-base';
+			modifierLabel.className = 'text-text-000 text-sm';
 
 			const modifierInput = document.createElement('input');
 			modifierInput.type = 'text';
-			modifierInput.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input ut-mb-0';
+			modifierInput.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input ut-mb-0 text-sm';
 			modifierInput.style.width = '60px';
 
 			const result = await sendBackgroundMessage({ type: 'getCapModifier' });
@@ -507,13 +508,13 @@
 
 			const debugButton = document.createElement('button');
 			debugButton.textContent = 'Debug Logs';
-			debugButton.className = 'bg-bg-400 border border-border-400 text-text-400 ut-button ut-text-base';
+			debugButton.className = 'bg-bg-400 border border-border-400 text-text-400 ut-button text-sm';
 
 
 
 			const resetButton = document.createElement('button');
 			resetButton.textContent = 'Reset Quota';
-			resetButton.className = 'ut-button ut-text-base';
+			resetButton.className = 'ut-button text-sm';
 			resetButton.style.background = RED_WARNING;
 			resetButton.style.color = 'white';
 
@@ -590,7 +591,7 @@
 
 				if (!result) {
 					const errorMsg = document.createElement('div');
-					errorMsg.className = 'ut-text-lg';
+					errorMsg.className = 'text-sm';
 					errorMsg.style.color = RED_WARNING;
 					errorMsg.textContent = input.value.startsWith('sk-ant')
 						? 'Inactive API key. Have you ever loaded credits to the account?'
@@ -890,7 +891,7 @@
 
 		initialize() {
 			this.costAndLengthDisplay = document.createElement('div');
-			this.costAndLengthDisplay.className = 'text-text-500 text-xs ut-text-sm';
+			this.costAndLengthDisplay.className = 'text-text-500 text-xs';
 			this.costAndLengthDisplay.style.marginTop = '2px';
 
 			this.statLine = document.createElement('div');
@@ -898,24 +899,23 @@
 
 			this.usageLabel = document.createElement('div');
 			this.usageLabel.className = 'text-text-400 text-xs ut-select-none';
-			this.usageLabel.style.marginRight = '8px';
+			if (!isMobileView()) this.usageLabel.style.marginRight = '8px';
 			this.usageLabel.textContent = 'Quota:';
 
 			this.progressBar = new ProgressBar({ width: "25%" });
 			this.progressBar.container.classList.remove('bg-bg-500');
 			this.progressBar.container.classList.add('bg-bg-200');
-			this.progressBar.container.style.marginRight = '12px';
 
 			const spacer = document.createElement('div');
 			spacer.className = 'ut-flex-1 ut-select-none';
 
 			this.estimateDisplay = document.createElement('div');
 			this.estimateDisplay.className = 'text-text-400 text-xs ut-select-text';
-			this.estimateDisplay.style.marginRight = '8px';
+			if (!isMobileView()) this.estimateDisplay.style.marginRight = '8px';
 
 			this.resetDisplay = document.createElement('div');
 			this.resetDisplay.className = 'text-text-400 text-xs ut-select-text';
-			this.resetDisplay.style.marginRight = '8px';
+			if (!isMobileView()) this.resetDisplay.style.marginRight = '8px';
 
 			this.statLine.appendChild(this.usageLabel);
 			this.statLine.appendChild(this.progressBar.container);

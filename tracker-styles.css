@@ -85,14 +85,6 @@
 	transition: width 0.3s ease, background-color 0.3s ease;
 }
 
-/* Text sizes */
-.ut-text-sm {
-	font-size: 11px;
-}
-
-.ut-text-base {
-	font-size: 12px;
-}
 
 .ut-text-lg {
 	font-size: 14px;
