@@ -31,7 +31,8 @@
 		"webRequest",
 		"cookies",
 		"tabs",
-		"contextMenus"
+		"contextMenus",
+		"notifications"
 	],
 	"host_permissions": [
 		"*://claude.ai/*",

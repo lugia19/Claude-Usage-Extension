@@ -34,6 +34,7 @@ let capModifiers;
 let conversationInfoCache;
 let tokenStorageManager;
 let firebaseManager;
+let scheduledNotifications;
 let CONFIG = null;
 
 let isInitialized = false;
@@ -148,6 +149,30 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 			await tokenStorageManager.checkAndCleanExpiredData(orgId);
 		}
 		await updateAllTabs();
+	}
+
+	if (alarm.name.startsWith('notifyReset_')) {
+		// Handle notification alarm
+		await Log(`Notification alarm triggered: ${alarm.name}`);
+
+		// Extract orgId from alarm name
+		const parts = alarm.name.split('_');
+		const orgId = parts[1];
+
+		// Create notification
+		if (browser.notifications) {
+			try {
+				await browser.notifications.create({
+					type: 'basic',
+					iconUrl: browser.runtime.getURL('icon128.png'),
+					title: 'Claude Usage Reset',
+					message: 'Your Claude usage limit has been reset!'
+				});
+				await Log(`Notification sent for org: ${orgId}`);
+			} catch (error) {
+				await Log("error", "Failed to create notification:", error);
+			}
+		}
 	}
 });
 //#endregion
@@ -1800,9 +1825,45 @@ messageRegistry.register('getUsageCap', (message, sender, orgId, api) => tokenSt
 messageRegistry.register('resetOrgData', (message, sender, orgId) => firebaseManager.triggerReset(orgId));
 
 
-messageRegistry.register('rateLimitExceeded', (message, sender, orgId, api) => {
-	tokenStorageManager.addReset(orgId, "Sonnet", api)
-		.catch(async err => await Log("error", 'Adding reset failed:', err));
+messageRegistry.register('rateLimitExceeded', async (message, sender, orgId, api) => {
+	// Only add reset if we actually exceeded the limit
+	if (message?.detail?.type === 'exceeded_limit') {
+		await Log(`Rate limit exceeded for org ${orgId}, adding reset`);
+		tokenStorageManager.addReset(orgId, "Sonnet", api)
+			.catch(async err => await Log("error", 'Adding reset failed:', err));
+	}
+
+	// Schedule notification if we have a timestamp (for both exceeded and nearing)
+	if (message?.detail?.resetsAt) {
+		try {
+			await Log(`Scheduling notification for org ${orgId} at ${message?.detail?.resetsAt * 1000}`);
+			const resetTime = new Date(message?.detail?.resetsAt * 1000); // Convert seconds to milliseconds
+			const timestampKey = resetTime.getTime().toString();
+
+			// Check if we already have a notification scheduled for this timestamp
+			if (!(await scheduledNotifications.has(timestampKey))) {
+				const alarmName = `notifyReset_${orgId}_${timestampKey}`;
+
+				// Schedule the alarm for when the reset occurs
+				await browser.alarms.create(alarmName, {
+					when: resetTime.getTime()
+				});
+
+				// Calculate expiry time: 1 hour after the reset time
+				const expiryTime = resetTime.getTime() + (60 * 60 * 1000) - Date.now();
+
+				// Store in our map with expiration 1 hour after reset time
+				await scheduledNotifications.set(timestampKey, alarmName, expiryTime);
+
+				await Log(`Scheduled notification alarm: ${alarmName} for ${resetTime.toISOString()}`);
+			} else {
+				await Log(`Notification already scheduled for timestamp: ${resetTime.toISOString()}`);
+			}
+		} catch (error) {
+			await Log("error", "Failed to schedule notification:", error);
+		}
+	}
+
 	return true;
 });
 
@@ -2242,6 +2303,7 @@ async function addFirefoxContainerFixListener() {
 //#region Variable fill in and initialization
 pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
 capModifiers = new StoredMap('capModifiers');
+scheduledNotifications = new StoredMap('scheduledNotifications');
 conversationInfoCache = new Map();
 tokenStorageManager = new TokenStorageManager();
 firebaseManager = tokenStorageManager.firebaseManager
