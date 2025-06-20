@@ -3,7 +3,7 @@ import './lib/o200k_base.js';
 
 const tokenizer = GPTTokenizer_o200k_base;
 const STORAGE_KEY = "claudeUsageTracker_v6"
-const FORCE_DEBUG = false;
+const FORCE_DEBUG = true;
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
 		urls: [
@@ -31,10 +31,10 @@ const INTERCEPT_PATTERNS = {
 let processingQueue = Promise.resolve();
 let pendingResponses;
 let capModifiers;
-let conversationInfoCache;
 let tokenStorageManager;
 let firebaseManager;
 let scheduledNotifications;
+let tokenCounter;
 let CONFIG = null;
 
 let isInitialized = false;
@@ -126,14 +126,11 @@ if (!isElectron) {
 	addFirefoxContainerFixListener();
 }
 
-
 //Alarm listeners
 browser.alarms.onAlarm.addListener(async (alarm) => {
 	await Log("Alarm triggered:", alarm.name);
-});
 
-browser.alarms.onAlarm.addListener(async (alarm) => {
-	if (!tokenStorageManager) return;
+	if (!tokenStorageManager) tokenStorageManager = new TokenStorageManager();
 	await tokenStorageManager.ensureOrgIds();
 
 	if (alarm.name === 'firebaseSync') {
@@ -155,10 +152,6 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 		// Handle notification alarm
 		await Log(`Notification alarm triggered: ${alarm.name}`);
 
-		// Extract orgId from alarm name
-		const parts = alarm.name.split('_');
-		const orgId = parts[1];
-
 		// Create notification
 		if (browser.notifications) {
 			try {
@@ -168,7 +161,7 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 					title: 'Claude Usage Reset',
 					message: 'Your Claude usage limit has been reset!'
 				});
-				await Log(`Notification sent for org: ${orgId}`);
+				await Log(`Notification sent`);
 			} catch (error) {
 				await Log("error", "Failed to create notification:", error);
 			}
@@ -346,99 +339,105 @@ async function loadConfig() {
 	}
 }
 
-async function checkAndSetAPIKey(newKey) {
-	if (newKey == "") {
-		await browser.storage.local.remove('apiKey');
-		return true;
+class TokenCounter {
+	constructor() {
+		this.tokenizer = GPTTokenizer_o200k_base;
+		this.ESTIMATION_MULTIPLIER = 1.2;
+		this.fileTokenCache = new StoredMap("fileTokens");
 	}
-	try {
-		const result = await countTokensViaAPI(["Test"], [], null, newKey)
-		if (result && result != 0) {
-			await browser.storage.local.set({ apiKey: newKey });
-			return true;
-		}
-	} catch (error) {
-		await Log("error", "Error setting API key:", error);
-		return false;
-	}
-}
 
-async function getTextTokens(text, estimateOnly) {
-	let api_key = (await browser.storage.local.get('apiKey'))?.apiKey
-	if (api_key && !estimateOnly) {
-		let tempTokens = await countTokensViaAPI([text], [], null)
-		if (tempTokens == 0) {
-			tempTokens = Math.round(tokenizer.countTokens(text) * 1.2);
-		}
-		return tempTokens
-	} else {
-		return Math.round(tokenizer.countTokens(text) * 1.2);
-	}
-}
+	// Core text counting - the main workhorse
+	async countText(text) {
+		if (!text) return 0;
 
-async function countTokensViaAPI(userMessages = [], assistantMessages = [], file = null, keyOverride = null) {
-	let api_key = keyOverride
-	if (!api_key) {
-		api_key = (await browser.storage.local.get('apiKey'))?.apiKey
-		if (!api_key) {
-			return 0;
-		}
-	}
-	try {
-		await Log("Calling API for token counting...")
-		const messages = [];
-
-		if (file && userMessages.length === 0) {
-			userMessages.push("1");
+		// Try API first if available
+		const apiKey = await this.getApiKey();
+		if (apiKey) {
+			try {
+				const tokens = await this.callMessageAPI([text], [], apiKey);
+				if (tokens > 0) return tokens;
+			} catch (error) {
+				await Log("warn", "API token counting failed, falling back to estimation:", error);
+			}
 		}
 
-		let fileData = null;
-		if (file) {
-			const fileInfo = await file.uploaderAPI.getUploadedFileAsBase64(file.url);
-			const base64Data = fileInfo?.data;
-			const mediaType = fileInfo?.media_type;
-			if (!base64Data) return 0
-			fileData = {
-				type: mediaType.startsWith('image/') ? 'image' : 'document',
-				source: {
-					type: 'base64',
-					media_type: mediaType,
-					data: base64Data
+		// Fallback to local estimation
+		return Math.round(this.tokenizer.countTokens(text) * this.ESTIMATION_MULTIPLIER);
+	}
+
+	// Count a conversation's messages
+	async countMessages(userMessages, assistantMessages) {
+		const apiKey = await this.getApiKey();
+		if (apiKey) {
+			try {
+				const tokens = await this.callMessageAPI(userMessages, assistantMessages, apiKey);
+				if (tokens > 0) return tokens;
+			} catch (error) {
+				await Log("warn", "API message counting failed, falling back to estimation:", error);
+			}
+		}
+
+		// Fallback: sum all messages using local estimation directly
+		let total = 0;
+		for (const msg of [...userMessages, ...assistantMessages]) {
+			// Use the tokenizer directly to avoid redundant API attempts
+			total += Math.round(this.tokenizer.countTokens(msg) * this.ESTIMATION_MULTIPLIER);
+		}
+		return total;
+	}
+
+	// Count file tokens with caching
+	async getNonTextFileTokens(fileContent, mediaType, fileMetadata, orgId) {
+		// Check cache first
+		const cacheKey = `${orgId}:${fileMetadata.file_uuid}`;
+		const cachedValue = await this.fileTokenCache.get(cacheKey);
+		if (cachedValue !== undefined) {
+			await Log(`Using cached token count for file ${fileMetadata.file_uuid}: ${cachedValue}`);
+			return cachedValue;
+		}
+
+		const apiKey = await this.getApiKey();
+		let tokens = 0;
+
+		if (apiKey && fileContent) {
+			try {
+				tokens = await this.callFileAPI(fileContent, mediaType, apiKey);
+				if (tokens > 0) {
+					await this.fileTokenCache.set(cacheKey, tokens);
+					return tokens;
 				}
-			};
-		}
-
-		const maxLength = Math.max(userMessages.length, assistantMessages.length);
-		for (let i = 0; i < maxLength; i++) {
-			if (i < userMessages.length) {
-				const content = i === 0 && fileData ? [
-					fileData,
-					{
-						type: "text",
-						text: userMessages[i]
-					}
-				] : userMessages[i];
-
-				messages.push({
-					role: "user",
-					content: content
-				});
-			}
-
-			if (i < assistantMessages.length) {
-				messages.push({
-					role: "assistant",
-					content: assistantMessages[i]
-				});
+			} catch (error) {
+				await Log("warn", "API file counting failed, falling back to estimation:", error);
 			}
 		}
+
+		// Fallback to estimation using file metadata
+		tokens = this.estimateFileTokens(fileMetadata);
+		await this.fileTokenCache.set(cacheKey, tokens);
+		return tokens;
+	}
+
+	// Estimate file tokens based on type
+	estimateFileTokens(fileMetadata) {
+		if (fileMetadata.file_kind === "image") {
+			const width = fileMetadata.preview_asset.image_width;
+			const height = fileMetadata.preview_asset.image_height;
+			return Math.min(1600, Math.ceil((width * height) / 750));
+		} else if (fileMetadata.file_kind === "document") {
+			return 2250 * fileMetadata.document_asset.page_count;
+		}
+		return 0;
+	}
+
+	async callMessageAPI(userMessages, assistantMessages, apiKey) {
+		const messages = this.formatMessagesForAPI(userMessages, assistantMessages);
 
 		const response = await fetch('https://api.anthropic.com/v1/messages/count_tokens', {
 			method: 'POST',
 			headers: {
 				'anthropic-version': '2023-06-01',
 				'content-type': 'application/json',
-				'x-api-key': api_key,
+				'x-api-key': apiKey,
 				'Access-Control-Allow-Origin': '*',
 				"anthropic-dangerous-direct-browser-access": "true"
 			},
@@ -449,15 +448,87 @@ async function countTokensViaAPI(userMessages = [], assistantMessages = [], file
 		});
 
 		const data = await response.json();
-		await Log("API response:", data);
 		if (data.error) {
-			await Log("error", "API error:", data.error);
-			return 0
+			throw new Error(`API error: ${data.error.message || JSON.stringify(data.error)}`);
 		}
-		return data.input_tokens;
-	} catch (error) {
-		await Log("error", "Error counting tokens via API:", error);
-		return 0
+
+		return data.input_tokens || 0;
+	}
+
+	// API call for files
+	async callFileAPI(fileContent, mediaType, apiKey) {
+		const fileData = {
+			type: mediaType.startsWith('image/') ? 'image' : 'document',
+			source: {
+				type: 'base64',
+				media_type: mediaType,
+				data: fileContent
+			}
+		};
+
+		const messages = [{
+			role: "user",
+			content: [
+				fileData,
+				{ type: "text", text: "1" } // Minimal text required
+			]
+		}];
+
+		const response = await fetch('https://api.anthropic.com/v1/messages/count_tokens', {
+			method: 'POST',
+			headers: {
+				'anthropic-version': '2023-06-01',
+				'content-type': 'application/json',
+				'x-api-key': apiKey,
+				'Access-Control-Allow-Origin': '*',
+				"anthropic-dangerous-direct-browser-access": "true"
+			},
+			body: JSON.stringify({
+				messages,
+				model: "claude-3-5-sonnet-latest"
+			})
+		});
+
+		const data = await response.json();
+		if (data.error) {
+			throw new Error(`API error: ${data.error.message || JSON.stringify(data.error)}`);
+		}
+
+		return data.input_tokens || 0;
+	}
+
+	// Format messages for the API
+	formatMessagesForAPI(userMessages, assistantMessages) {
+		const messages = [];
+		const maxLength = Math.max(userMessages.length, assistantMessages.length);
+
+		for (let i = 0; i < maxLength; i++) {
+			if (i < userMessages.length) {
+				messages.push({ role: "user", content: userMessages[i] });
+			}
+			if (i < assistantMessages.length) {
+				messages.push({ role: "assistant", content: assistantMessages[i] });
+			}
+		}
+
+		return messages;
+	}
+
+	// Helper to get API key
+	async getApiKey() {
+		const result = await browser.storage.local.get('apiKey');
+		return result?.apiKey || null;
+	}
+
+	// Test if API key is valid
+	async testApiKey(apiKey) {
+		try {
+			const tokens = await this.callMessageAPI(["Test"], [], apiKey);
+			return tokens > 0;
+		} catch (error) {
+			await Log("error", "API key test failed:", error);
+			return false;
+		}
 	}
 }
 
@@ -554,6 +625,7 @@ class TokenStorageManager {
 		this.subscriptionTiers = new StoredMap("subscriptionTiers");
 		this.filesTokenCache = new StoredMap("fileTokens");
 		this.resetsHit = new StoredMap("resetsHit");
+		this.projectCache = new StoredMap("projectCache");
 
 		// Create Firebase manager and give it access to this manager
 		this.firebaseManager = new FirebaseSyncManager(this);
@@ -737,49 +809,6 @@ class TokenStorageManager {
 		const resetTime = new Date(hourStart);
 		resetTime.setHours(hourStart.getHours() + 5);
 		return resetTime;
-	}
-
-	async getUploadedFileTokens(orgId, file, estimateOnly = false, uploaderClaudeAI_API = null) {
-		if (await this.filesTokenCache.has(`${orgId}:${file.file_uuid}`)) {
-			await Log("Using cached amount for file:", file.file_uuid, "which is", await this.filesTokenCache.get(`${orgId}:${file.file_uuid}`));
-			return await this.filesTokenCache.get(`${orgId}:${file.file_uuid}`);
-		} else {
-			if ((await browser.storage.local.get('apiKey'))?.apiKey && !estimateOnly) {
-				try {
-					await Log("Using api...");
-					let filename = "";
-					let fileurl = "";
-					filename = file.file_name;
-					if (file.file_kind === "image") {
-						fileurl = file.preview_asset.url;
-					} else if (file.file_kind === "document") {
-						fileurl = file.document_asset.url;
-					}
-
-					let fileTokens = await countTokensViaAPI([], [], { "url": fileurl, "filename": filename, "uploaderAPI": uploaderClaudeAI_API });
-					if (fileTokens === 0) {
-						await Log("Falling back to estimate...");
-						return this.getUploadedFileTokens(orgId, file, true);
-					}
-					await this.filesTokenCache.set(`${orgId}:${file.file_uuid}`, fileTokens);
-					return fileTokens;
-				} catch (error) {
-					await Log("error", "Error fetching file tokens:", error);
-					await Log("Falling back to estimate...");
-					return this.getUploadedFileTokens(orgId, file, true);
-				}
-			} else {
-				await Log("Using estimate...");
-				if (file.file_kind === "image") {
-					const width = file.preview_asset.image_width;
-					const height = file.preview_asset.image_width;
-					return Math.min(1600, Math.ceil((width * height) / 750));
-				} else if (file.file_kind === "document") {
-					return 2250 * file.document_asset.page_count;
-				}
-			}
-		}
-		return 0;
 	}
 
 	async addReset(orgId, model, api) {
@@ -1416,7 +1445,7 @@ class ClaudeAPI {
 		}
 		await Log("Got style:", style);
 		if (style) {
-			return await getTextTokens(style.prompt);
+			return await tokenCounter.countText(style.prompt);
 		} else {
 			return 0;
 		}
@@ -1424,7 +1453,44 @@ class ClaudeAPI {
 
 	async getProjectTokens(orgId, projectId) {
 		const projectStats = await this.getRequest(`/organizations/${orgId}/projects/${projectId}/kb/stats`);
-		return projectStats.use_project_knowledge_search ? 0 : projectStats.knowledge_size
+		const projectSize = projectStats.use_project_knowledge_search ? 0 : projectStats.knowledge_size;
+
+		// Check cache
+		const cachedAmount = await tokenStorageManager.projectCache.get(projectId) || -1;
+		const isCached = cachedAmount == projectSize;
+
+		// Update cache with 1 hour TTL
+		await tokenStorageManager.projectCache.set(projectId, projectSize, 60 * 60 * 1000);
+
+		// Return discounted tokens if cached
+		return Math.round(isCached ? projectSize * CONFIG.CACHING_MULTIPLIER : projectSize);
+	}
+
+	async getUploadedFileTokens(orgId, fileMetadata) {
+		// Only fetch content if we have an API key
+		const apiKey = await tokenCounter.getApiKey();
+		if (apiKey && this) {
+			try {
+				const fileUrl = fileMetadata.file_kind === "image" ?
+					fileMetadata.preview_asset.url :
+					fileMetadata.document_asset.url;
+
+				const fileInfo = await this.getUploadedFileAsBase64(fileUrl);
+				if (fileInfo?.data) {
+					return await tokenCounter.getNonTextFileTokens(
+						fileInfo.data,
+						fileInfo.media_type,
+						fileMetadata,
+						orgId
+					);
+				}
+			} catch (error) {
+				await Log("error", "Failed to fetch file content:", error);
+			}
+		}
+
+		// Fallback to estimation
+		return await tokenCounter.getNonTextFileTokens(null, null, fileMetadata, orgId);
 	}
 
 	async getConversation(orgId, conversationId, full_tree = false) {
@@ -1454,32 +1520,45 @@ class ClaudeAPI {
 			return undefined;
 		}
 
-		let baseTokens = 0;
-		let lastMessageTokens = 0;
+		const latestMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
+		const messageAge = Date.now() - new Date(latestMessage.created_at).getTime();
+		const cacheIsWarm = messageAge < 60 * 60 * 1000; // 1 hour in milliseconds
+
+		let lengthTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH; // Base tokens for system prompt
+		let costTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER; // Base cost tokens for system prompt
+
 
 		// Add settings costs
 		for (const [setting, enabled] of Object.entries(conversationData.settings)) {
 			await Log("Setting:", setting, enabled);
 			if (enabled && CONFIG.FEATURE_COSTS[setting]) {
-				baseTokens += CONFIG.FEATURE_COSTS[setting];
+				lengthTokens += CONFIG.FEATURE_COSTS[setting];
+				costTokens += CONFIG.FEATURE_COSTS[setting] * CONFIG.CACHING_MULTIPLIER;
 			}
 		}
 
 		if ("enabled_web_search" in conversationData.settings || "enabled_bananagrams" in conversationData.settings) {
 			if (conversationData.settings?.enabled_websearch || conversationData.settings?.enabled_bananagrams) {
-				baseTokens += CONFIG.FEATURE_COSTS["citation_info"];
+				lengthTokens += CONFIG.FEATURE_COSTS["citation_info"];
+				costTokens += CONFIG.FEATURE_COSTS["citation_info"] * CONFIG.CACHING_MULTIPLIER;
 			}
 		}
 
-		let humanMessages = [];
-		let assistantMessages = [];
+		let humanMessageData = [];
+		let assistantMessageData = [];
+		const messageCount = conversationData.chat_messages.length;
 
 		// Process each message
-		for (const message of conversationData.chat_messages) {
+		for (let i = 0; i < messageCount; i++) {
+			const message = conversationData.chat_messages[i];
+			const isCached = cacheIsWarm && i < (messageCount - 3);	//TODO: This needs to be changed to be an amount of tokens, not messages.
+
 			// Files_v2 tokens (handle separately)
 			for (const file of message.files_v2) {
 				await Log("File_v2:", file.file_name, file.file_uuid)
-				baseTokens += await tokenStorageManager.getUploadedFileTokens(orgId, file, false, this)
+				let fileTokens = await this.getUploadedFileTokens(orgId, file)
+				lengthTokens += fileTokens;
+				costTokens += isCached ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
 			}
 
 			let messageContent = [];
@@ -1508,31 +1587,34 @@ class ClaudeAPI {
 				for (const content of message.content) {
 					lastMessageContent = lastMessageContent.concat(await getTextFromContent(content, true, this, orgId));
 				}
-				lastMessageTokens = await getTextTokens(lastMessageContent.join(' ')) * (CONFIG.OUTPUT_TOKEN_MULTIPLIER);
+				costTokens += await tokenCounter.countText(lastMessageContent.join(' ')) * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
 			}
 
 			if (message.sender === "human") {
-				humanMessages.push(messageContent.join(' '));
+				humanMessageData.push({ content: messageContent.join(' '), isCached });
 			} else {
-				assistantMessages.push(messageContent.join(' '));
+				assistantMessageData.push({ content: messageContent.join(' '), isCached });
 			}
 		}
 
-		let api_key = (await browser.storage.local.get('apiKey'))?.apiKey
-		if (api_key) {
-			const tempTokens = await countTokensViaAPI(humanMessages, assistantMessages);
-			if (tempTokens === 0) {
-				baseTokens += await getTextTokens(humanMessages.join(' ')) + await getTextTokens(assistantMessages.join(' '));
-			} else {
-				baseTokens += tempTokens
-			}
-		} else {
-			baseTokens += await getTextTokens(humanMessages.join(' ')) + await getTextTokens(assistantMessages.join(' '));
+		const humanMessages = humanMessageData.map(m => m.content);
+		const assistantMessages = assistantMessageData.map(m => m.content);
+
+		const tempTokens = await tokenCounter.countMessages(humanMessages, assistantMessages);
+		lengthTokens += tempTokens;
+		costTokens += tempTokens;
+
+		const cachedHuman = humanMessages.filter(m => m.isCached).map(m => m.content);
+		const cachedAssistant = assistantMessageData.filter(m => m.isCached).map(m => m.content);
+		if (cachedHuman.length > 0 || cachedAssistant.length > 0) {
+			const cachedTokens = await tokenCounter.countMessages(cachedHuman, cachedAssistant);
+			// Subtract 90% of cached tokens (leaving 10%)
+			costTokens -= cachedTokens * (1 - CONFIG.CACHING_MULTIPLIER);
 		}
 
 		// If part of a project, get project data
 		if (conversationData.project_uuid) {
-			baseTokens += await this.getProjectTokens(orgId, conversationData.project_uuid);
+			lengthTokens += await this.getProjectTokens(orgId, conversationData.project_uuid);
 		}
 
 		let conversationModelType = undefined;
@@ -1545,11 +1627,11 @@ class ClaudeAPI {
 			}
 		}
 
-		await Log(`Total tokens for conversation ${conversationId}: ${baseTokens} with model ${conversationModelType}`);
+		await Log(`Total tokens for conversation ${conversationId}: ${lengthTokens} with model ${conversationModelType}`);
 
 		return {
-			length: baseTokens,
-			cost: baseTokens + lastMessageTokens,
+			length: Math.round(lengthTokens),
+			cost: Math.round(costTokens),
 			model: conversationModelType,
 		};
 	}
@@ -1558,7 +1640,7 @@ class ClaudeAPI {
 		const profileData = await this.getRequest('/account_profile');
 		let totalTokens = 0;
 		if (profileData.conversation_preferences) {
-			totalTokens = await getTextTokens(profileData.conversation_preferences) + 850
+			totalTokens = await tokenCounter.countText(profileData.conversation_preferences) + CONFIG.FEATURE_COSTS["profile_preferences"];
 		}
 
 		await Log(`Profile tokens: ${totalTokens}`);
@@ -1868,7 +1950,25 @@ messageRegistry.register('rateLimitExceeded', async (message, sender, orgId, api
 });
 
 messageRegistry.register('getAPIKey', () => browser.storage.local.get('apiKey').then(data => data.apiKey));
-messageRegistry.register('setAPIKey', (message) => checkAndSetAPIKey(message.newKey));
+messageRegistry.register('setAPIKey', async (message) => {
+	const newKey = message.newKey;
+	if (newKey === "") {
+		await browser.storage.local.remove('apiKey');
+		return true;
+	}
+
+	// Test the new key
+	const isValid = await tokenCounter.testApiKey(newKey);
+
+	if (isValid) {
+		await browser.storage.local.set({ apiKey: newKey });
+		await Log("API key validated and saved");
+		return true;
+	} else {
+		await Log("warn", "API key validation failed");
+		return false;
+	}
+});
 
 messageRegistry.register('getCapModifier', async () => {
 	return await capModifiers.get('global') || 1;
@@ -1920,27 +2020,12 @@ async function requestData(message, sender, orgId, api) {
 
 	if (conversationId) {
 		await Log(`Requested metrics for conversation: ${conversationId}`);
-		const key = `${orgId}:${conversationId}:metrics`;
-
-		if (!conversationInfoCache.has(key)) {
-			await Log("Conversation metrics not found, fetching...");
-			const convoInfo = await api.getConversationInfo(orgId, conversationId);
-			if (convoInfo) {
-				const profileTokens = await api.getProfileTokens();
-				const baseLength = convoInfo.length + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
-				const messageCost = convoInfo.cost + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
-				await Log("Fetched conversation, model is:", convoInfo.model);
-				conversationInfoCache.set(key, {
-					length: baseLength,
-					cost: messageCost,
-					model: convoInfo.model
-				});
-			}
-		}
-
-		if (conversationInfoCache.has(key)) {
-			const cachedMetrics = conversationInfoCache.get(key);
-			let currentModel = cachedMetrics.model;
+		const convoInfo = await api.getConversationInfo(orgId, conversationId);
+		const profileTokens = await api.getProfileTokens();
+		if (convoInfo) {
+			const baseLength = convoInfo.length + profileTokens;
+			const messageCost = convoInfo.cost + profileTokens * CONFIG.CACHING_MULTIPLIER;	//We assume preferences are always cached
+			let currentModel = convoInfo.model;
 			if (modelOverride) currentModel = modelOverride;
 			if (!currentModel) {
 				await Log("No model provided, using Sonnet fallback");
@@ -1951,8 +2036,8 @@ async function requestData(message, sender, orgId, api) {
 
 			// Return length as-is, but weight the cost
 			baseData.conversationMetrics = {
-				length: cachedMetrics.length,
-				cost: Math.round(cachedMetrics.cost * modelWeight)
+				length: baseLength,
+				cost: Math.round(messageCost * modelWeight)
 			};
 		}
 	}
@@ -2095,17 +2180,11 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	}
 
 	const profileTokens = await api.getProfileTokens();
-	let baseLength = convoInfo.length + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
-	let messageCost = convoInfo.cost + profileTokens + CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
+	let baseLength = convoInfo.length;
+	let messageCost = convoInfo.cost + profileTokens;
 
 	await Log("Current base length:", baseLength);
 	await Log("Current message cost (raw):", messageCost);
-
-	conversationInfoCache.set(`${orgId}:${conversationId}:metrics`, {
-		length: baseLength,
-		cost: messageCost,  // Keep raw cost in cache for now
-		model: convoInfo.model
-	});
 
 	const pendingResponse = await pendingResponses.get(responseKey);
 	const isNewMessage = pendingResponse !== undefined;
@@ -2116,9 +2195,9 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	await Log("Added style tokens:", styleTokens);
 
 	if (pendingResponse?.toolDefinitions) {
-		let toolTokens = 0
+		let toolTokens = 0;
 		for (const tool of pendingResponse.toolDefinitions) {
-			toolTokens += await getTextTokens(
+			toolTokens += await tokenCounter.countText(
 				`${tool.name} ${tool.description} ${tool.schema}`
 			);
 		}
@@ -2304,8 +2383,8 @@ async function addFirefoxContainerFixListener() {
 pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
 capModifiers = new StoredMap('capModifiers');
 scheduledNotifications = new StoredMap('scheduledNotifications');
-conversationInfoCache = new Map();
-tokenStorageManager = new TokenStorageManager();
+tokenCounter = new TokenCounter();
+if (!tokenStorageManager) tokenStorageManager = new TokenStorageManager();
 firebaseManager = tokenStorageManager.firebaseManager
 
 loadConfig().then(async () => {
