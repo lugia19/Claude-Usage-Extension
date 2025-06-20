@@ -3,7 +3,7 @@
 	const BLUE_HIGHLIGHT = "#2c84db";
 	const RED_WARNING = "#de2929";
 
-	const FORCE_DEBUG = false;
+	const FORCE_DEBUG = true;
 
 	async function Log(...args) {
 		const sender = `content:${document.title.substring(0, 20)}${document.title.length > 20 ? '...' : ''}`;
@@ -78,18 +78,20 @@
 	}
 
 	//Error logging
-	window.addEventListener('error', async function (event) {
-		await logError(event.error);
-	});
+	if (!FORCE_DEBUG) {
+		window.addEventListener('error', async function (event) {
+			await logError(event.error);
+		});
 
-	window.addEventListener('unhandledrejection', async function (event) {
-		await logError(event.reason);
-	});
+		window.addEventListener('unhandledrejection', async function (event) {
+			await logError(event.reason);
+		});
 
-	self.onerror = async function (message, source, lineno, colno, error) {
-		await logError(error);
-		return false;
-	};
+		self.onerror = async function (message, source, lineno, colno, error) {
+			await logError(error);
+			return false;
+		};
+	}
 
 	if (window.claudeTrackerInstance) {
 		Log('Instance already running, stopping');
@@ -1266,7 +1268,7 @@
 			if (storedStyle) {
 				try {
 					const styleData = JSON.parse(storedStyle);
-					styleId = styleData.styleKey;
+					if (styleData) styleId = styleData.styleKey;
 				} catch (e) {
 					// If JSON parsing fails, we'll return undefined
 					await Log("error", 'Failed to parse stored style:', e);

@@ -31,6 +31,7 @@ const INTERCEPT_PATTERNS = {
 let processingQueue = Promise.resolve();
 let pendingResponses;
 let capModifiers;
+let subscriptionTiersCache;
 let tokenStorageManager;
 let firebaseManager;
 let scheduledNotifications;
@@ -306,21 +307,24 @@ async function logError(error) {
 }
 
 //Error logging
-if (typeof window != "undefined") {
-	window.addEventListener('error', async function (event) {
-		await logError(event.error);
-	});
+if (!FORCE_DEBUG) {
+	if (typeof window != "undefined") {
+		window.addEventListener('error', async function (event) {
+			await logError(event.error);
+		});
 
-	window.addEventListener('unhandledrejection', async function (event) {
-		await logError(event.reason);
-	});
+		window.addEventListener('unhandledrejection', async function (event) {
+			await logError(event.reason);
+		});
+	}
+
+
+	self.onerror = async function (message, source, lineno, colno, error) {
+		await logError(error);
+		return false;
+	};
 }
 
-
-self.onerror = async function (message, source, lineno, colno, error) {
-	await logError(error);
-	return false;
-};
 
 
 async function loadConfig() {
@@ -577,7 +581,7 @@ async function getTextFromContent(content, includeEphemeral = false, api = null,
 						const syncObj = { type: "gdrive", config: { uri: docUuid } };
 						await Log("Fetching Google Drive document content:", content.url, "with sync object:", syncObj);
 						try {
-							const syncText = await api.getSyncText(orgId, syncObj);
+							const syncText = await api.getSyncText(syncObj);
 							//const syncText = ""
 							if (syncText) {
 								textPieces.push(syncText);
@@ -622,7 +626,6 @@ class TokenStorageManager {
 		this.firebase_base_url = "https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app";
 		this.storageLock = false;
 		this.orgIds = undefined;
-		this.subscriptionTiers = new StoredMap("subscriptionTiers");
 		this.filesTokenCache = new StoredMap("fileTokens");
 		this.resetsHit = new StoredMap("resetsHit");
 		this.projectCache = new StoredMap("projectCache");
@@ -716,14 +719,7 @@ class TokenStorageManager {
 		return merged;
 	}
 
-	async getUsageCap(orgId, api) {
-		let subscriptionTier = await this.subscriptionTiers.get(orgId);
-
-		if (!subscriptionTier || !(subscriptionTier in CONFIG.USAGE_CAP.MULTIPLIERS)) {
-			subscriptionTier = await api.getSubscriptionTier(orgId);
-			await this.subscriptionTiers.set(orgId, subscriptionTier, 10 * 60 * 1000); // 10 minutes
-		}
-
+	async getUsageCap(subscriptionTier) {
 		const baseline = CONFIG.USAGE_CAP.BASELINE;
 		const tierMultiplier = CONFIG.USAGE_CAP.MULTIPLIERS[subscriptionTier];
 		const modifier = await capModifiers.get("global") || 1;
@@ -811,14 +807,13 @@ class TokenStorageManager {
 		return resetTime;
 	}
 
-	async addReset(orgId, model, api) {
+	async addReset(orgId, model, cap) {
 		await sleep(15000); // We want to ensure we get the latest data, which can take a second - so we wait 15.
 		const allModelData = await this.getValue(this.getStorageKey(orgId, 'models'));
 		if (!allModelData || !allModelData.resetTimestamp) return;
 
 		const key = `${orgId}:${allModelData.resetTimestamp}`;
-		const cap = await this.getUsageCap(orgId, api);
-		const tier = await this.subscriptionTiers.get(orgId);
+		const tier = await this.subscriptionTiersCache.get(orgId);
 		const hasApiKey = !!(await browser.storage.local.get('apiKey'))?.apiKey;
 
 		// Calculate weighted total across all models
@@ -1306,9 +1301,10 @@ class FirebaseSyncManager {
 
 // Claude API interface
 class ClaudeAPI {
-	constructor(cookieStoreId) {
+	constructor(cookieStoreId, orgId) {
 		this.baseUrl = 'https://claude.ai/api';
 		this.cookieStoreId = cookieStoreId;
+		this.orgId = orgId;
 	}
 
 	// Core GET method with auth
@@ -1352,7 +1348,7 @@ class ClaudeAPI {
 		}
 	}
 
-	async getSyncText(orgId, sync) {
+	async getSyncText(sync) {
 		if (!sync) return "";
 
 		const syncType = sync.type;
@@ -1363,7 +1359,7 @@ class ClaudeAPI {
 			if (!uri) return "";
 
 			// Use the existing API endpoint for Google Drive
-			const response = await containerFetch(`${this.baseUrl}/organizations/${orgId}/sync/mcp/drive/document/${uri}`,
+			const response = await containerFetch(`${this.baseUrl}/organizations/${this.orgId}/sync/mcp/drive/document/${uri}`,
 				{ headers: { 'Content-Type': 'application/json' } },
 				this.cookieStoreId
 			);
@@ -1426,7 +1422,7 @@ class ClaudeAPI {
 		return "";
 	}
 
-	async getStyleTokens(orgId, styleId, tabId) {
+	async getStyleTokens(styleId, tabId) {
 		if (!styleId) {
 			//Ask the tabId to fetch it from localStorage.
 			await Log("Fetching styleId from tab:", tabId);
@@ -1438,7 +1434,7 @@ class ClaudeAPI {
 			// If we still don't have a styleId, return 0
 			if (!styleId) return 0;
 		}
-		const styleData = await this.getRequest(`/organizations/${orgId}/list_styles`);
+		const styleData = await this.getRequest(`/organizations/${this.orgId}/list_styles`);
 		let style = styleData?.defaultStyles?.find(style => style.key === styleId);
 		if (!style) {
 			style = styleData?.customStyles?.find(style => style.uuid === styleId);
@@ -1451,8 +1447,8 @@ class ClaudeAPI {
 		}
 	}
 
-	async getProjectTokens(orgId, projectId) {
-		const projectStats = await this.getRequest(`/organizations/${orgId}/projects/${projectId}/kb/stats`);
+	async getProjectTokens(projectId) {
+		const projectStats = await this.getRequest(`/organizations/${this.orgId}/projects/${projectId}/kb/stats`);
 		const projectSize = projectStats.use_project_knowledge_search ? 0 : projectStats.knowledge_size;
 
 		// Check cache
@@ -1466,10 +1462,11 @@ class ClaudeAPI {
 		return Math.round(isCached ? projectSize * CONFIG.CACHING_MULTIPLIER : projectSize);
 	}
 
-	async getUploadedFileTokens(orgId, fileMetadata) {
+
+	async getUploadedFileTokens(fileMetadata) {
 		// Only fetch content if we have an API key
-		const apiKey = await tokenCounter.getApiKey();
-		if (apiKey && this) {
+		const tokenCountingAPIKey = await tokenCounter.getApiKey();
+		if (tokenCountingAPIKey && this) {
 			try {
 				const fileUrl = fileMetadata.file_kind === "image" ?
 					fileMetadata.preview_asset.url :
@@ -1481,7 +1478,7 @@ class ClaudeAPI {
 						fileInfo.data,
 						fileInfo.media_type,
 						fileMetadata,
-						orgId
+						this.orgId
 					);
 				}
 			} catch (error) {
@@ -1490,17 +1487,17 @@ class ClaudeAPI {
 		}
 
 		// Fallback to estimation
-		return await tokenCounter.getNonTextFileTokens(null, null, fileMetadata, orgId);
+		return await tokenCounter.getNonTextFileTokens(null, null, fileMetadata, this.orgId);
 	}
 
-	async getConversation(orgId, conversationId, full_tree = false) {
+	async getConversation(conversationId, full_tree = false) {
 		return this.getRequest(
-			`/organizations/${orgId}/chat_conversations/${conversationId}?tree=${full_tree}&rendering_mode=messages&render_all_tools=true`
+			`/organizations/${this.orgId}/chat_conversations/${conversationId}?tree=${full_tree}&rendering_mode=messages&render_all_tools=true`
 		);
 	}
 
-	async getConversationInfo(orgId, conversationId) {
-		const conversationData = await this.getConversation(orgId, conversationId);
+	async getConversationInfo(conversationId) {
+		const conversationData = await this.getConversation(conversationId);
 		// Count messages by sender
 		let humanMessagesCount = 0;
 		let assistantMessagesCount = 0;
@@ -1556,7 +1553,7 @@ class ClaudeAPI {
 			// Files_v2 tokens (handle separately)
 			for (const file of message.files_v2) {
 				await Log("File_v2:", file.file_name, file.file_uuid)
-				let fileTokens = await this.getUploadedFileTokens(orgId, file)
+				let fileTokens = await this.getUploadedFileTokens(file)
 				lengthTokens += fileTokens;
 				costTokens += isCached ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
 			}
@@ -1565,7 +1562,7 @@ class ClaudeAPI {
 			// Process content array
 			for (const content of message.content) {
 				//We don't consider the thinking tokens in the length calculation at all, as they don't remain in the context.
-				messageContent = messageContent.concat(await getTextFromContent(content, false, this, orgId));
+				messageContent = messageContent.concat(await getTextFromContent(content, false, this, this.orgId));
 			}
 			// Attachment tokens
 			for (const attachment of message.attachments) {
@@ -1579,13 +1576,13 @@ class ClaudeAPI {
 			// Sync tokens
 			for (const sync of message.sync_sources) {
 				await Log("Sync source:", sync.uuid)
-				messageContent.push(await this.getSyncText(orgId, sync));
+				messageContent.push(await this.getSyncText(sync));
 			}
 
 			if (message === lastMessage) {
 				let lastMessageContent = [];
 				for (const content of message.content) {
-					lastMessageContent = lastMessageContent.concat(await getTextFromContent(content, true, this, orgId));
+					lastMessageContent = lastMessageContent.concat(await getTextFromContent(content, true, this, this.orgId));
 				}
 				costTokens += await tokenCounter.countText(lastMessageContent.join(' ')) * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
 			}
@@ -1614,7 +1611,7 @@ class ClaudeAPI {
 
 		// If part of a project, get project data
 		if (conversationData.project_uuid) {
-			lengthTokens += await this.getProjectTokens(orgId, conversationData.project_uuid);
+			lengthTokens += await this.getProjectTokens(conversationData.project_uuid);
 		}
 
 		let conversationModelType = undefined;
@@ -1647,24 +1644,30 @@ class ClaudeAPI {
 		return totalTokens;
 	}
 
-	async getSubscriptionTier(orgId) {
-		const statsigData = await this.getRequest(`/bootstrap/${orgId}/statsig`);
+
+
+	async getSubscriptionTier(skipCache = false) {
+		let subscriptionTier = await subscriptionTiersCache.get(this.orgId);
+		if (subscriptionTier && !skipCache) return subscriptionTier;
+
+		const statsigData = await this.getRequest(`/bootstrap/${this.orgId}/statsig`);
 		const identifier = statsigData.user?.custom?.orgType;
 		await Log("User identifier:", identifier);
 		if (statsigData.user?.custom?.isRaven) {
-			return "claude_team";	//IDK if this is the actual identifier, so I'm just overriding it based on the old value.
+			subscriptionTier = "claude_team";	//IDK if this is the actual identifier, so I'm just overriding it based on the old value.
 		} else if (identifier === "claude_max") {
 			//Need to differentiate between 5x and 20x - fetch the org data
-			const orgData = await this.getRequest(`/organizations/${orgId}`);
+			const orgData = await this.getRequest(`/organizations/${this.orgId}`);
 			await Log("Org data for tier check:", orgData);
 			if (orgData?.settings?.rate_limit_tier === "default_claude_max_20x") {
-				return "claude_max_20x";
+				subscriptionTier = "claude_max_20x";
 			} else {
-				return "claude_max_5x";
+				subscriptionTier = "claude_max_5x";
 			}
 		}
-
-		return identifier;
+		subscriptionTier = identifier;
+		await subscriptionTiersCache.set(this.orgId, subscriptionTier, 60 * 60 * 1000); // 1 hour
+		return subscriptionTier;
 	}
 }
 
@@ -1890,10 +1893,10 @@ class MessageHandlerRegistry {
 
 		// Extract common parameters
 		const orgId = message.orgId;
-		const api = new ClaudeAPI(sender.tab?.cookieStoreId);
+		const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
 
 		// Pass common parameters to the handler
-		return handler(message, sender, orgId, api);
+		return handler(message, sender, orgId);
 	}
 }
 
@@ -1903,15 +1906,16 @@ const messageRegistry = new MessageHandlerRegistry();
 // Simple handlers with inline functions
 messageRegistry.register('getConfig', () => CONFIG);
 messageRegistry.register('initOrg', (message, sender, orgId) => tokenStorageManager.addOrgId(orgId).then(() => true));
-messageRegistry.register('getUsageCap', (message, sender, orgId, api) => tokenStorageManager.getUsageCap(orgId, api));
+messageRegistry.register('getUsageCap', async (message, sender, orgId) => tokenStorageManager.getUsageCap(await new ClaudeAPI(sender.tab?.cookieStoreId, orgId).getSubscriptionTier()));
 messageRegistry.register('resetOrgData', (message, sender, orgId) => firebaseManager.triggerReset(orgId));
 
 
-messageRegistry.register('rateLimitExceeded', async (message, sender, orgId, api) => {
+messageRegistry.register('rateLimitExceeded', async (message, sender, orgId) => {
 	// Only add reset if we actually exceeded the limit
 	if (message?.detail?.type === 'exceeded_limit') {
 		await Log(`Rate limit exceeded for org ${orgId}, adding reset`);
-		tokenStorageManager.addReset(orgId, "Sonnet", api)
+		const cap = await this.getUsageCap(await new ClaudeAPI(sender.tab?.cookieStoreId, orgId).getSubscriptionTier())
+		tokenStorageManager.addReset(orgId, "Sonnet", cap)
 			.catch(async err => await Log("error", 'Adding reset failed:', err));
 	}
 
@@ -1991,8 +1995,10 @@ async function openDebugPage() {
 messageRegistry.register(openDebugPage);
 
 // Complex handlers
-async function requestData(message, sender, orgId, api) {
+async function requestData(message, sender, orgId) {
 	const { conversationId, modelOverride } = message;
+	const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
+
 	// Get the internal model data
 	const allModelData = await tokenStorageManager.getValue(
 		tokenStorageManager.getStorageKey(orgId, 'models')
@@ -2020,7 +2026,7 @@ async function requestData(message, sender, orgId, api) {
 
 	if (conversationId) {
 		await Log(`Requested metrics for conversation: ${conversationId}`);
-		const convoInfo = await api.getConversationInfo(orgId, conversationId);
+		const convoInfo = await api.getConversationInfo(conversationId);
 		const profileTokens = await api.getProfileTokens();
 		if (convoInfo) {
 			const baseLength = convoInfo.length + profileTokens;
@@ -2170,10 +2176,10 @@ async function parseRequestBody(requestBody) {
 
 async function processResponse(orgId, conversationId, responseKey, details) {
 	const tabId = details.tabId;
-	const api = new ClaudeAPI(details.cookieStoreId);
+	const api = new ClaudeAPI(details.cookieStoreId, orgId);
 	await Log("Processing response...")
 
-	const convoInfo = await api.getConversationInfo(orgId, conversationId);
+	const convoInfo = await api.getConversationInfo(conversationId);
 	if (!convoInfo) {
 		await Log("warn", "Could not get conversation tokens, exiting...")
 		return false;
@@ -2190,7 +2196,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	const isNewMessage = pendingResponse !== undefined;
 
 	// The style is processed _after_ we set the conversationLengthCache, as it can vary.
-	const styleTokens = await api.getStyleTokens(orgId, pendingResponse?.styleId, tabId);
+	const styleTokens = await api.getStyleTokens(pendingResponse?.styleId, tabId);
 	messageCost += styleTokens;
 	await Log("Added style tokens:", styleTokens);
 
@@ -2213,7 +2219,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 		await Log(`Raw message cost: ${messageCost}, Model weight: ${modelWeight}, Weighted cost: ${weightedCost}`);
 
 		const requestTime = pendingResponse.requestTimestamp;
-		const conversationData = await api.getConversation(orgId, conversationId);
+		const conversationData = await api.getConversation(conversationId);
 		const latestMessageTime = new Date(conversationData.chat_messages[conversationData.chat_messages.length - 1].created_at).getTime();
 		if (latestMessageTime < requestTime - 5000) {
 			await Log("Message appears to be older than our request, likely an error");
@@ -2293,9 +2299,8 @@ async function onBeforeRequestHandler(details) {
 	if (details.method === "GET" && details.url.includes("/settings/billing")) {
 		await Log("Hit the billing page, let's make sure we get the updated subscription tier in case it was changed...")
 		const orgId = await requestActiveOrgId(details.tabId);
-		const api = new ClaudeAPI(details.cookieStoreId);
-		let subscriptionTier = await api.getSubscriptionTier(orgId)
-		await tokenStorageManager.subscriptionTiers.set(orgId, subscriptionTier, 6 * 60 * 60 * 1000)
+		const api = new ClaudeAPI(details.cookieStoreId, orgId);
+		await api.getSubscriptionTier(true);
 	}
 }
 
@@ -2382,6 +2387,7 @@ async function addFirefoxContainerFixListener() {
 //#region Variable fill in and initialization
 pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
 capModifiers = new StoredMap('capModifiers');
+subscriptionTiersCache = new StoredMap("subscriptionTiers");
 scheduledNotifications = new StoredMap('scheduledNotifications');
 tokenCounter = new TokenCounter();
 if (!tokenStorageManager) tokenStorageManager = new TokenStorageManager();
