@@ -23,7 +23,7 @@ It can pull from:
 
 ### Privacy
 It will additionally fetch your organization ID on claude.ai to synchronize your usage amounts across devices via firebase.
-Only the hashed value is stored, see the [privacy policy](PRIVACY.md) for more information.
+See the [privacy policy](PRIVACY.md) for more information.
 
 ### UI
 ![UI Screenshot](https://github.com/lugia19/Claude-Usage-Extension/blob/main/ui_screenshot.png?raw=true)
