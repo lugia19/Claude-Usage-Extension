@@ -162,11 +162,13 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 					title: 'Claude Usage Reset',
 					message: 'Your Claude usage limit has been reset!'
 				});
-				await Log(`Notification sent`);
 			} catch (error) {
 				await Log("error", "Failed to create notification:", error);
 			}
 		}
+		const orgId = alarm.name.split('_')[1];
+		await Log(`Notification sent`);
+		await firebaseManager.triggerReset(orgId)
 	}
 });
 //#endregion
@@ -1496,7 +1498,7 @@ class ClaudeAPI {
 		);
 	}
 
-	async getConversationInfo(conversationId) {
+	async getConversationInfo(conversationId, isNewMessage) {
 		const conversationData = await this.getConversation(conversationId);
 		// Count messages by sender
 		let humanMessagesCount = 0;
@@ -1519,7 +1521,26 @@ class ClaudeAPI {
 
 		const latestMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
 		const messageAge = Date.now() - new Date(latestMessage.created_at).getTime();
-		const cacheIsWarm = messageAge < 60 * 60 * 1000; // 1 hour in milliseconds
+		let cacheIsWarm = false;
+		const cache_lifetime = 60 * 60 * 1000; // 1 hour in milliseconds
+		if (!isNewMessage) {
+			// When checking potential costs for a future message, check if latest message is < 1 hour old
+			// If it is, then when we send a new message, everything including current latest will be cached
+			const latestMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
+			const messageAge = Date.now() - new Date(latestMessage.created_at).getTime();
+			cacheIsWarm = messageAge < cache_lifetime; // 1 hour in milliseconds
+		} else {
+			// When calculating costs for a message we just sent, check if the conversation
+			// was cached when we sent it by looking at the second-to-last message
+			if (conversationData.chat_messages.length > 1) {
+				const secondToLastMessage = conversationData.chat_messages[conversationData.chat_messages.length - 2];
+				const messageAge = Date.now() - new Date(secondToLastMessage.created_at).getTime();
+				cacheIsWarm = messageAge < cache_lifetime; // 1 hour in milliseconds
+			} else {
+				// If this is the first message in the conversation, nothing was cached
+				cacheIsWarm = false;
+			}
+		}
 
 		let lengthTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH; // Base tokens for system prompt
 		let costTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER; // Base cost tokens for system prompt
@@ -1548,7 +1569,17 @@ class ClaudeAPI {
 		// Process each message
 		for (let i = 0; i < messageCount; i++) {
 			const message = conversationData.chat_messages[i];
-			const isCached = cacheIsWarm && i < (messageCount - 3);	//TODO: This needs to be changed to be an amount of tokens, not messages.
+			let isCached = false;
+			if (cacheIsWarm) {
+				if (isNewMessage) {
+					// For new messages: all messages except the last one (the new response) are cached if the cache is warm
+					isCached = i < (messageCount - 1);
+				} else {
+					// For cost estimation: all current messages would be cached when we send a new message if the cache is warm
+					isCached = true;
+				}
+			}
+
 
 			// Files_v2 tokens (handle separately)
 			for (const file of message.files_v2) {
@@ -1579,7 +1610,7 @@ class ClaudeAPI {
 				messageContent.push(await this.getSyncText(sync));
 			}
 
-			if (message === lastMessage) {
+			if (message === lastMessage && isNewMessage) {
 				let lastMessageContent = [];
 				for (const content of message.content) {
 					lastMessageContent = lastMessageContent.concat(await getTextFromContent(content, true, this, this.orgId));
@@ -1594,14 +1625,12 @@ class ClaudeAPI {
 			}
 		}
 
-		const humanMessages = humanMessageData.map(m => m.content);
-		const assistantMessages = assistantMessageData.map(m => m.content);
 
-		const tempTokens = await tokenCounter.countMessages(humanMessages, assistantMessages);
+		const tempTokens = await tokenCounter.countMessages(humanMessageData.map(m => m.content), assistantMessageData.map(m => m.content));
 		lengthTokens += tempTokens;
 		costTokens += tempTokens;
 
-		const cachedHuman = humanMessages.filter(m => m.isCached).map(m => m.content);
+		const cachedHuman = humanMessageData.filter(m => m.isCached).map(m => m.content);
 		const cachedAssistant = assistantMessageData.filter(m => m.isCached).map(m => m.content);
 		if (cachedHuman.length > 0 || cachedAssistant.length > 0) {
 			const cachedTokens = await tokenCounter.countMessages(cachedHuman, cachedAssistant);
@@ -2026,7 +2055,7 @@ async function requestData(message, sender, orgId) {
 
 	if (conversationId) {
 		await Log(`Requested metrics for conversation: ${conversationId}`);
-		const convoInfo = await api.getConversationInfo(conversationId);
+		const convoInfo = await api.getConversationInfo(conversationId, false);
 		const profileTokens = await api.getProfileTokens();
 		if (convoInfo) {
 			const baseLength = convoInfo.length + profileTokens;
@@ -2179,7 +2208,10 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	const api = new ClaudeAPI(details.cookieStoreId, orgId);
 	await Log("Processing response...")
 
-	const convoInfo = await api.getConversationInfo(conversationId);
+	const pendingResponse = await pendingResponses.get(responseKey);
+	const isNewMessage = pendingResponse !== undefined;
+
+	const convoInfo = await api.getConversationInfo(conversationId, isNewMessage);
 	if (!convoInfo) {
 		await Log("warn", "Could not get conversation tokens, exiting...")
 		return false;
@@ -2192,8 +2224,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	await Log("Current base length:", baseLength);
 	await Log("Current message cost (raw):", messageCost);
 
-	const pendingResponse = await pendingResponses.get(responseKey);
-	const isNewMessage = pendingResponse !== undefined;
+
 
 	// The style is processed _after_ we set the conversationLengthCache, as it can vary.
 	const styleTokens = await api.getStyleTokens(pendingResponse?.styleId, tabId);
