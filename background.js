@@ -141,8 +141,8 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 	}
 
 	if (alarm.name === 'checkExpiredData') {
-		await tokenStorageManager.checkAndCleanExpiredData();
-		await updateAllTabs();
+		const wasOrgDataCleared = await tokenStorageManager.checkAndCleanExpiredData();
+		if (wasOrgDataCleared) await updateAllTabs();
 	}
 
 	if (alarm.name.startsWith('notifyReset_')) {
@@ -702,9 +702,7 @@ async function updateAllTabs(currentCost = undefined, currentLength = undefined,
 		await Log("Updating tab:", tab.id, "with orgId:", orgId);
 
 		// Get the internal model data
-		const allModelData = await tokenStorageManager.getValue(
-			tokenStorageManager.getStorageKey(orgId, 'models')
-		) || {};
+		const allModelData = await tokenStorageManager.getUsageData(orgId);
 
 		// Transform to frontend format
 		let weightedTotal = 0;

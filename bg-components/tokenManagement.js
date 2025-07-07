@@ -379,37 +379,33 @@ class TokenStorageManager {
 		// If no orgId provided, check all orgs
 		if (!orgId) {
 			await this.ensureOrgIds();
+			let wasOrgDataCleared = false;
 			for (const org of this.orgIds) {
-				await this.checkAndCleanExpiredData(org);  // Recursive call with specific orgId
+				const result = await this.checkAndCleanExpiredData(org);  // Recursive call with specific orgId
+				if (result) wasOrgDataCleared = true;
 			}
-			return;
+			return wasOrgDataCleared;
 		}
 
 		// Original single-org logic
 		const allModelData = await this.getValue(this.getStorageKey(orgId, 'models'));
-		if (!allModelData || !allModelData.resetTimestamp) return;
+		if (!allModelData || !allModelData.resetTimestamp) return false;
 
 		const currentTime = new Date().getTime();
 
 		if (currentTime >= allModelData.resetTimestamp) {
 			await this.setValue(this.getStorageKey(orgId, 'models'), {});
+			return true;
 		}
 	}
 
-	async getModelData(orgId, model) {
+	async getUsageData(orgId) {
 		await this.checkAndCleanExpiredData(orgId);
 		const allModelData = await this.getValue(this.getStorageKey(orgId, 'models'));
-		if (!allModelData || !allModelData[model]) return null;
-
-		// Return the model data with the shared reset timestamp
-		return {
-			...allModelData[model],
-			resetTimestamp: allModelData.resetTimestamp
-		};
+		return allModelData || {};
 	}
 
 	async addTokensToModel(orgId, model, newTokens) {
-		// CHANGED: Wait if external sync is in progress OR internal lock
 		while (this.externalLock || this.storageLock) {
 			await sleep(50);
 		}
