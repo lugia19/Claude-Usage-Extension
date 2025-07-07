@@ -1,8 +1,8 @@
 import './lib/browser-polyfill.min.js';
 import './lib/o200k_base.js';
-import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addContainerFetchListener, StoredMap } from './components/utils.js';
-import { TokenCounter, TokenStorageManager, getTextFromContent } from './components/tokenManagement.js';
-import { FirebaseSyncManager } from './components/firebase.js';
+import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addContainerFetchListener, StoredMap } from './bg-components/utils.js';
+import { TokenCounter, TokenStorageManager, getTextFromContent } from './bg-components/tokenManagement.js';
+import { FirebaseSyncManager } from './bg-components/firebase.js';
 
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {

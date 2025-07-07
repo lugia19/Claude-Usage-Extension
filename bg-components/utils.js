@@ -67,7 +67,7 @@ const CONFIG = {
 };
 
 const isElectron = chrome.action === undefined;
-const FORCE_DEBUG = false; // Set to true to force debug mode
+const FORCE_DEBUG = true; // Set to true to force debug mode
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function RawLog(sender, ...args) {
