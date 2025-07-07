@@ -68,6 +68,11 @@ const CONFIG = {
 
 const isElectron = chrome.action === undefined;
 const FORCE_DEBUG = true; // Set to true to force debug mode
+
+browser.storage.local.set({
+	force_debug: FORCE_DEBUG // or false, or whatever your debug setting is
+});
+
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function RawLog(sender, ...args) {
