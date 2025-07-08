@@ -112,8 +112,9 @@ class ChatUI {
 	async updateChatUI(data, currentModel, usageCap) {
 		if (data.conversationMetrics) {
 			this.updateCostAndLength(data.conversationMetrics);
-			this.lastMessageCost = data.conversationMetrics.cost;
-			this.updateEstimate(data.modelData, currentModel, usageCap, data.conversationMetrics.cost);
+			// Use weighted cost for estimate
+			this.lastMessageCost = data.conversationMetrics.weightedCost || data.conversationMetrics.cost;
+			this.updateEstimate(data.modelData, currentModel, usageCap, this.lastMessageCost);
 		} else if (this.lastMessageCost) {
 			this.updateEstimate(data.modelData, currentModel, usageCap, this.lastMessageCost);
 		}
@@ -153,11 +154,18 @@ class ChatUI {
 			}
 
 			const lengthColor = metrics.length >= config.WARNING.LENGTH ? RED_WARNING : BLUE_HIGHLIGHT;
-			const costColor = metrics.cost >= config.WARNING.COST ? RED_WARNING : BLUE_HIGHLIGHT;
+			// Use weightedCost if available, otherwise fall back to cost
+			const displayCost = metrics.weightedCost || metrics.cost;
+			const costColor = displayCost >= config.WARNING.COST ? RED_WARNING : BLUE_HIGHLIGHT;
 
 			this.costAndLengthDisplay.innerHTML =
 				`Length: <span style="color: ${lengthColor}">${metrics.length.toLocaleString()}</span> tokens` +
-				`${separator}Cost: <span style="color: ${costColor}">${metrics.cost.toLocaleString()}</span> tokens`;
+				`${separator}Cost: <span style="color: ${costColor}">${displayCost.toLocaleString()}</span> tokens`;
+
+			// If we have cache status, we could add an indicator here
+			if (metrics.cacheStatus?.costUsedCache) {
+				// Add a cache indicator if desired
+			}
 		}
 	}
 
@@ -165,7 +173,7 @@ class ChatUI {
 		if (!this.estimateDisplay) return;
 		if (!getConversationId()) {
 			this.estimateDisplay.innerHTML = `${isMobileView() ? "Est. Msgs" : "Est. messages"}: <span>N/A</span>`;
-			return
+			return;
 		}
 
 		const { total } = modelData;
@@ -174,7 +182,7 @@ class ChatUI {
 
 		let estimate;
 		if (messageCost > 0 && currentModel) {
-			// Adjust the message cost by the current model's weight for estimate
+			// messageCost should already be weighted by the UI
 			estimate = Math.max(0, remainingTokens / messageCost);
 			estimate = estimate.toFixed(1);
 		} else {

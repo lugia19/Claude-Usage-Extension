@@ -8,14 +8,15 @@ class UIManager {
 		this.chatUI = new ChatUI();
 		this.currentConversation = -1;
 		this.conversationMetrics = null;
+		this.rawModelData = null; // Store raw model data
 	}
 
 	async initialize() {
 		await this.sidebarUI.initialize();
 		this.chatUI.initialize();
 
-		// Initial update
-		await this.updateUI(await sendBackgroundMessage({ type: 'requestData' }));
+		// Initial update - just request, don't await response
+		await sendBackgroundMessage({ type: 'requestData' });
 		await sendBackgroundMessage({ type: 'initOrg' });
 
 		// Start animation frame loop
@@ -55,11 +56,11 @@ class UIManager {
 		const currConversation = getConversationId();
 		const newModel = await getCurrentModel(200);
 		if (newModel && newModel !== this.currentlyDisplayedModel) {
-			await this.updateUI(await sendBackgroundMessage({
+			// Just request data, no modelOverride needed
+			await sendBackgroundMessage({
 				type: 'requestData',
-				conversationId: currConversation,
-				modelOverride: newModel
-			}));
+				conversationId: currConversation
+			});
 			this.currentlyDisplayedModel = newModel;
 		}
 
@@ -75,10 +76,11 @@ class UIManager {
 		const isHomePage = newConversation === null;
 
 		if (this.currentConversation !== newConversation && !isHomePage) {
-			await this.updateUI(await sendBackgroundMessage({
+			// Just request, don't await response
+			await sendBackgroundMessage({
 				type: 'requestData',
 				conversationId: newConversation
-			}));
+			});
 			this.currentConversation = newConversation;
 		}
 
@@ -111,17 +113,45 @@ class UIManager {
 		if (!data) return;
 		const { conversationMetrics, modelData } = data;
 
-		if (conversationMetrics) this.conversationMetrics = conversationMetrics;
+		// Store raw model data
+		if (modelData) this.rawModelData = modelData;
+
+		// Just store conversation metrics as-is
+		if (conversationMetrics) {
+			this.conversationMetrics = conversationMetrics;
+		}
 
 		// Update current model
-		this.currentlyDisplayedModel = await getCurrentModel() || this.currentlyDisplayedModel
+		this.currentlyDisplayedModel = await getCurrentModel() || this.currentlyDisplayedModel;
 
 		// Get the usage cap from backend
 		const usageCap = await sendBackgroundMessage({ type: 'getUsageCap' });
 
-		// Update both UIs
-		await this.sidebarUI.updateProgressBars(data, usageCap);
-		await this.chatUI.updateChatUI(data, this.currentlyDisplayedModel, usageCap);
+		// Calculate weighted total for display
+		const weightedTotal = calculateWeightedTotal(this.rawModelData);
+
+		// Calculate weighted cost on-demand if we have metrics
+		let displayMetrics = null;
+		if (this.conversationMetrics) {
+			const model = this.conversationMetrics.model || this.currentlyDisplayedModel;
+			const weightedCost = Math.round(this.conversationMetrics.cost * (config.MODEL_WEIGHTS[model] || 1));
+			displayMetrics = {
+				...this.conversationMetrics,
+				weightedCost: weightedCost
+			};
+		}
+
+		const displayData = {
+			modelData: {
+				total: weightedTotal,
+				resetTimestamp: this.rawModelData.resetTimestamp
+			},
+			conversationMetrics: displayMetrics
+		};
+
+		// Update both UIs with calculated data
+		await this.sidebarUI.updateProgressBars(displayData, usageCap);
+		await this.chatUI.updateChatUI(displayData, this.currentlyDisplayedModel, usageCap);
 	}
 }
 
@@ -130,6 +160,17 @@ class UIManager {
 browser.runtime.onMessage.addListener(async (message) => {
 	if (message.type === 'updateUsage') {
 		if (ui) await ui.updateUI(message.data);
+	}
+
+	if (message.type === 'updateConversationMetrics') {
+		if (ui) {
+			// Merge conversation metrics with existing data
+			const currentData = {
+				modelData: ui.rawModelData,
+				conversationMetrics: message.data.conversationMetrics
+			};
+			await ui.updateUI(currentData);
+		}
 	}
 
 	if (message.type === 'getActiveModel') {
@@ -231,7 +272,8 @@ async function initExtension() {
 	ui = new UIManager(await getCurrentModel());
 	await ui.initialize();
 
-	await ui.updateUI(await sendBackgroundMessage({ type: 'requestData' }));
+	// Don't await responses anymore
+	await sendBackgroundMessage({ type: 'requestData' });
 	await sendBackgroundMessage({ type: 'initOrg' });
 	await Log('Initialization complete. Ready to track tokens.');
 }

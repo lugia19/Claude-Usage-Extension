@@ -142,7 +142,7 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 
 	if (alarm.name === 'checkExpiredData') {
 		const wasOrgDataCleared = await tokenStorageManager.checkAndCleanExpiredData();
-		if (wasOrgDataCleared) await updateAllTabs();
+		if (wasOrgDataCleared) await updateAllTabsWithUsage();
 	}
 
 	if (alarm.name.startsWith('notifyReset_')) {
@@ -485,10 +485,12 @@ class ClaudeAPI {
 		}
 
 		let cacheIsWarm = false;
+		let conversationIsCachedAfterResponse = false;
 		const cache_lifetime = 60 * 60 * 1000; // 1 hour in milliseconds
 		if (conversationData.chat_messages.length < 4) {
 			// If there are less than 4 messages, we assume the cache is not warm
 			cacheIsWarm = false;
+			conversationIsCachedAfterResponse = false;
 			await Log("Conversation too short for caching, assuming cache is cold");
 		} else {
 			if (!isNewMessage) {
@@ -497,12 +499,14 @@ class ClaudeAPI {
 				const latestMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
 				const messageAge = Date.now() - new Date(latestMessage.created_at).getTime();
 				cacheIsWarm = messageAge < cache_lifetime; // 1 hour in milliseconds
+				conversationIsCachedAfterResponse = cacheIsWarm;
 			} else {
 				// When calculating costs for a message we just sent, check if the conversation was cached when we sent it
 				// by looking at the THIRD-to-last message (as the second to last message would be the user's new message)
 				const thirdToLastMessage = conversationData.chat_messages[conversationData.chat_messages.length - 3];
 				const messageAge = Date.now() - new Date(thirdToLastMessage.created_at).getTime();
 				cacheIsWarm = messageAge < cache_lifetime; // 1 hour in milliseconds
+				conversationIsCachedAfterResponse = true;
 			}
 		}
 
@@ -616,6 +620,8 @@ class ClaudeAPI {
 			length: Math.round(lengthTokens),
 			cost: Math.round(costTokens),
 			model: conversationModelType,
+			costUsedCache: cacheIsWarm,
+			conversationIsCached: conversationIsCachedAfterResponse
 		};
 	}
 
@@ -692,50 +698,42 @@ async function requestActiveOrgId(tab) {
 
 //#region Messaging
 
-//Updates each tab with its own data
-async function updateAllTabs(currentCost = undefined, currentLength = undefined, lengthTabId = undefined) {
-	await Log("Updating all tabs with new data");
+// Updates all tabs with usage data only
+async function updateAllTabsWithUsage() {
+	await Log("Updating all tabs with usage data");
 	const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 
 	for (const tab of tabs) {
 		const orgId = await requestActiveOrgId(tab);
 		await Log("Updating tab:", tab.id, "with orgId:", orgId);
 
-		// Get the internal model data
-		const allModelData = await tokenStorageManager.getUsageData(orgId);
+		const usageData = await tokenStorageManager.getUsageData(orgId);
 
-		// Transform to frontend format
-		let weightedTotal = 0;
-		const resetTimestamp = allModelData.resetTimestamp;
-
-		// Calculate weighted total
-		for (const [modelName, modelData] of Object.entries(allModelData)) {
-			if (modelName !== 'resetTimestamp' && modelName !== 'weightedTotal' && modelData?.total) {
-				const weight = CONFIG.MODEL_WEIGHTS[modelName] || 1;
-				weightedTotal += modelData.total * weight;
-			}
-		}
-
-		const tabData = {
-			modelData: {
-				total: Math.round(weightedTotal),
-				resetTimestamp: resetTimestamp,
-				modelWeights: CONFIG.MODEL_WEIGHTS
-			}
-		};
-
-		if (currentCost && currentLength && lengthTabId && tab.id === lengthTabId) {
-			tabData.conversationMetrics = {
-				cost: currentCost,
-				length: currentLength
-			};
-		}
-		await Log("Updating tab with data:", JSON.stringify(tabData));
+		await Log("Updating tab with usage data:", JSON.stringify(usageData));
 		sendTabMessage(tab.id, {
 			type: 'updateUsage',
-			data: tabData
+			data: {
+				modelData: usageData
+			}
 		});
 	}
+}
+
+// Updates a specific tab with conversation metrics
+async function updateTabWithConversationMetrics(tabId, cost, length, cacheStatus, model) {
+	await Log("Updating tab with conversation metrics:", tabId, { cost, length, cacheStatus, model });
+
+	sendTabMessage(tabId, {
+		type: 'updateConversationMetrics',
+		data: {
+			conversationMetrics: {
+				cost: cost,
+				length: length,
+				cacheStatus: cacheStatus,
+				model: model
+			}
+		}
+	});
 }
 
 // Background -> Content messaging
@@ -886,60 +884,45 @@ messageRegistry.register(openDebugPage);
 
 // Complex handlers
 async function requestData(message, sender, orgId) {
-	const { conversationId, modelOverride } = message;
+	const { conversationId } = message;  // No more modelOverride
 	const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
 
-	// Get the internal model data
-	const allModelData = await tokenStorageManager.getValue(
-		tokenStorageManager.getStorageKey(orgId, 'models')
-	) || {};
-
-	// Transform to frontend format
-	let weightedTotal = 0;
-	const resetTimestamp = allModelData.resetTimestamp;
-
-	// Calculate weighted total
-	for (const [modelName, modelData] of Object.entries(allModelData)) {
-		if (modelName !== 'resetTimestamp' && modelName !== 'weightedTotal' && modelData?.total) {
-			const weight = CONFIG.MODEL_WEIGHTS[modelName] || 1;
-			weightedTotal += modelData.total * weight;
+	// Always send usage data
+	const usageData = await tokenStorageManager.getUsageData(orgId);
+	await sendTabMessage(sender.tab.id, {
+		type: 'updateUsage',
+		data: {
+			modelData: usageData
 		}
-	}
+	});
 
-	const baseData = {
-		modelData: {
-			total: Math.round(weightedTotal),
-			resetTimestamp: resetTimestamp,
-			modelWeights: CONFIG.MODEL_WEIGHTS
-		}
-	};
-
+	// If conversationId provided, also send conversation metrics
 	if (conversationId) {
 		await Log(`Requested metrics for conversation: ${conversationId}`);
 		const convoInfo = await api.getConversationInfo(conversationId, false);
 		const profileTokens = await api.getProfileTokens();
+
 		if (convoInfo) {
 			const baseLength = convoInfo.length + profileTokens;
-			const messageCost = convoInfo.cost + profileTokens * CONFIG.CACHING_MULTIPLIER;	//We assume preferences are always cached
-			let currentModel = convoInfo.model;
-			if (modelOverride) currentModel = modelOverride;
-			if (!currentModel) {
-				await Log("No model provided, using Sonnet fallback");
-				currentModel = "Sonnet";
-			}
-			await Log("Fetched conversation from cache, model is:", currentModel);
-			const modelWeight = CONFIG.MODEL_WEIGHTS[currentModel];
+			const messageCost = convoInfo.cost + profileTokens * CONFIG.CACHING_MULTIPLIER;
 
-			// Return length as-is, but weight the cost
-			baseData.conversationMetrics = {
-				length: baseLength,
-				cost: Math.round(messageCost * modelWeight)
-			};
+			await updateTabWithConversationMetrics(
+				sender.tab.id,
+				messageCost,
+				baseLength,
+				{
+					costUsedCache: convoInfo.costUsedCache,
+					conversationIsCached: convoInfo.conversationIsCached
+				},
+				convoInfo.model || "Sonnet"
+			);
 		}
 	}
-	await Log("Returning base data:", baseData);
-	return baseData;
+
+	await Log("Sent update messages to tab");
+	return true; // Just indicate success
 }
+
 messageRegistry.register(requestData);
 
 async function interceptedRequest(message, sender) {
@@ -1122,13 +1105,19 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 		}
 	}
 
-	// Update the cache with the weighted cost for the current model
-	const currentModel = pendingResponse?.model || convoInfo?.model || "Sonnet";
-	const modelWeight = CONFIG.MODEL_WEIGHTS[currentModel] || 1;
-	const weightedMessageCost = messageCost * modelWeight;
+	// Get cache status and model from convoInfo
+	const cacheStatus = {
+		costUsedCache: convoInfo.costUsedCache,
+		conversationIsCached: convoInfo.conversationIsCached
+	};
 
-	// Update all tabs with the raw length but weighted cost
-	await updateAllTabs(weightedMessageCost, baseLength, tabId);
+	const model = pendingResponse?.model || convoInfo?.model || "Sonnet";
+
+	// Update all tabs with usage data
+	await updateAllTabsWithUsage();
+
+	// Update specific tab with raw conversation metrics
+	await updateTabWithConversationMetrics(tabId, messageCost, baseLength, cacheStatus, model);
 
 	return true;
 }
@@ -1228,7 +1217,7 @@ subscriptionTiersCache = new StoredMap("subscriptionTiers");
 scheduledNotifications = new StoredMap('scheduledNotifications');
 tokenCounter = new TokenCounter();
 if (!tokenStorageManager) tokenStorageManager = new TokenStorageManager();
-firebaseManager = new FirebaseSyncManager(tokenStorageManager, updateAllTabs);
+firebaseManager = new FirebaseSyncManager(tokenStorageManager, updateAllTabsWithUsage);
 
 isInitialized = true;
 for (const handler of functionsPendingUntilInitialization) {
