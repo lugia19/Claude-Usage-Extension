@@ -7,8 +7,8 @@ class UIManager {
 		this.sidebarUI = new SidebarUI(this);
 		this.chatUI = new ChatUI();
 		this.currentConversation = -1;
-		this.conversationMetrics = null;
-		this.rawModelData = null; // Store raw model data
+		this.usageData = null;          // Changed from rawModelData
+		this.conversationData = null;   // Changed from conversationMetrics
 	}
 
 	async initialize() {
@@ -105,72 +105,55 @@ class UIManager {
 				});
 			}
 		}
-		this.chatUI.updateResetTimeDisplay();
+		this.chatUI.updateResetTime();
 	}
 
-	async updateUI(data) {
-		await Log("Updating UI with data", data);
-		if (!data) return;
-		const { conversationMetrics, modelData } = data;
+	// In UIManager
+	async updateUsage(usageData) {
+		await Log("Updating usage data", usageData);
+		if (!usageData) return;
 
-		// Store raw model data
-		if (modelData) this.rawModelData = modelData;
+		this.usageData = UsageData.fromJSON(usageData);
 
-		// Just store conversation metrics as-is
-		if (conversationMetrics) {
-			this.conversationMetrics = conversationMetrics;
+		// Update sidebar
+		if (this.usageData) {
+			await this.sidebarUI.updateProgressBars(this.usageData);
 		}
 
-		// Update current model
-		this.currentlyDisplayedModel = await getCurrentModel() || this.currentlyDisplayedModel;
-
-		// Get the usage cap from backend
-		const usageCap = await sendBackgroundMessage({ type: 'getUsageCap' });
-
-		// Calculate weighted total for display
-		const weightedTotal = calculateWeightedTotal(this.rawModelData);
-
-		// Calculate weighted cost on-demand if we have metrics
-		let displayMetrics = null;
-		if (this.conversationMetrics) {
-			const model = this.conversationMetrics.model || this.currentlyDisplayedModel;
-			const weightedCost = Math.round(this.conversationMetrics.cost * (config.MODEL_WEIGHTS[model] || 1));
-			displayMetrics = {
-				...this.conversationMetrics,
-				weightedCost: weightedCost
-			};
+		// Update chat UI - progress bar, reset time, and estimate if we have cost data
+		if (this.chatUI && this.usageData) {
+			await this.chatUI.updateUsageDisplay(this.usageData, this.currentlyDisplayedModel);
 		}
+	}
 
-		const displayData = {
-			modelData: {
-				total: weightedTotal,
-				resetTimestamp: this.rawModelData.resetTimestamp
-			},
-			conversationMetrics: displayMetrics
-		};
+	async updateConversation(conversationData) {
+		await Log("Updating conversation data", conversationData);
+		if (!conversationData) return;
 
-		// Update both UIs with calculated data
-		await this.sidebarUI.updateProgressBars(displayData, usageCap);
-		await this.chatUI.updateChatUI(displayData, this.currentlyDisplayedModel, usageCap);
+		this.conversationData = ConversationData.fromJSON(conversationData);
+
+		// Update current model from conversation if available
+		/*if (this.conversationData?.model) {
+			this.currentlyDisplayedModel = this.conversationData.model;
+		}*/
+
+		// Update chat UI - cost/length AND estimate (since we have new cost data)
+		if (this.chatUI && this.conversationData) {
+			await this.chatUI.updateConversationDisplay(this.conversationData, this.usageData, this.currentlyDisplayedModel);
+		}
 	}
 }
 
 // Event Handlers
 // Listen for messages from background
 browser.runtime.onMessage.addListener(async (message) => {
+	console.warn("Content received message:", message.type);
 	if (message.type === 'updateUsage') {
-		if (ui) await ui.updateUI(message.data);
+		if (ui) await ui.updateUsage(message.data.usageData);
 	}
 
 	if (message.type === 'updateConversationMetrics') {
-		if (ui) {
-			// Merge conversation metrics with existing data
-			const currentData = {
-				modelData: ui.rawModelData,
-				conversationMetrics: message.data.conversationMetrics
-			};
-			await ui.updateUI(currentData);
-		}
+		if (ui) await ui.updateConversation(message.data.conversationData);
 	}
 
 	if (message.type === 'getActiveModel') {
@@ -266,6 +249,7 @@ async function initExtension() {
 	}
 	userMenuButton.setAttribute('data-script-loaded', true);
 	await Log('We\'re unique, initializing Chat Token Counter...');
+
 	await Log("Initializing fetch...")
 	await initializeFetch();
 
@@ -278,7 +262,6 @@ async function initExtension() {
 	await Log('Initialization complete. Ready to track tokens.');
 }
 
-// Start the extension
 (async () => {
 	try {
 		await initExtension();

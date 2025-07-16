@@ -3,6 +3,7 @@ import './lib/o200k_base.js';
 import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addContainerFetchListener, StoredMap } from './bg-components/utils.js';
 import { TokenCounter, TokenStorageManager, getTextFromContent } from './bg-components/tokenManagement.js';
 import { FirebaseSyncManager } from './bg-components/firebase.js';
+import { UsageData, ConversationData } from './bg-components/bg-dataclasses.js';
 
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
@@ -616,13 +617,16 @@ class ClaudeAPI {
 
 		await Log(`Total tokens for conversation ${conversationId}: ${lengthTokens} with model ${conversationModelType}`);
 
-		return {
+		return new ConversationData({
+			conversationId: conversationId,
 			length: Math.round(lengthTokens),
 			cost: Math.round(costTokens),
 			model: conversationModelType,
 			costUsedCache: cacheIsWarm,
-			conversationIsCached: conversationIsCachedAfterResponse
-		};
+			conversationIsCached: conversationIsCachedAfterResponse,
+			projectUuid: conversationData.project_uuid,
+			settings: conversationData.settings
+		});
 	}
 
 	async getProfileTokens() {
@@ -646,9 +650,8 @@ class ClaudeAPI {
 		const identifier = statsigData.user?.custom?.orgType;
 		await Log("User identifier:", identifier);
 		if (statsigData.user?.custom?.isRaven) {
-			subscriptionTier = "claude_team";	//IDK if this is the actual identifier, so I'm just overriding it based on the old value.
+			subscriptionTier = "claude_team"; //IDK if this is the actual identifier, so I'm just overriding it based on the old value.
 		} else if (identifier === "claude_max") {
-			//Need to differentiate between 5x and 20x - fetch the org data
 			const orgData = await this.getRequest(`/organizations/${this.orgId}`);
 			await Log("Org data for tier check:", orgData);
 			if (orgData?.settings?.rate_limit_tier === "default_claude_max_20x") {
@@ -656,9 +659,13 @@ class ClaudeAPI {
 			} else {
 				subscriptionTier = "claude_max_5x";
 			}
+		} else {
+			subscriptionTier = identifier;
 		}
-		subscriptionTier = identifier;
-		await subscriptionTiersCache.set(this.orgId, subscriptionTier, 60 * 60 * 1000); // 1 hour
+
+		// Cache for 24 hours instead of 1 hour
+		await subscriptionTiersCache.set(this.orgId, subscriptionTier, 24 * 60 * 60 * 1000);
+
 		return subscriptionTier;
 	}
 }
@@ -707,31 +714,31 @@ async function updateAllTabsWithUsage() {
 		const orgId = await requestActiveOrgId(tab);
 		await Log("Updating tab:", tab.id, "with orgId:", orgId);
 
-		const usageData = await tokenStorageManager.getUsageData(orgId);
+		// Create API to get subscription tier
+		const api = new ClaudeAPI(tab.cookieStoreId, orgId);
+		const subscriptionTier = await api.getSubscriptionTier();
+
+		// Get usage data with tier
+		const usageData = await tokenStorageManager.getUsageData(orgId, subscriptionTier);
 
 		await Log("Updating tab with usage data:", JSON.stringify(usageData));
 		sendTabMessage(tab.id, {
 			type: 'updateUsage',
 			data: {
-				modelData: usageData
+				usageData: usageData.toJSON()
 			}
 		});
 	}
 }
 
 // Updates a specific tab with conversation metrics
-async function updateTabWithConversationMetrics(tabId, cost, length, cacheStatus, model) {
-	await Log("Updating tab with conversation metrics:", tabId, { cost, length, cacheStatus, model });
+async function updateTabWithConversationMetrics(tabId, conversationData) {
+	await Log("Updating tab with conversation metrics:", tabId, conversationData);
 
 	sendTabMessage(tabId, {
 		type: 'updateConversationMetrics',
 		data: {
-			conversationMetrics: {
-				cost: cost,
-				length: length,
-				cacheStatus: cacheStatus,
-				model: model
-			}
+			conversationData: conversationData.toJSON()
 		}
 	});
 }
@@ -774,6 +781,7 @@ class MessageHandlerRegistry {
 	}
 
 	async handle(message, sender) {
+		console.warn("Background received message:", message.type);
 		const handler = this.handlers.get(message.type);
 		if (!handler) {
 			await Log("warn", `No handler for message type: ${message.type}`);
@@ -794,7 +802,14 @@ const messageRegistry = new MessageHandlerRegistry();
 // Simple handlers with inline functions
 messageRegistry.register('getConfig', () => CONFIG);
 messageRegistry.register('initOrg', (message, sender, orgId) => tokenStorageManager.addOrgId(orgId).then(() => true));
-messageRegistry.register('getUsageCap', async (message, sender, orgId) => tokenStorageManager.getUsageCap(await new ClaudeAPI(sender.tab?.cookieStoreId, orgId).getSubscriptionTier()));
+// Update getUsageCap handler
+messageRegistry.register('getUsageCap', async (message, sender, orgId) => {
+	const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
+	const tier = await api.getSubscriptionTier();
+	const usageData = await tokenStorageManager.getUsageData(orgId, tier);
+	return usageData.usageCap;
+});
+
 messageRegistry.register('resetOrgData', (message, sender, orgId) => firebaseManager.triggerReset(orgId));
 
 
@@ -802,8 +817,11 @@ messageRegistry.register('rateLimitExceeded', async (message, sender, orgId) => 
 	// Only add reset if we actually exceeded the limit
 	if (message?.detail?.type === 'exceeded_limit') {
 		await Log(`Rate limit exceeded for org ${orgId}, adding reset`);
-		const cap = await this.getUsageCap(await new ClaudeAPI(sender.tab?.cookieStoreId, orgId).getSubscriptionTier())
-		tokenStorageManager.addReset(orgId, "Sonnet", cap)
+		const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
+		const tier = await api.getSubscriptionTier();
+		const usageData = await tokenStorageManager.getUsageData(orgId, tier);
+
+		await tokenStorageManager.addReset(orgId, "Sonnet", tier)
 			.catch(async err => await Log("error", 'Adding reset failed:', err));
 	}
 
@@ -884,45 +902,39 @@ messageRegistry.register(openDebugPage);
 
 // Complex handlers
 async function requestData(message, sender, orgId) {
-	const { conversationId } = message;  // No more modelOverride
+	const { conversationId } = message;
 	const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
 
+	// Get subscription tier
+	const subscriptionTier = await api.getSubscriptionTier();
+
 	// Always send usage data
-	const usageData = await tokenStorageManager.getUsageData(orgId);
+	const usageData = await tokenStorageManager.getUsageData(orgId, subscriptionTier);
 	await sendTabMessage(sender.tab.id, {
 		type: 'updateUsage',
 		data: {
-			modelData: usageData
+			usageData: usageData.toJSON()  // Send in storage format
 		}
 	});
 
 	// If conversationId provided, also send conversation metrics
 	if (conversationId) {
 		await Log(`Requested metrics for conversation: ${conversationId}`);
-		const convoInfo = await api.getConversationInfo(conversationId, false);
+		const conversationData = await api.getConversationInfo(conversationId, false);
 		const profileTokens = await api.getProfileTokens();
 
-		if (convoInfo) {
-			const baseLength = convoInfo.length + profileTokens;
-			const messageCost = convoInfo.cost + profileTokens * CONFIG.CACHING_MULTIPLIER;
+		if (conversationData) {
+			// Add profile tokens to the conversation data
+			conversationData.length += profileTokens;
+			conversationData.cost += profileTokens * CONFIG.CACHING_MULTIPLIER;
 
-			await updateTabWithConversationMetrics(
-				sender.tab.id,
-				messageCost,
-				baseLength,
-				{
-					costUsedCache: convoInfo.costUsedCache,
-					conversationIsCached: convoInfo.conversationIsCached
-				},
-				convoInfo.model || "Sonnet"
-			);
+			await updateTabWithConversationMetrics(sender.tab.id, conversationData);
 		}
 	}
 
 	await Log("Sent update messages to tab");
-	return true; // Just indicate success
+	return true;
 }
-
 messageRegistry.register(requestData);
 
 async function interceptedRequest(message, sender) {
@@ -1055,24 +1067,24 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	const pendingResponse = await pendingResponses.get(responseKey);
 	const isNewMessage = pendingResponse !== undefined;
 
-	const convoInfo = await api.getConversationInfo(conversationId, isNewMessage);
-	if (!convoInfo) {
+	// Get subscription tier
+	const subscriptionTier = await api.getSubscriptionTier();
+
+	const conversationData = await api.getConversationInfo(conversationId, isNewMessage);
+	if (!conversationData) {
 		await Log("warn", "Could not get conversation tokens, exiting...")
 		return false;
 	}
 
 	const profileTokens = await api.getProfileTokens();
-	let baseLength = convoInfo.length;
-	let messageCost = convoInfo.cost + profileTokens;
+	conversationData.cost += profileTokens;
 
-	await Log("Current base length:", baseLength);
-	await Log("Current message cost (raw):", messageCost);
-
-
+	await Log("Current base length:", conversationData.length);
+	await Log("Current message cost (raw):", conversationData.cost);
 
 	// The style is processed _after_ we set the conversationLengthCache, as it can vary.
 	const styleTokens = await api.getStyleTokens(pendingResponse?.styleId, tabId);
-	messageCost += styleTokens;
+	conversationData.cost += styleTokens;
 	await Log("Added style tokens:", styleTokens);
 
 	if (pendingResponse?.toolDefinitions) {
@@ -1083,41 +1095,36 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 			);
 		}
 		await Log("Added tool definition tokens:", toolTokens);
-		messageCost += toolTokens;
+		conversationData.cost += toolTokens;
 	}
 
 	if (isNewMessage) {
-		const model = pendingResponse.model;	//This should be more reliable than using the conversation model.
+		const model = pendingResponse.model;
 		const modelWeight = CONFIG.MODEL_WEIGHTS[model] || 1;
-		const weightedCost = messageCost * modelWeight;
+		const weightedCost = conversationData.cost * modelWeight;
 
-		await Log(`Raw message cost: ${messageCost}, Model weight: ${modelWeight}, Weighted cost: ${weightedCost}`);
+		await Log(`Raw message cost: ${conversationData.cost}, Model weight: ${modelWeight}, Weighted cost: ${weightedCost}`);
 
 		const requestTime = pendingResponse.requestTimestamp;
-		const conversationData = await api.getConversation(conversationId);
-		const latestMessageTime = new Date(conversationData.chat_messages[conversationData.chat_messages.length - 1].created_at).getTime();
+		const conversationFullData = await api.getConversation(conversationId);
+		const latestMessageTime = new Date(conversationFullData.chat_messages[conversationFullData.chat_messages.length - 1].created_at).getTime();
 		if (latestMessageTime < requestTime - 5000) {
 			await Log("Message appears to be older than our request, likely an error");
 		} else {
-			await Log(`=============Adding tokens for model: ${model}, Raw tokens: ${messageCost}, Weighted tokens: ${weightedCost}============`);
-			// Store the raw tokens internally (backend will handle weighting for display)
-			await tokenStorageManager.addTokensToModel(orgId, model, messageCost);
+			await Log(`=============Adding tokens for model: ${model}, Raw tokens: ${conversationData.cost}, Weighted tokens: ${weightedCost}============`);
+			// Store the raw tokens internally
+			await tokenStorageManager.addTokensToModel(orgId, model, conversationData.cost, subscriptionTier);
 		}
 	}
 
-	// Get cache status and model from convoInfo
-	const cacheStatus = {
-		costUsedCache: convoInfo.costUsedCache,
-		conversationIsCached: convoInfo.conversationIsCached
-	};
-
-	const model = pendingResponse?.model || convoInfo?.model || "Sonnet";
+	const model = pendingResponse?.model || conversationData.model || "Sonnet";
+	conversationData.model = model;  // Ensure it's set
 
 	// Update all tabs with usage data
 	await updateAllTabsWithUsage();
 
-	// Update specific tab with raw conversation metrics
-	await updateTabWithConversationMetrics(tabId, messageCost, baseLength, cacheStatus, model);
+	// Update specific tab with conversation metrics
+	await updateTabWithConversationMetrics(tabId, conversationData);
 
 	return true;
 }

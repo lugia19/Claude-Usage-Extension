@@ -26,6 +26,7 @@
                 "lib/browser-polyfill.min.js",
                 "lib/o200k_base.js",
                 "content-components/content_utils.js",
+                "content-components/ui-dataclasses.js",
                 "content-components/notification_card.js",
                 "content-components/sidebar_ui.js",
                 "content-components/chat_ui.js",

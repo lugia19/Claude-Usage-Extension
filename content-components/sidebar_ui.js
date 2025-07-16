@@ -1,17 +1,5 @@
 'use strict';
 
-// Utility function for formatting time
-function formatTimeRemaining(resetTime) {
-	const now = new Date();
-	const diff = resetTime - now;
-
-	if (diff <= 0) return 'Reset pending...';
-	const hours = Math.floor(diff / (1000 * 60 * 60));
-	const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-
-	return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-}
-
 // Helper function to find sidebar containers
 async function findSidebarContainers() {
 	// First find the nav element
@@ -122,7 +110,6 @@ class ProgressBar {
 class UsageSection {
 	constructor() {
 		this.isEnabled = true;
-		this.resetTime = null;
 		this.buildSection();
 	}
 
@@ -167,25 +154,44 @@ class UsageSection {
 		this.container.appendChild(this.progressBar.container);
 	}
 
-	async updateProgress(total, maxTokens) {
-		// Calculate percentage
-		const percentage = (total / maxTokens) * 100;
+	async updateFromUsageData(usageData) {
+		if (!usageData) return;
+		// Update progress
+		await this.updateProgress(usageData);
+		// Update reset time
+		this.updateResetTime(usageData);
+	}
+
+	async updateProgress(usageData) {
+		const weightedTotal = usageData.getWeightedTotal();
+		const usageCap = usageData.usageCap;
+		const percentage = usageData.getUsagePercentage();
 
 		// Update progress bar
-		this.progressBar.updateProgress(total, maxTokens);
+		this.progressBar.updateProgress(weightedTotal, usageCap);
 
 		// Update percentage display
-		const color = percentage >= config.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
+		const color = usageData.isNearLimit() ? RED_WARNING : BLUE_HIGHLIGHT;
 		this.percentageDisplay.textContent = `${percentage.toFixed(1)}%`;
 		this.percentageDisplay.style.color = color;
 	}
 
-	updateResetTime(timestamp) {
-		this.resetTime = timestamp;
+	updateResetTime(usageData) {
+		const timeInfo = usageData.getTimeUntilReset();
 
-		this.resetTimeDisplay.innerHTML = timestamp ?
-			`Reset in: <span style="color: ${BLUE_HIGHLIGHT}">${formatTimeRemaining(timestamp)}</span>` :
-			'Reset in: Not Set';
+		if (!timeInfo) {
+			this.resetTimeDisplay.innerHTML = 'Reset in: Not Set';
+			return;
+		}
+
+		if (timeInfo.expired) {
+			this.resetTimeDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">Reset pending...</span>`;
+		} else {
+			const timeString = timeInfo.hours > 0 ?
+				`${timeInfo.hours}h ${timeInfo.minutes}m` :
+				`${timeInfo.minutes}m`;
+			this.resetTimeDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">${timeString}</span>`;
+		}
 	}
 }
 
@@ -223,7 +229,7 @@ class SidebarUI {
 		// Process any updates that arrived before UI was ready
 		while (this.pendingUpdates.length > 0) {
 			const update = this.pendingUpdates.shift();
-			await this.updateProgressBars(update.data);
+			await this.updateProgressBars(update.usageData);
 		}
 
 		// Check for version notification
@@ -236,6 +242,17 @@ class SidebarUI {
 			const notificationCard = new VersionNotificationCard(donationInfo);
 			notificationCard.show();
 		}
+	}
+
+	async updateProgressBars(usageData) {
+		if (!this.uiReady) {
+			await Log("UI not ready, pushing to pending updates...");
+			this.pendingUpdates.push({ usageData });
+			return;
+		}
+
+		await Log("Updating usage section...");
+		await this.usageSection.updateFromUsageData(usageData);
 	}
 
 	async buildHeader() {
@@ -298,20 +315,18 @@ class SidebarUI {
 		return content;
 	}
 
-	async updateProgressBars(data, usageCap) {
-		if (!this.uiReady) {
-			await Log("UI not ready, pushing to pending updates...");
-			this.pendingUpdates.push({ data, usageCap });
-			return;
-		}
+	async updateProgress(usageData) {
+		const weightedTotal = usageData.getWeightedTotal();
+		const usageCap = usageData.usageCap;
+		const percentage = usageData.getUsagePercentage();
 
-		// Expecting data to have modelData with total and resetTimestamp
-		const { modelData } = data;
-		const { total, resetTimestamp } = modelData;
+		// Update progress bar
+		this.progressBar.updateProgress(weightedTotal, usageCap);
 
-		await Log("Updating usage section...");
-		await this.usageSection.updateProgress(total || 0, usageCap);
-		this.usageSection.updateResetTime(resetTimestamp);
+		// Update percentage display
+		const color = usageData.isNearLimit() ? RED_WARNING : BLUE_HIGHLIGHT;
+		this.percentageDisplay.textContent = `${percentage.toFixed(1)}%`;
+		this.percentageDisplay.style.color = color;
 	}
 
 	async checkAndReinject(sidebarContainers) {

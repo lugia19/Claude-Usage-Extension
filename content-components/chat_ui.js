@@ -10,6 +10,8 @@ class ChatUI {
 		this.progressBar = null;
 		this.lastResetTimestamp = null;
 		this.lastMessageCost = null;
+		//This exists so that if we recieve updated usage data, we can update the estimate without needing to recieve the conversation cost again
+		//Example: A conversation in another tab updates the usage data
 		this.usageLabel = null;
 	}
 
@@ -109,34 +111,19 @@ class ChatUI {
 		}
 	}
 
-	async updateChatUI(data, currentModel, usageCap) {
-		if (data.conversationMetrics) {
-			this.updateCostAndLength(data.conversationMetrics);
-			// Use weighted cost for estimate
-			this.lastMessageCost = data.conversationMetrics.weightedCost || data.conversationMetrics.cost;
-			this.updateEstimate(data.modelData, currentModel, usageCap, this.lastMessageCost);
-		} else if (this.lastMessageCost) {
-			this.updateEstimate(data.modelData, currentModel, usageCap, this.lastMessageCost);
-		}
-		await this.updateProgressBar(data.modelData, usageCap);
-		this.updateResetTime(data.modelData);
-	}
+	async updateProgressBar(usageData) {
+		if (!this.progressBar || !usageData) return;
 
-	async updateProgressBar(modelData, usageCap) {
-		if (!this.progressBar) return;
-
-		const { total } = modelData;
-		const modelTotal = total || 0;
-
-		// Calculate percentage
-		const percentage = (modelTotal / usageCap) * 100;
+		const percentage = usageData.getUsagePercentage();
+		const weightedTotal = usageData.getWeightedTotal();
+		const usageCap = usageData.usageCap;
 
 		// Update progress bar
-		this.progressBar.updateProgress(modelTotal, usageCap);
+		this.progressBar.updateProgress(weightedTotal, usageCap);
 
 		// Update the usage label with percentage
 		if (this.usageLabel) {
-			const color = percentage >= config.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
+			const color = usageData.isNearLimit() ? RED_WARNING : BLUE_HIGHLIGHT;
 			if (isMobileView()) {
 				this.usageLabel.innerHTML = `<span style="color: ${color}">${percentage.toFixed(1)}%</span>`;
 			} else {
@@ -145,44 +132,75 @@ class ChatUI {
 		}
 	}
 
-	updateCostAndLength(metrics) {
+	async updateUsageDisplay(usageData, currentModel) {
+		if (!usageData) return;
+
+		// Always update progress bar
+		await this.updateProgressBar(usageData);
+
+		// Always update reset time
+		this.updateResetTime(usageData);
+
+		// Update estimate if we have a stored message cost
+		if (this.lastMessageCost) {
+			this.updateEstimate(usageData, currentModel, this.lastMessageCost);
+		}
+	}
+
+	async updateConversationDisplay(conversationData, usageData, currentModel) {
+		if (!conversationData) return;
+
+		// Update cost and length display with current model
+		this.updateCostAndLength(conversationData, currentModel);
+
+		// Store the weighted cost for future estimates using current model
+		const tempConversation = Object.assign(Object.create(Object.getPrototypeOf(conversationData)), conversationData);
+		tempConversation.model = currentModel;
+		this.lastMessageCost = tempConversation.getWeightedCost();
+
+		// Update estimate with new cost data
+		if (usageData) {
+			this.updateEstimate(usageData, currentModel, this.lastMessageCost);
+		}
+	}
+
+	updateCostAndLength(conversationData, currentModel = null) {
 		const separator = isMobileView() ? '<br>' : ' | ';
 		if (this.costAndLengthDisplay) {
-			if (!metrics) {
+			if (!conversationData) {
 				this.costAndLengthDisplay.innerHTML = `Length: N/A tokens`;
 				return;
 			}
 
-			const lengthColor = metrics.length >= config.WARNING.LENGTH ? RED_WARNING : BLUE_HIGHLIGHT;
-			// Use weightedCost if available, otherwise fall back to cost
-			const displayCost = metrics.weightedCost || metrics.cost;
-			const costColor = displayCost >= config.WARNING.COST ? RED_WARNING : BLUE_HIGHLIGHT;
+			// Create a temporary copy with overridden model if provided
+			let displayData = conversationData;
+			if (currentModel) {
+				displayData = Object.assign(Object.create(Object.getPrototypeOf(conversationData)), conversationData);
+				displayData.model = currentModel;
+			}
+
+			const lengthColor = displayData.isLong() ? RED_WARNING : BLUE_HIGHLIGHT;
+			const costColor = displayData.isExpensive() ? RED_WARNING : BLUE_HIGHLIGHT;
+			const weightedCost = displayData.getWeightedCost();
 
 			this.costAndLengthDisplay.innerHTML =
-				`Length: <span style="color: ${lengthColor}">${metrics.length.toLocaleString()}</span> tokens` +
-				`${separator}Cost: <span style="color: ${costColor}">${displayCost.toLocaleString()}</span> tokens`;
-
-			// If we have cache status, we could add an indicator here
-			if (metrics.cacheStatus?.costUsedCache) {
-				// Add a cache indicator if desired
-			}
+				`Length: <span style="color: ${lengthColor}">${displayData.length.toLocaleString()}</span> tokens` +
+				`${separator}Cost: <span style="color: ${costColor}">${weightedCost.toLocaleString()}</span> tokens`;
 		}
 	}
 
-	updateEstimate(modelData, currentModel, usageCap, messageCost) {
-		if (!this.estimateDisplay) return;
+	updateEstimate(usageData, currentModel, messageCost) {
+		if (!this.estimateDisplay || !usageData) return;
+
 		if (!getConversationId()) {
 			this.estimateDisplay.innerHTML = `${isMobileView() ? "Est. Msgs" : "Est. messages"}: <span>N/A</span>`;
 			return;
 		}
 
-		const { total } = modelData;
-		const modelTotal = total || 0;
-		const remainingTokens = usageCap - modelTotal;
+		const remainingTokens = usageData.usageCap - usageData.getWeightedTotal();
 
 		let estimate;
 		if (messageCost > 0 && currentModel) {
-			// messageCost should already be weighted by the UI
 			estimate = Math.max(0, remainingTokens / messageCost);
 			estimate = estimate.toFixed(1);
 		} else {
@@ -193,29 +211,45 @@ class ChatUI {
 		this.estimateDisplay.innerHTML = `${isMobileView() ? "Est. Msgs" : "Est. messages"}: <span style="color: ${color}">${estimate}</span>`;
 	}
 
-	updateResetTime(modelData) {
+	updateResetTime(usageData = null) {
 		if (!this.resetDisplay) return;
 
-		const { resetTimestamp } = modelData;
-		this.lastResetTimestamp = resetTimestamp || null;
-		this.updateResetTimeDisplay();
-	}
+		// If no usageData provided, use stored timestamp
+		if (!usageData && this.lastResetTimestamp) {
+			const now = Date.now();
+			const diff = this.lastResetTimestamp - now;
 
-	updateResetTimeDisplay() {
-		if (!this.resetDisplay) return;
+			if (diff <= 0) {
+				this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">pending...</span>`;
+			} else {
+				const hours = Math.floor(diff / (1000 * 60 * 60));
+				const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+				const timeString = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+				this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">${timeString}</span>`;
+			}
+			return;
+		}
 
-		if (!this.lastResetTimestamp) {
+		// If usageData provided, update stored timestamp and display
+		const timeInfo = usageData?.getTimeUntilReset();
+
+		// Store the timestamp for future updates
+		if (usageData?.resetTimestamp) {
+			this.lastResetTimestamp = usageData.resetTimestamp;
+		}
+
+		if (!timeInfo) {
 			this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">Not set</span>`;
 			return;
 		}
 
-		const now = Date.now();
-		const diff = this.lastResetTimestamp - now;
-
-		if (diff <= 0) {
+		if (timeInfo.expired) {
 			this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">pending...</span>`;
 		} else {
-			this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">${formatTimeRemaining(this.lastResetTimestamp)}</span>`;
+			const timeString = timeInfo.hours > 0 ?
+				`${timeInfo.hours}h ${timeInfo.minutes}m` :
+				`${timeInfo.minutes}m`;
+			this.resetDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">${timeString}</span>`;
 		}
 	}
 }

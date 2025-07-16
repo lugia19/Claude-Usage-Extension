@@ -1,4 +1,5 @@
 import { CONFIG, sleep, RawLog, FORCE_DEBUG, StoredMap } from './utils.js';
+import { UsageData, ConversationData } from './bg-dataclasses.js';
 
 // Create component-specific logger
 async function Log(...args) {
@@ -307,73 +308,6 @@ class TokenStorageManager {
 		return result[key] ?? defaultValue;
 	}
 
-	async mergeModelData(localData = {}, firebaseData = {}) {
-		await Log("MERGING...");
-		const merged = {};
-		const currentTime = new Date().getTime();
-
-		// Extract reset timestamps
-		const localReset = localData.resetTimestamp;
-		const remoteReset = firebaseData.resetTimestamp;
-
-		// Determine which reset timestamp to use
-		if (!remoteReset || (localReset && localReset > remoteReset)) {
-			merged.resetTimestamp = localReset;
-		} else if (!localReset || remoteReset > localReset) {
-			merged.resetTimestamp = remoteReset;
-		} else {
-			// They're equal, use either
-			merged.resetTimestamp = localReset;
-		}
-
-		// If the merged reset timestamp is in the past, don't merge any data
-		if (merged.resetTimestamp && merged.resetTimestamp < currentTime) {
-			await Log("Reset timestamp is in the past, returning empty data");
-			return {};
-		}
-
-		// Get all model keys (excluding resetTimestamp)
-		const allModelKeys = new Set([
-			...Object.keys(localData).filter(k => k !== 'resetTimestamp'),
-			...Object.keys(firebaseData).filter(k => k !== 'resetTimestamp')
-		]);
-
-		// Merge each model's data
-		allModelKeys.forEach(model => {
-			const local = localData[model];
-			const remote = firebaseData[model];
-
-			if (!remote) {
-				merged[model] = local;
-			} else if (!local) {
-				merged[model] = remote;
-			} else {
-				// Take the highest counts
-				merged[model] = {
-					total: Math.max(local.total || 0, remote.total || 0),
-					messageCount: Math.max(local.messageCount || 0, remote.messageCount || 0)
-				};
-			}
-		});
-
-		await Log("Merged data:", merged);
-		return merged;
-	}
-
-	async getUsageCap(subscriptionTier) {
-		const baseline = CONFIG.USAGE_CAP.BASELINE;
-		const tierMultiplier = CONFIG.USAGE_CAP.MULTIPLIERS[subscriptionTier];
-		// Note: capModifiers will be passed in from background.js when needed
-		return baseline * tierMultiplier;
-	}
-
-	async getCollapsedState() {
-		return await this.getValue(`claudeUsageTracker_v6_collapsed`, false);
-	}
-
-	async setCollapsedState(isCollapsed) {
-		await this.setValue(`claudeUsageTracker_v6_collapsed`, isCollapsed);
-	}
 
 	async checkAndCleanExpiredData(orgId = null) {
 		// If no orgId provided, check all orgs
@@ -399,47 +333,62 @@ class TokenStorageManager {
 		}
 	}
 
-	async getUsageData(orgId) {
+	async getUsageData(orgId, subscriptionTier) {
 		await this.checkAndCleanExpiredData(orgId);
-		const allModelData = await this.getValue(this.getStorageKey(orgId, 'models'));
-		return allModelData || {};
+		const allModelData = await this.getValue(this.getStorageKey(orgId, 'models')) || {};
+
+
+		// Get usage cap with modifiers
+		const baseline = CONFIG.USAGE_CAP.BASELINE;
+		const tierMultiplier = CONFIG.USAGE_CAP.MULTIPLIERS[subscriptionTier];
+		const capModifier = await this.getValue('capModifier_global') || 1;
+		const usageCap = baseline * tierMultiplier * capModifier;
+
+		return UsageData.fromModelData(allModelData, usageCap, subscriptionTier);
 	}
 
-	async addTokensToModel(orgId, model, newTokens) {
+	async addTokensToModel(orgId, model, newTokens, subscriptionTier) {
 		while (this.externalLock || this.storageLock) {
 			await sleep(50);
 		}
 
 		try {
 			this.storageLock = true;
-			let allModelData = await this.getValue(this.getStorageKey(orgId, 'models'), {});
-			const stored = allModelData[model];
-			const resetTimestamp = allModelData.resetTimestamp;
-			const now = new Date();
 
-			// If reset timestamp exists and has passed, reset ALL models
-			if (resetTimestamp && resetTimestamp < now.getTime()) {
-				// Clear all model data but keep the structure
-				const newData = {
-					resetTimestamp: this.#getResetFromNow(now).getTime()
-				};
-				allModelData = newData;
+			// Get current usage data
+			const usageData = await this.getUsageData(orgId, subscriptionTier);
+
+			// Check if expired and reset if needed
+			if (usageData.isExpired()) {
+				await Log("Usage data expired, resetting all models");
+				// Create fresh usage data with just a reset timestamp
+				const freshUsageData = new UsageData({
+					resetTimestamp: this.#getResetFromNow(new Date()).getTime(),
+					usageCap: usageData.usageCap,
+					subscriptionTier: usageData.subscriptionTier
+				});
+				await this.setValue(this.getStorageKey(orgId, 'models'), freshUsageData.toModelData());
+
+				// Use the fresh data
+				usageData.modelData = {};
+				usageData.resetTimestamp = freshUsageData.resetTimestamp;
 			}
 
 			// Initialize reset timestamp if it doesn't exist
-			if (!allModelData.resetTimestamp) {
-				allModelData.resetTimestamp = this.#getResetFromNow(now).getTime();
+			if (!usageData.resetTimestamp) {
+				usageData.resetTimestamp = this.#getResetFromNow(new Date()).getTime();
 			}
 
-			// Add tokens to the specific model
-			allModelData[model] = {
-				total: (stored?.total || 0) + newTokens,
-				messageCount: (stored?.messageCount || 0) + 1
-			};
+			// Add the tokens to the model
+			usageData.addTokensToModel(model, newTokens);
 
-			await this.setValue(this.getStorageKey(orgId, 'models'), allModelData);
-			await browser.storage.local.set({ 'totalTokensTracked': await this.getTotalTokens() + newTokens });
-			return allModelData[model];
+			// Save back to storage
+			await this.setValue(this.getStorageKey(orgId, 'models'), usageData.toModelData());
+			await browser.storage.local.set({
+				'totalTokensTracked': await this.getTotalTokens() + newTokens
+			});
+
+			return usageData.getModelData(model);
 		} finally {
 			this.storageLock = false;
 		}
@@ -453,23 +402,21 @@ class TokenStorageManager {
 		return resetTime;
 	}
 
-	async addReset(orgId, model, cap) {
-		await sleep(15000); // We want to ensure we get the latest data, which can take a second - so we wait 15.
-		const allModelData = await this.getValue(this.getStorageKey(orgId, 'models'));
-		if (!allModelData || !allModelData.resetTimestamp) return;
+	async addReset(orgId, model, subscriptionTier) {
+		await sleep(15000);
+		const usageData = await this.getUsageData(orgId, subscriptionTier);
 
-		const key = `${orgId}:${allModelData.resetTimestamp}`;
-		// Note: subscriptionTiersCache will be passed in when needed
+		if (!usageData.resetTimestamp) return;
+
+		const key = `${orgId}:${usageData.resetTimestamp}`;
 		const hasApiKey = !!(await browser.storage.local.get('apiKey'))?.apiKey;
 
-		// Calculate weighted total across all models
-		let weightedTotal = 0;
+		// Get weighted total and model breakdown
+		const weightedTotal = usageData.getWeightedTotal();
 		const modelBreakdown = {};
 
-		for (const [modelName, modelData] of Object.entries(allModelData)) {
-			if (modelName !== 'resetTimestamp' && modelData?.total) {
-				const weight = CONFIG.MODEL_WEIGHTS[modelName] || 1;
-				weightedTotal += modelData.total * weight;
+		for (const [modelName, modelData] of Object.entries(usageData.modelData)) {
+			if (modelData?.total) {
 				modelBreakdown[modelName] = modelData.total;
 			}
 		}
@@ -477,12 +424,12 @@ class TokenStorageManager {
 		// Only add if not already present
 		if (!(await this.resetsHit.has(key))) {
 			await this.resetsHit.set(key, {
-				total: `${Math.round(weightedTotal)}/${cap}`,
-				weightedTotal: Math.round(weightedTotal),
-				models: modelBreakdown,  // Add individual model totals
-				reset_time: allModelData.resetTimestamp,
+				total: `${weightedTotal}/${usageData.usageCap}`,
+				weightedTotal: weightedTotal,
+				models: modelBreakdown,
+				reset_time: usageData.resetTimestamp,
 				warning_time: new Date().toISOString(),
-				tier: "unknown", // Will be filled in by caller
+				tier: subscriptionTier || "unknown",
 				accurateCount: hasApiKey
 			});
 		}

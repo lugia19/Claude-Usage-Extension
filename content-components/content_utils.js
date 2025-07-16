@@ -374,12 +374,13 @@ async function setupRequestInterception(patterns) {
 }
 
 function calculateWeightedTotal(modelData) {
-    let weightedTotal = 0;
-    for (const [modelName, data] of Object.entries(modelData)) {
-        if (modelName !== 'resetTimestamp' && modelName !== 'weightedTotal' && data?.total) {
-            const weight = config.MODEL_WEIGHTS[modelName] || 1;
-            weightedTotal += data.total * weight;
-        }
-    }
-    return Math.round(weightedTotal);
+	let weightedTotal = 0;
+	for (const [modelName, data] of Object.entries(modelData)) {
+		if (modelName !== 'resetTimestamp' && modelName !== 'weightedTotal' && data?.total) {
+			const weight = config.MODEL_WEIGHTS[modelName] || 1;
+			weightedTotal += data.total * weight;
+		}
+	}
+	return Math.round(weightedTotal);
 }
+

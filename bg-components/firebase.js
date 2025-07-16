@@ -1,4 +1,5 @@
 import { CONFIG, sleep, RawLog, StoredMap } from './utils.js';
+import { UsageData, ConversationData } from './bg-dataclasses.js';
 
 // Create component-specific logger
 async function Log(...args) {
@@ -27,7 +28,7 @@ class FirebaseSyncManager {
 		// Update local counter immediately
 		await this.resetCounters.set(orgId, newCounter);
 
-		// Clear our own data
+		// Clear our own data (passing true to clean remote)
 		await this.clearOrgData(orgId, true);
 		await this.updateAllTabs();
 
@@ -64,7 +65,10 @@ class FirebaseSyncManager {
 
 		// Write empty data back to Firebase
 		if (cleanRemote) {
-			await this.uploadData(orgId, {}, await this.ensureDeviceId());
+			const emptyUsageData = new UsageData({
+				usageCap: 0
+			});
+			await this.uploadData(orgId, emptyUsageData, await this.ensureDeviceId());
 		}
 
 		await Log(`Cleared all data for org ${orgId}`);
@@ -286,7 +290,8 @@ class FirebaseSyncManager {
 	}
 
 	async syncSingleOrg(orgId, deviceId) {
-		if (!orgId) return
+		if (!orgId) return;
+
 		try {
 			// Check if we're the only device
 			const isLoneDevice = await this.checkDevices(orgId);
@@ -298,9 +303,6 @@ class FirebaseSyncManager {
 
 			// Check for resets before doing normal sync
 			const resetProcessed = await this.syncResetCounter(orgId);
-
-			// If we just processed a reset, we should still continue with sync
-			// to get any other changes, but log it for debugging
 			if (resetProcessed) {
 				await Log(`Reset processed for org ${orgId}, continuing with sync`);
 			}
@@ -312,21 +314,22 @@ class FirebaseSyncManager {
 
 			// Determine sync strategy
 			const strategy = await this.determineSyncStrategy(localState, lastUpdateInfo, deviceId);
-			let mergedModels = localState.localModels;
+			let mergedUsageData = localState.localUsageData;
 
 			if (strategy.shouldDownload) {
-				mergedModels = await this.downloadAndMerge(orgId, localState.localModels);
+				mergedUsageData = await this.downloadAndMerge(orgId, localState.localUsageData);
 			}
 
 			if (strategy.shouldUpload) {
-				await this.uploadData(orgId, mergedModels, deviceId);
+				await this.uploadData(orgId, mergedUsageData, deviceId);
 			}
 
-			// Update local storage
+			// Update local storage - convert UsageData back to storage format
 			await this.tokenStorage.setValue(
 				this.tokenStorage.getStorageKey(orgId, 'models'),
-				mergedModels
+				mergedUsageData.toModelData()
 			);
+
 			await this.tokenStorage.setValue(
 				this.tokenStorage.getStorageKey(orgId, 'lastSyncHash'),
 				localState.currentHashString
@@ -334,7 +337,7 @@ class FirebaseSyncManager {
 
 		} catch (error) {
 			await Log("error", `Error syncing org ${orgId}:`, error);
-			throw error; // Re-throw to handle it in the caller
+			throw error;
 		}
 	}
 
@@ -371,18 +374,9 @@ class FirebaseSyncManager {
 	}
 
 	async prepareLocalState(orgId) {
-		const localModels = await this.tokenStorage.getValue(
-			this.tokenStorage.getStorageKey(orgId, 'models')
-		) || {};
+		const localUsageData = await this.tokenStorage.getUsageData(orgId, 'claude_free');
 
-		const currentHash = await crypto.subtle.digest(
-			'SHA-256',
-			new TextEncoder().encode(JSON.stringify(localModels))
-		);
-
-		const currentHashString = Array.from(new Uint8Array(currentHash))
-			.map(b => b.toString(16).padStart(2, '0'))
-			.join('');
+		const currentHashString = await localUsageData.getHash();
 
 		const lastSyncHash = await this.tokenStorage.getValue(
 			this.tokenStorage.getStorageKey(orgId, 'lastSyncHash')
@@ -390,8 +384,9 @@ class FirebaseSyncManager {
 
 		const hasLocalChanges = !lastSyncHash || currentHashString !== lastSyncHash;
 		await Log("We have local changes:", hasLocalChanges);
+
 		return {
-			localModels,
+			localUsageData,
 			currentHashString,
 			hasLocalChanges
 		};
@@ -408,32 +403,31 @@ class FirebaseSyncManager {
 		};
 	}
 
-	async downloadAndMerge(orgId, localModels) {
+	async downloadAndMerge(orgId, localUsageData) {
 		await Log("Downloading remote data");
 		const usageUrl = `${this.firebase_base_url}/users/${orgId}/usage.json`;
 		const usageResponse = await fetch(usageUrl);
-		const remoteUsage = await usageResponse.json() || {};
+		const remoteData = await usageResponse.json() || {};
 
-		const mergedModels = await this.tokenStorage.mergeModelData(localModels, remoteUsage);
-		return mergedModels;
+		// Create UsageData from remote data
+		const remoteUsageData = UsageData.fromModelData(
+			remoteData,
+			localUsageData.usageCap,  // Use local cap as source of truth
+			"claude_free" // Dummy tier - not used for merging
+		);
+
+		// Use the static merge method
+		const mergedUsageData = UsageData.merge(localUsageData, remoteUsageData);
+		return mergedUsageData;
 	}
 
-	async uploadData(orgId, models, deviceId) {
+	async uploadData(orgId, usageData, deviceId) {
 		await Log("Uploading data and updating device ID");
 
-		// Calculate weighted total before uploading
-		let weightedTotal = 0;
-		for (const [modelName, modelData] of Object.entries(models)) {
-			if (modelName !== 'resetTimestamp' && modelData?.total) {
-				const weight = CONFIG.MODEL_WEIGHTS[modelName] || 1;
-				weightedTotal += modelData.total * weight;
-			}
-		}
-
-		// Add weighted total to the data structure
+		// Convert UsageData to storage format
 		const dataToUpload = {
-			...models,
-			weightedTotal: Math.round(weightedTotal)
+			...usageData.toModelData(),
+			weightedTotal: usageData.getWeightedTotal()
 		};
 
 		// Upload models with weighted total
