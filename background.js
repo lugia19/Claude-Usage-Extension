@@ -415,7 +415,7 @@ class ClaudeAPI {
 		}
 	}
 
-	async getProjectTokens(projectId) {
+	async getProjectTokens(projectId, isNewMessage) {
 		const projectStats = await this.getRequest(`/organizations/${this.orgId}/projects/${projectId}/kb/stats`);
 		const projectSize = projectStats.use_project_knowledge_search ? 0 : projectStats.knowledge_size;
 
@@ -423,11 +423,14 @@ class ClaudeAPI {
 		const cachedAmount = await tokenStorageManager.projectCache.get(projectId) || -1;
 		const isCached = cachedAmount == projectSize;
 
-		// Update cache with 1 hour TTL
-		await tokenStorageManager.projectCache.set(projectId, projectSize, 60 * 60 * 1000);
+		// Update cache with 1 hour TTL if htis is a new message
+		if (isNewMessage) {
+			await tokenStorageManager.projectCache.set(projectId, projectSize, 60 * 60 * 1000);
+		}
 
-		// Return discounted tokens if cached
-		return Math.round(isCached ? projectSize * CONFIG.CACHING_MULTIPLIER : projectSize);
+		// Return 0 tokens if cached, docs say it "doesn't count against your limits when reused"
+		// This is unlike conversations which are listed as "partially cached"
+		return Math.round(isCached ? 0 : projectSize);
 	}
 
 
@@ -608,7 +611,9 @@ class ClaudeAPI {
 
 		// If part of a project, get project data
 		if (conversationData.project_uuid) {
-			lengthTokens += await this.getProjectTokens(conversationData.project_uuid);
+			const projectTokens = await this.getProjectTokens(conversationData.project_uuid, isNewMessage);
+			lengthTokens += projectTokens;
+			costTokens += projectTokens;
 		}
 
 		let conversationModelType = undefined;
@@ -627,6 +632,7 @@ class ClaudeAPI {
 		if (isNewMessage) {
 			// We just calculated the cost of the message that was sent
 			// Now calculate what the next message will cost
+
 			const futureConversation = await this.getConversationInfo(conversationId, false);
 			futureCost = futureConversation.cost;
 		} else {
