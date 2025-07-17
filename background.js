@@ -469,7 +469,7 @@ class ClaudeAPI {
 		// Count messages by sender
 		let humanMessagesCount = 0;
 		let assistantMessagesCount = 0;
-		if (!conversationData.chat_messages) return 0;
+		if (!conversationData.chat_messages || conversationData.chat_messages.length == 0) return 0;
 
 		const lastMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
 
@@ -489,28 +489,29 @@ class ClaudeAPI {
 		let conversationIsCachedUntil = null;
 		const cache_lifetime = 60 * 60 * 1000; // 1 hour in milliseconds
 
-		if (conversationData.chat_messages.length < 4) {
-			// If there are less than 4 messages, we assume the cache is not warm
-			cacheIsWarm = false;
-			conversationIsCachedUntil = null;
-			await Log("Conversation too short for caching, assuming cache is cold");
+		let referenceMessage;
+
+		if (!isNewMessage) {
+			// When checking potential costs for a future message, use the latest message
+			referenceMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
 		} else {
-			let referenceMessage;
+			// When calculating costs for a message we just sent, use the third-to-last message
+			// to check if conversation was cached when we sent it
+			referenceMessage = conversationData.chat_messages[conversationData.chat_messages.length - 3];
+		}
 
-			if (!isNewMessage) {
-				// When checking potential costs for a future message, use the latest message
-				referenceMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
-			} else {
-				// When calculating costs for a message we just sent, use the third-to-last message
-				// to check if conversation was cached when we sent it
-				referenceMessage = conversationData.chat_messages[conversationData.chat_messages.length - 3];
-			}
-
+		if (!referenceMessage) {
+			// New conversation or not enough messages - assume cache starts being warm now
+			cacheIsWarm = true;
+			conversationIsCachedUntil = Date.now() + cache_lifetime;
+			await Log("New conversation - cache will be warm from now on.");
+		} else {
+			// Check if cache was warm based on reference message age
 			const messageTimestamp = new Date(referenceMessage.created_at).getTime();
 			const messageAge = Date.now() - messageTimestamp;
 			cacheIsWarm = messageAge < cache_lifetime;
 
-			// Calculate cache expiry based on the latest message (always the last one)
+			// Calculate cache expiry based on the latest message
 			const latestMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
 			const latestMessageTimestamp = new Date(latestMessage.created_at).getTime();
 			conversationIsCachedUntil = latestMessageTimestamp + cache_lifetime;
