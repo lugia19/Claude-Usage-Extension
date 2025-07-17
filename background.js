@@ -502,7 +502,7 @@ class ClaudeAPI {
 
 		if (!referenceMessage) {
 			// New conversation or not enough messages - assume cache starts being warm now
-			cacheIsWarm = true;
+			cacheIsWarm = false;
 			conversationIsCachedUntil = Date.now() + cache_lifetime;
 			await Log("New conversation - cache will be warm from now on.");
 		} else {
@@ -623,10 +623,22 @@ class ClaudeAPI {
 
 		await Log(`Total tokens for conversation ${conversationId}: ${lengthTokens} with model ${conversationModelType}`);
 
+		let futureCost;
+		if (isNewMessage) {
+			// We just calculated the cost of the message that was sent
+			// Now calculate what the next message will cost
+			const futureConversation = await this.getConversationInfo(conversationId, false);
+			futureCost = futureConversation.cost;
+		} else {
+			// Already calculating future cost, so they're the same
+			futureCost = Math.round(costTokens);
+		}
+
 		return new ConversationData({
 			conversationId: conversationId,
 			length: Math.round(lengthTokens),
 			cost: Math.round(costTokens),
+			futureCost: futureCost,  // New field
 			model: conversationModelType,
 			costUsedCache: cacheIsWarm,
 			conversationIsCachedUntil: conversationIsCachedUntil,

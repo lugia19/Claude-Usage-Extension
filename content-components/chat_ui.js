@@ -12,7 +12,7 @@ class ChatUI {
 		this.statLine = null;
 		this.progressBar = null;
 		this.lastResetTimestamp = null;
-		this.lastMessageCost = null;
+		this.nextMessageCost = null;
 		//This exists so that if we recieve updated usage data, we can update the estimate without needing to recieve the conversation cost again
 		//Example: A conversation in another tab updates the usage data
 		this.lastCachedUntilTimestamp = null;
@@ -218,8 +218,8 @@ class ChatUI {
 		this.updateResetTime(usageData);
 
 		// Update estimate if we have a stored message cost
-		if (this.lastMessageCost) {
-			this.updateEstimate(usageData, currentModel, this.lastMessageCost);
+		if (this.nextMessageCost) {
+			this.updateEstimate(usageData, currentModel, this.nextMessageCost);
 		}
 	}
 
@@ -232,11 +232,11 @@ class ChatUI {
 		// Store the weighted cost for future estimates using current model
 		const tempConversation = Object.assign(Object.create(Object.getPrototypeOf(conversationData)), conversationData);
 		tempConversation.model = currentModel;
-		this.lastMessageCost = tempConversation.getWeightedCost();
+		this.nextMessageCost = tempConversation.getWeightedFutureCost();
 
 		// Update estimate with new cost data
 		if (usageData) {
-			this.updateEstimate(usageData, currentModel, this.lastMessageCost);
+			this.updateEstimate(usageData, currentModel, this.nextMessageCost);
 		}
 	}
 
@@ -260,13 +260,13 @@ class ChatUI {
 
 		// Use green if cost was calculated with caching, otherwise use normal logic
 		let costColor;
-		if (displayData.costUsedCache) {
+		if (displayData.isCurrentlyCached()) {
 			costColor = SUCCESS_GREEN;
 		} else {
 			costColor = displayData.isExpensive() ? RED_WARNING : BLUE_HIGHLIGHT;
 		}
 
-		const weightedCost = displayData.getWeightedCost();
+		const weightedCost = displayData.getWeightedFutureCost();
 
 		// Update individual displays
 		this.lengthDisplay.innerHTML = `Length: <span style="color: ${lengthColor}">${displayData.length.toLocaleString()}</span> tokens`;

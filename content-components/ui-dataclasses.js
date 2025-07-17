@@ -174,6 +174,7 @@ class ConversationData {
 		// Calculated metrics
 		this.length = data.length || 0;  // Total tokens in conversation
 		this.cost = data.cost || 0;      // Token cost (with caching considered)
+		this.futureCost = data.futureCost || 0; // Estimated cost of future messages
 		this.model = data.model || 'Sonnet';
 
 		// Cache status
@@ -213,6 +214,11 @@ class ConversationData {
 		return Math.round(this.cost * weight);
 	}
 
+	getWeightedFutureCost() {
+		const weight = config.MODEL_WEIGHTS[this.model] || 1;
+		return Math.round(this.futureCost * weight);
+	}
+
 	// Check if conversation is expensive
 	isExpensive() {
 		return this.cost >= config.WARNING.COST;
@@ -229,6 +235,7 @@ class ConversationData {
 			messages: this.messages,
 			length: this.length,
 			cost: this.cost,
+			futureCost: this.futureCost,
 			model: this.model,
 			costUsedCache: this.costUsedCache,
 			conversationIsCachedUntil: this.conversationIsCachedUntil,
