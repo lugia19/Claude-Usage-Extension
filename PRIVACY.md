@@ -1,6 +1,6 @@
 Privacy Policy for Claude Usage Tracker
 
-Last Updated: 2024/12/21
+Last Updated: 2025/07/17
 
 Data Collection and Storage
 - This extension tracks usage statistics for claude.ai
@@ -18,8 +18,7 @@ Data Sharing
 
 Data Security
 - All data is stored securely using Firebase
-- Personal identifiers are hashed using SHA-256
-- No plain-text personal information is stored
+- Only usage data is stored, no personal information
 
 User Rights
 - You can contact lugia19@lugia19.com for any privacy-related questions
