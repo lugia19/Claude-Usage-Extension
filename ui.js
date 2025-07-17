@@ -68,6 +68,7 @@ class UIManager {
 		const sidebarContainers = await findSidebarContainers();
 		await this.sidebarUI.checkAndReinject(sidebarContainers);
 		await this.chatUI.checkAndReinject();
+		this.chatUI.updateCachedTime();
 	}
 
 	async mediumFrequencyUpdates() {

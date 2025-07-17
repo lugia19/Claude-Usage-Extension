@@ -1,4 +1,4 @@
-// content-dataclasses.js - Global version for content scripts
+// ui-dataclasses.js - Global version for content scripts
 
 class UsageData {
 	constructor(data = {}) {
@@ -176,15 +176,36 @@ class ConversationData {
 		this.cost = data.cost || 0;      // Token cost (with caching considered)
 		this.model = data.model || 'Sonnet';
 
-		// Cache status - just the two booleans
+		// Cache status
 		this.costUsedCache = data.costUsedCache || false;
-		this.conversationIsCached = data.conversationIsCached || false;
+		this.conversationIsCachedUntil = data.conversationIsCachedUntil || null;
 
 		// Associated metadata
 		this.projectUuid = data.projectUuid || null;
 		this.styleId = data.styleId || null;
 		this.settings = data.settings || {};
 	}
+
+	// Add helper method to check if currently cached
+	isCurrentlyCached() {
+		return this.conversationIsCachedUntil && this.conversationIsCachedUntil > Date.now();
+	}
+
+	// Add method to get time until cache expires
+	getTimeUntilCacheExpires() {
+		if (!this.conversationIsCachedUntil) return null;
+
+		const now = Date.now();
+		const diff = this.conversationIsCachedUntil - now;
+
+		if (diff <= 0) return { expired: true, minutes: 0 };
+
+		return {
+			expired: false,
+			minutes: Math.ceil(diff / (1000 * 60))  // Round up to nearest minute
+		};
+	}
+
 
 	// Calculate weighted cost based on model
 	getWeightedCost() {
@@ -210,7 +231,7 @@ class ConversationData {
 			cost: this.cost,
 			model: this.model,
 			costUsedCache: this.costUsedCache,
-			conversationIsCached: this.conversationIsCached,
+			conversationIsCachedUntil: this.conversationIsCachedUntil,
 			projectUuid: this.projectUuid,
 			styleId: this.styleId,
 			settings: this.settings
@@ -219,19 +240,5 @@ class ConversationData {
 
 	static fromJSON(json) {
 		return new ConversationData(json);
-	}
-
-	// Create from API conversation info
-	static fromAPIResponse(convoInfo, conversationId) {
-		return new ConversationData({
-			conversationId: conversationId,
-			length: convoInfo.length,
-			cost: convoInfo.cost,
-			model: convoInfo.model,
-			costUsedCache: convoInfo.costUsedCache,
-			conversationIsCached: convoInfo.conversationIsCached,
-			projectUuid: null,
-			settings: {}
-		});
 	}
 }

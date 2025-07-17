@@ -1,11 +1,11 @@
-// dataclasses.js - ES6 module version for background/service worker
-// IMPORTANT: Keep in sync with content-dataclasses.js
+// bg-dataclasses.js - ES6 module version for background/service worker
+// IMPORTANT: Keep in sync with ui-dataclasses.js
+
 import { CONFIG, sleep, RawLog, FORCE_DEBUG, StoredMap } from './utils.js';
 
 async function Log(...args) {
 	await RawLog("dataclasses-bg", ...args);
 }
-
 export class UsageData {
 	constructor(data = {}) {
 		// Raw model data (e.g., { Sonnet: { total: 1000, messageCount: 5 }, Opus: {...} })
@@ -20,7 +20,7 @@ export class UsageData {
 		let weightedTotal = 0;
 		for (const [modelName, data] of Object.entries(this.modelData)) {
 			if (data?.total) {
-				const weight = CONFIG.MODEL_WEIGHTS[modelName] || 1;
+				const weight = config.MODEL_WEIGHTS[modelName] || 1;
 				weightedTotal += data.total * weight;
 			}
 		}
@@ -35,7 +35,7 @@ export class UsageData {
 
 	// Check if approaching or exceeding limit
 	isNearLimit() {
-		return this.getUsagePercentage() >= (CONFIG.WARNING_THRESHOLD * 100);
+		return this.getUsagePercentage() >= (config.WARNING_THRESHOLD * 100);
 	}
 
 	// Get time until reset
@@ -182,9 +182,9 @@ export class ConversationData {
 		this.cost = data.cost || 0;      // Token cost (with caching considered)
 		this.model = data.model || 'Sonnet';
 
-		// Cache status - just the two booleans
+		// Cache status
 		this.costUsedCache = data.costUsedCache || false;
-		this.conversationIsCached = data.conversationIsCached || false;
+		this.conversationIsCachedUntil = data.conversationIsCachedUntil || null;
 
 		// Associated metadata
 		this.projectUuid = data.projectUuid || null;
@@ -192,20 +192,41 @@ export class ConversationData {
 		this.settings = data.settings || {};
 	}
 
+	// Add helper method to check if currently cached
+	isCurrentlyCached() {
+		return this.conversationIsCachedUntil && this.conversationIsCachedUntil > Date.now();
+	}
+
+	// Add method to get time until cache expires
+	getTimeUntilCacheExpires() {
+		if (!this.conversationIsCachedUntil) return null;
+
+		const now = Date.now();
+		const diff = this.conversationIsCachedUntil - now;
+
+		if (diff <= 0) return { expired: true, minutes: 0 };
+
+		return {
+			expired: false,
+			minutes: Math.ceil(diff / (1000 * 60))  // Round up to nearest minute
+		};
+	}
+
+
 	// Calculate weighted cost based on model
 	getWeightedCost() {
-		const weight = CONFIG.MODEL_WEIGHTS[this.model] || 1;
+		const weight = config.MODEL_WEIGHTS[this.model] || 1;
 		return Math.round(this.cost * weight);
 	}
 
 	// Check if conversation is expensive
 	isExpensive() {
-		return this.cost >= CONFIG.WARNING.COST;
+		return this.cost >= config.WARNING.COST;
 	}
 
 	// Check if conversation is long
 	isLong() {
-		return this.length >= CONFIG.WARNING.LENGTH;
+		return this.length >= config.WARNING.LENGTH;
 	}
 
 	toJSON() {
@@ -216,7 +237,7 @@ export class ConversationData {
 			cost: this.cost,
 			model: this.model,
 			costUsedCache: this.costUsedCache,
-			conversationIsCached: this.conversationIsCached,
+			conversationIsCachedUntil: this.conversationIsCachedUntil,
 			projectUuid: this.projectUuid,
 			styleId: this.styleId,
 			settings: this.settings
@@ -225,19 +246,5 @@ export class ConversationData {
 
 	static fromJSON(json) {
 		return new ConversationData(json);
-	}
-
-	// Create from API conversation info
-	static fromAPIResponse(convoInfo, conversationId) {
-		return new ConversationData({
-			conversationId: conversationId,
-			length: convoInfo.length,
-			cost: convoInfo.cost,
-			model: convoInfo.model,
-			costUsedCache: convoInfo.costUsedCache,
-			conversationIsCached: convoInfo.conversationIsCached,
-			projectUuid: null,
-			settings: {}
-		});
 	}
 }

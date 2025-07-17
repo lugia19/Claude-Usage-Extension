@@ -311,7 +311,7 @@ class SettingsCard extends FloatingCard {
 					if (result) {
 						// Show success message
 						resetButton.textContent = 'Reset Complete!';
-						resetButton.style.background = '#22c55e'; // Success green
+						resetButton.style.background = SUCCESS_GREEN;
 
 						// Reset button after delay
 						setTimeout(() => {

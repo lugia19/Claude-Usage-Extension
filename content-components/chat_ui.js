@@ -12,7 +12,9 @@ class ChatUI {
 		this.lastMessageCost = null;
 		//This exists so that if we recieve updated usage data, we can update the estimate without needing to recieve the conversation cost again
 		//Example: A conversation in another tab updates the usage data
+		this.lastCachedUntilTimestamp = null;
 		this.usageLabel = null;
+		this.cachedTooltip = null;
 	}
 
 	initialize() {
@@ -48,6 +50,14 @@ class ChatUI {
 		this.statLine.appendChild(spacer);
 		this.statLine.appendChild(this.estimateDisplay);
 		this.statLine.appendChild(this.resetDisplay);
+
+		this.cachedTooltip = document.createElement('div');
+		this.cachedTooltip.className = 'bg-bg-500 text-text-000 ut-tooltip';
+		this.cachedTooltip.textContent = 'Follow up messages in this conversation will have a reduced cost so long as caching is active';
+		this.cachedTooltip.style.maxWidth = '400px';
+		this.cachedTooltip.style.textAlign = 'left';
+		this.cachedTooltip.style.whiteSpace = 'normal';  // Override the nowrap from ut-tooltip
+		document.body.appendChild(this.cachedTooltip);
 	}
 
 	async checkAndReinject() {
@@ -180,12 +190,93 @@ class ChatUI {
 			}
 
 			const lengthColor = displayData.isLong() ? RED_WARNING : BLUE_HIGHLIGHT;
-			const costColor = displayData.isExpensive() ? RED_WARNING : BLUE_HIGHLIGHT;
+
+			// Use green if cost was calculated with caching, otherwise use normal logic
+			let costColor;
+			if (displayData.costUsedCache) {
+				costColor = SUCCESS_GREEN;
+			} else {
+				costColor = displayData.isExpensive() ? RED_WARNING : BLUE_HIGHLIGHT;
+			}
+
 			const weightedCost = displayData.getWeightedCost();
 
-			this.costAndLengthDisplay.innerHTML =
+			let displayText =
 				`Length: <span style="color: ${lengthColor}">${displayData.length.toLocaleString()}</span> tokens` +
 				`${separator}Cost: <span style="color: ${costColor}">${weightedCost.toLocaleString()}</span> tokens`;
+
+			// Add cached indicator if conversation is currently cached
+			if (displayData.isCurrentlyCached()) {
+				this.lastCachedUntilTimestamp = displayData.conversationIsCachedUntil;
+				const timeInfo = displayData.getTimeUntilCacheExpires();
+				displayText += `${separator}Cached: <span class="ut-cached-time" style="color: ${SUCCESS_GREEN}">${timeInfo.minutes}m</span> <svg class="ut-cached-info" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 256 256" style="display: inline-block; vertical-align: text-bottom; margin-left: 4px; cursor: help; transform: translateY(-1px);"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z"></path></svg>`;
+			} else {
+				this.lastCachedUntilTimestamp = null;
+			}
+
+			this.costAndLengthDisplay.innerHTML = displayText;
+
+			// Set up tooltip hover only if we have a cached indicator
+			if (displayData.isCurrentlyCached()) {
+				setTimeout(() => this.setupCachedTooltip(), 10);
+			}
+		}
+	}
+
+	setupCachedTooltip() {
+		const infoIcon = this.costAndLengthDisplay?.querySelector('.ut-cached-info');
+		if (!infoIcon || infoIcon.dataset.tooltipSetup === 'true') return;
+
+		infoIcon.dataset.tooltipSetup = 'true';
+
+		infoIcon.addEventListener('mouseenter', (e) => {
+			const rect = infoIcon.getBoundingClientRect();
+
+			// Show tooltip and get its dimensions
+			this.cachedTooltip.style.opacity = '1';
+			const tooltipRect = this.cachedTooltip.getBoundingClientRect();
+
+			let leftPos = rect.left + (rect.width / 2);
+			if (leftPos + (tooltipRect.width / 2) > window.innerWidth) {
+				leftPos = window.innerWidth - tooltipRect.width - 10;
+			}
+			if (leftPos - (tooltipRect.width / 2) < 0) {
+				leftPos = tooltipRect.width / 2 + 10;
+			}
+
+			let topPos = rect.top - tooltipRect.height - 10;
+			if (topPos < 10) {
+				topPos = rect.bottom + 10;
+			}
+
+			this.cachedTooltip.style.left = `${leftPos}px`;
+			this.cachedTooltip.style.top = `${topPos}px`;
+			this.cachedTooltip.style.transform = 'translateX(-50%)';
+		});
+
+		infoIcon.addEventListener('mouseleave', () => {
+			this.cachedTooltip.style.opacity = '0';
+		});
+	}
+
+	// Simplified update method that just changes the time
+	updateCachedTime() {
+		if (!this.lastCachedUntilTimestamp || !this.costAndLengthDisplay) return;
+
+		const now = Date.now();
+		const diff = this.lastCachedUntilTimestamp - now;
+
+		if (diff <= 0) {
+			// Cache expired
+			this.lastCachedUntilTimestamp = null;
+			return;
+		}
+
+		// Just update the time span text
+		const timeSpan = this.costAndLengthDisplay.querySelector('.ut-cached-time');
+		if (timeSpan) {
+			const minutes = Math.ceil(diff / (1000 * 60));
+			timeSpan.textContent = `${minutes}m`;
 		}
 	}
 

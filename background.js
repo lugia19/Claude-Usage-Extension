@@ -486,29 +486,34 @@ class ClaudeAPI {
 		}
 
 		let cacheIsWarm = false;
-		let conversationIsCachedAfterResponse = false;
+		let conversationIsCachedUntil = null;
 		const cache_lifetime = 60 * 60 * 1000; // 1 hour in milliseconds
+
 		if (conversationData.chat_messages.length < 4) {
 			// If there are less than 4 messages, we assume the cache is not warm
 			cacheIsWarm = false;
-			conversationIsCachedAfterResponse = false;
+			conversationIsCachedUntil = null;
 			await Log("Conversation too short for caching, assuming cache is cold");
 		} else {
+			let referenceMessage;
+
 			if (!isNewMessage) {
-				// When checking potential costs for a future message, check if latest message is < 1 hour old
-				// If it is, then when we send a new message, everything including current latest will be cached
-				const latestMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
-				const messageAge = Date.now() - new Date(latestMessage.created_at).getTime();
-				cacheIsWarm = messageAge < cache_lifetime; // 1 hour in milliseconds
-				conversationIsCachedAfterResponse = cacheIsWarm;
+				// When checking potential costs for a future message, use the latest message
+				referenceMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
 			} else {
-				// When calculating costs for a message we just sent, check if the conversation was cached when we sent it
-				// by looking at the THIRD-to-last message (as the second to last message would be the user's new message)
-				const thirdToLastMessage = conversationData.chat_messages[conversationData.chat_messages.length - 3];
-				const messageAge = Date.now() - new Date(thirdToLastMessage.created_at).getTime();
-				cacheIsWarm = messageAge < cache_lifetime; // 1 hour in milliseconds
-				conversationIsCachedAfterResponse = true;
+				// When calculating costs for a message we just sent, use the third-to-last message
+				// to check if conversation was cached when we sent it
+				referenceMessage = conversationData.chat_messages[conversationData.chat_messages.length - 3];
 			}
+
+			const messageTimestamp = new Date(referenceMessage.created_at).getTime();
+			const messageAge = Date.now() - messageTimestamp;
+			cacheIsWarm = messageAge < cache_lifetime;
+
+			// Calculate cache expiry based on the latest message (always the last one)
+			const latestMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
+			const latestMessageTimestamp = new Date(latestMessage.created_at).getTime();
+			conversationIsCachedUntil = latestMessageTimestamp + cache_lifetime;
 		}
 
 
@@ -623,7 +628,7 @@ class ClaudeAPI {
 			cost: Math.round(costTokens),
 			model: conversationModelType,
 			costUsedCache: cacheIsWarm,
-			conversationIsCached: conversationIsCachedAfterResponse,
+			conversationIsCachedUntil: conversationIsCachedUntil,
 			projectUuid: conversationData.project_uuid,
 			settings: conversationData.settings
 		});
