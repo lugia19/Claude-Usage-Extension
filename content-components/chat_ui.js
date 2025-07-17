@@ -3,7 +3,10 @@
 // Chat UI Manager
 class ChatUI {
 	constructor() {
-		this.costAndLengthDisplay = null;
+		// Separate display elements
+		this.lengthDisplay = null;
+		this.costDisplay = null;
+		this.cachedDisplay = null;
 		this.estimateDisplay = null;
 		this.resetDisplay = null;
 		this.statLine = null;
@@ -14,13 +17,34 @@ class ChatUI {
 		//Example: A conversation in another tab updates the usage data
 		this.lastCachedUntilTimestamp = null;
 		this.usageLabel = null;
-		this.cachedTooltip = null;
+
+		// Tooltips
+		this.tooltips = {
+			length: null,
+			cost: null,
+			cached: null,
+			estimate: null
+		};
 	}
 
 	initialize() {
-		this.costAndLengthDisplay = document.createElement('div');
-		this.costAndLengthDisplay.className = 'text-text-500 text-xs';
-		this.costAndLengthDisplay.style.marginTop = '2px';
+		// Create container for the separated displays
+		this.costAndLengthContainer = document.createElement('div');
+		this.costAndLengthContainer.className = 'text-text-500 text-xs';
+		this.costAndLengthContainer.style.marginTop = '2px';
+
+		// Create individual display elements
+		this.lengthDisplay = document.createElement('span');
+		this.lengthDisplay.className = 'ut-info-item';
+		this.lengthDisplay.style.cursor = 'help';
+
+		this.costDisplay = document.createElement('span');
+		this.costDisplay.className = 'ut-info-item';
+		this.costDisplay.style.cursor = 'help';
+
+		this.cachedDisplay = document.createElement('span');
+		this.cachedDisplay.className = 'ut-info-item';
+		this.cachedDisplay.style.cursor = 'help';
 
 		this.statLine = document.createElement('div');
 		this.statLine.className = 'ut-row ut-select-none';
@@ -39,6 +63,7 @@ class ChatUI {
 
 		this.estimateDisplay = document.createElement('div');
 		this.estimateDisplay.className = 'text-text-400 text-xs ut-select-text';
+		this.estimateDisplay.style.cursor = 'help';
 		if (!isMobileView()) this.estimateDisplay.style.marginRight = '8px';
 
 		this.resetDisplay = document.createElement('div');
@@ -51,13 +76,54 @@ class ChatUI {
 		this.statLine.appendChild(this.estimateDisplay);
 		this.statLine.appendChild(this.resetDisplay);
 
-		this.cachedTooltip = document.createElement('div');
-		this.cachedTooltip.className = 'bg-bg-500 text-text-000 ut-tooltip';
-		this.cachedTooltip.textContent = 'Follow up messages in this conversation will have a reduced cost so long as caching is active';
-		this.cachedTooltip.style.maxWidth = '400px';
-		this.cachedTooltip.style.textAlign = 'left';
-		this.cachedTooltip.style.whiteSpace = 'normal';  // Override the nowrap from ut-tooltip
-		document.body.appendChild(this.cachedTooltip);
+		this.tooltips.length = this.createTooltip('Length of the conversation, in tokens');
+		this.tooltips.cost = this.createTooltip('Estimated cost of sending another message\nIncludes ephemeral items like thinking.\nCost = length*model mult / caching factor');
+		this.tooltips.cached = this.createTooltip('Follow up messages in this conversation will have a reduced cost');
+		this.tooltips.estimate = this.createTooltip('Number of messages left based on the current cost');
+	}
+
+	createTooltip(text) {
+		const tooltip = document.createElement('div');
+		tooltip.className = 'bg-bg-500 text-text-000 ut-tooltip';
+		tooltip.textContent = text;
+		tooltip.style.maxWidth = '400px';
+		tooltip.style.textAlign = 'left';
+		tooltip.style.whiteSpace = 'pre-line';  // Override the nowrap from ut-tooltip
+		document.body.appendChild(tooltip);
+		return tooltip;
+	}
+
+	setupTooltipEvents(element, tooltip) {
+		if (!element || !tooltip) return;
+
+		element.addEventListener('mouseenter', (e) => {
+			const rect = element.getBoundingClientRect();
+
+			// Show tooltip and get its dimensions
+			tooltip.style.opacity = '1';
+			const tooltipRect = tooltip.getBoundingClientRect();
+
+			let leftPos = rect.left + (rect.width / 2);
+			if (leftPos + (tooltipRect.width / 2) > window.innerWidth) {
+				leftPos = window.innerWidth - tooltipRect.width - 10;
+			}
+			if (leftPos - (tooltipRect.width / 2) < 0) {
+				leftPos = tooltipRect.width / 2 + 10;
+			}
+
+			let topPos = rect.top - tooltipRect.height - 10;
+			if (topPos < 10) {
+				topPos = rect.bottom + 10;
+			}
+
+			tooltip.style.left = `${leftPos}px`;
+			tooltip.style.top = `${topPos}px`;
+			tooltip.style.transform = 'translateX(-50%)';
+		});
+
+		element.addEventListener('mouseleave', () => {
+			tooltip.style.opacity = '0';
+		});
 	}
 
 	async checkAndReinject() {
@@ -93,11 +159,11 @@ class ChatUI {
 				titleLine.classList.remove('md:flex-row');
 				titleLine.classList.add('md:flex-col');
 
-				// Add our length display after the wrapper or chat menu
-				if (chatMenu.parentElement.nextElementSibling !== this.costAndLengthDisplay) {
+				// Add our container after the wrapper or chat menu
+				if (chatMenu.parentElement.nextElementSibling !== this.costAndLengthContainer) {
 					const chatMenuParent = chatMenu.closest('.chat-project-wrapper') || chatMenu.parentElement;
-					if (chatMenuParent.nextElementSibling !== this.costAndLengthDisplay) {
-						chatMenuParent.after(this.costAndLengthDisplay);
+					if (chatMenuParent.nextElementSibling !== this.costAndLengthContainer) {
+						chatMenuParent.after(this.costAndLengthContainer);
 					}
 				}
 			}
@@ -175,93 +241,81 @@ class ChatUI {
 	}
 
 	updateCostAndLength(conversationData, currentModel = null) {
-		const separator = isMobileView() ? '<br>' : ' | ';
-		if (this.costAndLengthDisplay) {
-			if (!conversationData) {
-				this.costAndLengthDisplay.innerHTML = `Length: N/A tokens`;
-				return;
-			}
+		if (!conversationData) {
+			this.lengthDisplay.innerHTML = `Length: <span>N/A</span> tokens`;
+			this.costDisplay.innerHTML = '';
+			this.cachedDisplay.innerHTML = '';
+			this.updateContainer();
+			return;
+		}
 
-			// Create a temporary copy with overridden model if provided
-			let displayData = conversationData;
-			if (currentModel) {
-				displayData = Object.assign(Object.create(Object.getPrototypeOf(conversationData)), conversationData);
-				displayData.model = currentModel;
-			}
+		// Create a temporary copy with overridden model if provided
+		let displayData = conversationData;
+		if (currentModel) {
+			displayData = Object.assign(Object.create(Object.getPrototypeOf(conversationData)), conversationData);
+			displayData.model = currentModel;
+		}
 
-			const lengthColor = displayData.isLong() ? RED_WARNING : BLUE_HIGHLIGHT;
+		const lengthColor = displayData.isLong() ? RED_WARNING : BLUE_HIGHLIGHT;
 
-			// Use green if cost was calculated with caching, otherwise use normal logic
-			let costColor;
-			if (displayData.costUsedCache) {
-				costColor = SUCCESS_GREEN;
-			} else {
-				costColor = displayData.isExpensive() ? RED_WARNING : BLUE_HIGHLIGHT;
-			}
+		// Use green if cost was calculated with caching, otherwise use normal logic
+		let costColor;
+		if (displayData.costUsedCache) {
+			costColor = SUCCESS_GREEN;
+		} else {
+			costColor = displayData.isExpensive() ? RED_WARNING : BLUE_HIGHLIGHT;
+		}
 
-			const weightedCost = displayData.getWeightedCost();
+		const weightedCost = displayData.getWeightedCost();
 
-			let displayText =
-				`Length: <span style="color: ${lengthColor}">${displayData.length.toLocaleString()}</span> tokens` +
-				`${separator}Cost: <span style="color: ${costColor}">${weightedCost.toLocaleString()}</span> tokens`;
+		// Update individual displays
+		this.lengthDisplay.innerHTML = `Length: <span style="color: ${lengthColor}">${displayData.length.toLocaleString()}</span> tokens`;
+		this.costDisplay.innerHTML = `Cost: <span style="color: ${costColor}">${weightedCost.toLocaleString()}</span> credits`;
 
-			// Add cached indicator if conversation is currently cached
-			if (displayData.isCurrentlyCached()) {
-				this.lastCachedUntilTimestamp = displayData.conversationIsCachedUntil;
-				const timeInfo = displayData.getTimeUntilCacheExpires();
-				displayText += `${separator}Cached: <span class="ut-cached-time" style="color: ${SUCCESS_GREEN}">${timeInfo.minutes}m</span> <svg class="ut-cached-info" xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 256 256" style="display: inline-block; vertical-align: text-bottom; margin-left: 4px; cursor: help; transform: translateY(-1px);"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z"></path></svg>`;
-			} else {
-				this.lastCachedUntilTimestamp = null;
-			}
+		// Add cached indicator if conversation is currently cached
+		if (displayData.isCurrentlyCached()) {
+			this.lastCachedUntilTimestamp = displayData.conversationIsCachedUntil;
+			const timeInfo = displayData.getTimeUntilCacheExpires();
+			this.cachedDisplay.innerHTML = `Cached: <span class="ut-cached-time" style="color: ${SUCCESS_GREEN}">${timeInfo.minutes}m</span>`;
+		} else {
+			this.lastCachedUntilTimestamp = null;
+			this.cachedDisplay.innerHTML = '';
+		}
 
-			this.costAndLengthDisplay.innerHTML = displayText;
+		// Update container
+		this.updateContainer();
 
-			// Set up tooltip hover only if we have a cached indicator
-			if (displayData.isCurrentlyCached()) {
-				setTimeout(() => this.setupCachedTooltip(), 10);
-			}
+		// Set up tooltip events
+		this.setupTooltipEvents(this.lengthDisplay, this.tooltips.length);
+		this.setupTooltipEvents(this.costDisplay, this.tooltips.cost);
+
+		// Set up cached tooltip if we have cached content
+		if (displayData.isCurrentlyCached()) {
+			this.setupTooltipEvents(this.cachedDisplay, this.tooltips.cached);
 		}
 	}
 
-	setupCachedTooltip() {
-		const infoIcon = this.costAndLengthDisplay?.querySelector('.ut-cached-info');
-		if (!infoIcon || infoIcon.dataset.tooltipSetup === 'true') return;
+	updateContainer() {
+		// Clear container
+		this.costAndLengthContainer.innerHTML = '';
 
-		infoIcon.dataset.tooltipSetup = 'true';
+		// Add elements with separators
+		const separator = isMobileView() ? '<br>' : ' | ';
+		const elements = [this.lengthDisplay, this.costDisplay, this.cachedDisplay].filter(el => el.innerHTML);
 
-		infoIcon.addEventListener('mouseenter', (e) => {
-			const rect = infoIcon.getBoundingClientRect();
-
-			// Show tooltip and get its dimensions
-			this.cachedTooltip.style.opacity = '1';
-			const tooltipRect = this.cachedTooltip.getBoundingClientRect();
-
-			let leftPos = rect.left + (rect.width / 2);
-			if (leftPos + (tooltipRect.width / 2) > window.innerWidth) {
-				leftPos = window.innerWidth - tooltipRect.width - 10;
+		elements.forEach((element, index) => {
+			this.costAndLengthContainer.appendChild(element);
+			if (index < elements.length - 1) {
+				const sep = document.createElement('span');
+				sep.innerHTML = separator;
+				this.costAndLengthContainer.appendChild(sep);
 			}
-			if (leftPos - (tooltipRect.width / 2) < 0) {
-				leftPos = tooltipRect.width / 2 + 10;
-			}
-
-			let topPos = rect.top - tooltipRect.height - 10;
-			if (topPos < 10) {
-				topPos = rect.bottom + 10;
-			}
-
-			this.cachedTooltip.style.left = `${leftPos}px`;
-			this.cachedTooltip.style.top = `${topPos}px`;
-			this.cachedTooltip.style.transform = 'translateX(-50%)';
-		});
-
-		infoIcon.addEventListener('mouseleave', () => {
-			this.cachedTooltip.style.opacity = '0';
 		});
 	}
 
 	// Simplified update method that just changes the time
 	updateCachedTime() {
-		if (!this.lastCachedUntilTimestamp || !this.costAndLengthDisplay) return;
+		if (!this.lastCachedUntilTimestamp || !this.cachedDisplay) return;
 
 		const now = Date.now();
 		const diff = this.lastCachedUntilTimestamp - now;
@@ -273,7 +327,7 @@ class ChatUI {
 		}
 
 		// Just update the time span text
-		const timeSpan = this.costAndLengthDisplay.querySelector('.ut-cached-time');
+		const timeSpan = this.cachedDisplay.querySelector('.ut-cached-time');
 		if (timeSpan) {
 			const minutes = Math.ceil(diff / (1000 * 60));
 			timeSpan.textContent = `${minutes}m`;
@@ -300,6 +354,9 @@ class ChatUI {
 
 		const color = estimate !== "N/A" && parseFloat(estimate) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
 		this.estimateDisplay.innerHTML = `${isMobileView() ? "Est. Msgs" : "Est. messages"}: <span style="color: ${color}">${estimate}</span>`;
+
+		// Set up tooltip for estimate
+		this.setupTooltipEvents(this.estimateDisplay, this.tooltips.estimate);
 	}
 
 	updateResetTime(usageData = null) {

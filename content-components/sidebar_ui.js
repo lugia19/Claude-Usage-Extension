@@ -102,7 +102,7 @@ class ProgressBar {
 		const percentage = (total / maxTokens) * 100;
 		this.bar.style.width = `${Math.min(percentage, 100)}%`;
 		this.bar.style.background = total >= maxTokens * config.WARNING.PERCENT_THRESHOLD ? RED_WARNING : BLUE_HIGHLIGHT;
-		this.tooltip.textContent = `${total.toLocaleString()} / ${maxTokens.toLocaleString()} tokens (${percentage.toFixed(1)}%)`;
+		this.tooltip.textContent = `${total.toLocaleString()} / ${maxTokens.toLocaleString()} credits (${percentage.toFixed(1)}%)`;
 	}
 }
 
