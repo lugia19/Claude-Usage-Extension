@@ -64,11 +64,19 @@ class UIManager {
 			this.currentlyDisplayedModel = newModel;
 		}
 
+		const cacheExpired = this.chatUI.updateCachedTime();
+		if (cacheExpired && currConversation) {
+			// Cache expired - request fresh data to update costs
+			await sendBackgroundMessage({
+				type: 'requestData',
+				conversationId: currConversation
+			});
+		}
+
 		//UI presence checks
 		const sidebarContainers = await findSidebarContainers();
 		await this.sidebarUI.checkAndReinject(sidebarContainers);
 		await this.chatUI.checkAndReinject();
-		this.chatUI.updateCachedTime();
 	}
 
 	async mediumFrequencyUpdates() {

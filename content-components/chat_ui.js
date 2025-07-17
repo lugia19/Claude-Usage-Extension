@@ -315,15 +315,17 @@ class ChatUI {
 
 	// Simplified update method that just changes the time
 	updateCachedTime() {
-		if (!this.lastCachedUntilTimestamp || !this.cachedDisplay) return;
+		if (!this.lastCachedUntilTimestamp || !this.cachedDisplay) return false;
 
 		const now = Date.now();
 		const diff = this.lastCachedUntilTimestamp - now;
 
 		if (diff <= 0) {
-			// Cache expired
+			// Cache expired - clear the display
 			this.lastCachedUntilTimestamp = null;
-			return;
+			this.cachedDisplay.innerHTML = '';
+			this.updateContainer(); // Rebuild the container to remove the cached element
+			return true; // Return true to indicate cache expired
 		}
 
 		// Just update the time span text
@@ -332,6 +334,8 @@ class ChatUI {
 			const minutes = Math.ceil(diff / (1000 * 60));
 			timeSpan.textContent = `${minutes}m`;
 		}
+
+		return false; // Return false - still cached
 	}
 
 	updateEstimate(usageData, currentModel, messageCost) {
