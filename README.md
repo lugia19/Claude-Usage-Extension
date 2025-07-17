@@ -1,6 +1,10 @@
-# Claude usage tracker extension
+# Claude Usage Tracker Extension
 
-This extension is meant to help you gauge how much usage of claude you have left.
+Track your Claude.ai token usage across conversations with this browser extension.
+
+## Overview
+
+This extension helps you monitor how much of your Claude usage quota remains. It calculates token consumption from various sources including uploaded files, project knowledge, chat history, and AI responses.
 
 ## Installation
 
@@ -10,20 +14,29 @@ This extension is meant to help you gauge how much usage of claude you have left
 ### Firefox
 [![Mozilla Add-on](https://img.shields.io/amo/v/claude-usage-tracker.svg)](https://addons.mozilla.org/firefox/addon/claude-usage-tracker)
 
-### Features
-The extension will handle calculating token usage (either via Anthropic's own API if you input your own key, or via [gpt-tokenizer](https://github.com/niieani/gpt-tokenizer)).
+## Features
 
-It can pull from:
-- Files uploaded to the chat (Or synced via google drive)
-- Project (knowledge files and instructions)
-- Personal preferences
-- Message history
-- The system prompt of any enabled tools (analysis tool, artifacts) on a per-chat basis
-- The AI's output (This is weighted as being 10x the usage of input tokens, a rough estimate)
+The extension tracks token usage from:
 
-### Privacy
-It will additionally fetch your organization ID on claude.ai to synchronize your usage amounts across devices via firebase.
-See the [privacy policy](PRIVACY.md) for more information.
+- **Files** - Documents uploaded to chats or synced via Google Drive, Github, etc
+- **Projects** - Knowledge files and custom instructions
+- **Personal preferences** - Your configured settings
+- **Message history** - Full conversation context
+- **System prompts** - Enabled tools (analysis, artifacts) on a per-chat basis
+- **MOST MCPs/Integrations** - There are some limitations in cases where a "Knowledge" object is returned that I can't access, such as with web search
 
-### UI
-![UI Screenshot](https://github.com/lugia19/Claude-Usage-Extension/blob/main/ui_screenshot.png?raw=true)
+Limitations:
+- **Web search results** - The full results are not exposed in the conversation history, so I can't track them properly
+- **Research** - Most of it happens on the backend, so I can't track it
+ 
+Token calculation is handled either through Anthropic's API (if you provide your key) or via [gpt-tokenizer](https://github.com/niieani/gpt-tokenizer).
+
+## Privacy
+
+The extension fetches your organization ID from claude.ai to synchronize usage data across devices using Firebase. For full details, see the [privacy policy](PRIVACY.md).
+
+## UI
+
+Most elements in the chat UI (Namely the length, cost, estimate, caching status) have a tooltip explaining them further.
+
+![Claude Usage Tracker UI](https://github.com/lugia19/Claude-Usage-Extension/blob/main/ui_screenshot.png?raw=true)
