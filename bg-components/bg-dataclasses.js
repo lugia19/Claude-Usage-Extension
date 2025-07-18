@@ -20,7 +20,7 @@ export class UsageData {
 		let weightedTotal = 0;
 		for (const [modelName, data] of Object.entries(this.modelData)) {
 			if (data?.total) {
-				const weight = config.MODEL_WEIGHTS[modelName] || 1;
+				const weight = CONFIG.MODEL_WEIGHTS[modelName] || 1;
 				weightedTotal += data.total * weight;
 			}
 		}
@@ -35,7 +35,7 @@ export class UsageData {
 
 	// Check if approaching or exceeding limit
 	isNearLimit() {
-		return this.getUsagePercentage() >= (config.WARNING_THRESHOLD * 100);
+		return this.getUsagePercentage() >= (CONFIG.WARNING_THRESHOLD * 100);
 	}
 
 	// Get time until reset
@@ -216,23 +216,23 @@ export class ConversationData {
 
 	// Calculate weighted cost based on model
 	getWeightedCost() {
-		const weight = config.MODEL_WEIGHTS[this.model] || 1;
+		const weight = CONFIG.MODEL_WEIGHTS[this.model] || 1;
 		return Math.round(this.cost * weight);
 	}
 
 	getWeightedFutureCost() {
-		const weight = config.MODEL_WEIGHTS[this.model] || 1;
+		const weight = CONFIG.MODEL_WEIGHTS[this.model] || 1;
 		return Math.round(this.futureCost * weight);
 	}
 
 	// Check if conversation is expensive
 	isExpensive() {
-		return this.cost >= config.WARNING.COST;
+		return this.cost >= CONFIG.WARNING.COST;
 	}
 
 	// Check if conversation is long
 	isLong() {
-		return this.length >= config.WARNING.LENGTH;
+		return this.length >= CONFIG.WARNING.LENGTH;
 	}
 
 	toJSON() {

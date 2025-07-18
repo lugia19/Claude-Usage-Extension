@@ -3,7 +3,7 @@ const CONFIG = {
 	UI_UPDATE_INTERVAL_MS: 3000,
 	"OUTPUT_TOKEN_MULTIPLIER": 1,
 	"USAGE_CAP": {
-		"BASELINE": 3000000,
+		"BASELINE": 1000000,
 		"MULTIPLIERS": {
 			"claude_free": 0.2,
 			"claude_pro": 1,
@@ -55,7 +55,8 @@ const CONFIG = {
 		"enabled_web_search": 10250,
 		"citation_info": 450,
 		"compass_mode": 1000,
-		"profile_preferences": 850
+		"profile_preferences": 850,
+		"enabled_tumeric": 2000
 	},
 	"DONATION_TOKEN_THRESHOLDS": [
 		10000000,
