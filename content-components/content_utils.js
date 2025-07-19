@@ -384,3 +384,109 @@ function calculateWeightedTotal(modelData) {
 	return Math.round(weightedTotal);
 }
 
+function getResetTimeHTML(timeInfo) {
+    const prefix = 'Reset in: ';
+    
+    if (!timeInfo) {
+        return `${prefix}<span>Not set</span>`;
+    }
+    
+    if (timeInfo.expired) {
+        return `${prefix}<span style="color: ${BLUE_HIGHLIGHT}">Pending...</span>`;
+    }
+    
+    const timeString = timeInfo.hours > 0 
+        ? `${timeInfo.hours}h ${timeInfo.minutes}m` 
+        : `${timeInfo.minutes}m`;
+    
+    return `${prefix}<span style="color: ${BLUE_HIGHLIGHT}">${timeString}</span>`;
+}
+
+function setupTooltip(element, tooltip, options = {}) {    
+    if (!element || !tooltip) return;
+    
+    // Check if already set up
+    if (element.hasAttribute('data-tooltip-setup')) {
+        return;
+    }
+    element.setAttribute('data-tooltip-setup', 'true');
+    
+    const { topOffset = 10 } = options;
+
+    // Add standard classes for all tooltip elements
+    element.classList.add('ut-tooltip-trigger', 'ut-info-item');
+    element.style.cursor = 'help';
+    
+    
+    let pressTimer;
+    let tooltipHideTimer;
+    
+    const showTooltip = () => {
+        const rect = element.getBoundingClientRect();
+        tooltip.style.opacity = '1';
+        const tooltipRect = tooltip.getBoundingClientRect();
+
+        let leftPos = rect.left + (rect.width / 2);
+        if (leftPos + (tooltipRect.width / 2) > window.innerWidth) {
+            leftPos = window.innerWidth - tooltipRect.width - 10;
+        }
+        if (leftPos - (tooltipRect.width / 2) < 0) {
+            leftPos = tooltipRect.width / 2 + 10;
+        }
+
+        let topPos = rect.top - tooltipRect.height - topOffset;
+        if (topPos < 10) {
+            topPos = rect.bottom + 10;
+        }
+
+        tooltip.style.left = `${leftPos}px`;
+        tooltip.style.top = `${topPos}px`;
+        tooltip.style.transform = 'translateX(-50%)';
+    };
+    
+    const hideTooltip = () => {
+        tooltip.style.opacity = '0';
+        clearTimeout(tooltipHideTimer);
+    };
+    
+    // Pointer events work for both mouse and touch
+    element.addEventListener('pointerdown', (e) => {
+        
+        if (e.pointerType === 'touch' || isMobileView()) {
+            // Touch/mobile: long press
+            pressTimer = setTimeout(() => {
+                showTooltip();
+                
+                // Auto-hide after 3 seconds
+                tooltipHideTimer = setTimeout(hideTooltip, 3000);
+            }, 500);
+        }
+        // Mouse is handled by enter/leave below
+    });
+    
+    element.addEventListener('pointerup', (e) => {
+        if (e.pointerType === 'touch' || isMobileView()) {
+            clearTimeout(pressTimer);
+        }
+    });
+    
+    element.addEventListener('pointercancel', (e) => {
+        clearTimeout(pressTimer);
+        hideTooltip();
+    });
+    
+    // Keep mouse hover for desktop
+    if (!isMobileView()) {
+        element.addEventListener('pointerenter', (e) => {
+            if (e.pointerType === 'mouse') {
+                showTooltip();
+            }
+        });
+        
+        element.addEventListener('pointerleave', (e) => {
+            if (e.pointerType === 'mouse') {
+                hideTooltip();
+            }
+        });
+    }
+}

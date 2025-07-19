@@ -805,7 +805,7 @@ class MessageHandlerRegistry {
 	}
 
 	async handle(message, sender) {
-		console.warn("Background received message:", message.type);
+		await Log("Background received message:", message.type);
 		const handler = this.handlers.get(message.type);
 		if (!handler) {
 			await Log("warn", `No handler for message type: ${message.type}`);

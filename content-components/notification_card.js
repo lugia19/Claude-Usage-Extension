@@ -7,35 +7,36 @@ function makeDraggable(element, dragHandle = null) {
 	let currentY;
 	let initialX;
 	let initialY;
+	let pointerId = null; // Track which pointer is dragging
 
 	// If no specific drag handle is provided, the entire element is draggable
 	const dragElement = dragHandle || element;
 
 	function handleDragStart(e) {
+		// Only start dragging if we're not already dragging
+		if (isDragging) return;
+		
 		isDragging = true;
-
-		if (e.type === "mousedown") {
-			initialX = e.clientX - element.offsetLeft;
-			initialY = e.clientY - element.offsetTop;
-		} else if (e.type === "touchstart") {
-			initialX = e.touches[0].clientX - element.offsetLeft;
-			initialY = e.touches[0].clientY - element.offsetTop;
-		}
-
+		pointerId = e.pointerId;
+		
+		// Capture the pointer to this element
+		dragElement.setPointerCapture(e.pointerId);
+		
+		initialX = e.clientX - element.offsetLeft;
+		initialY = e.clientY - element.offsetTop;
+		
 		dragElement.style.cursor = 'grabbing';
+		
+		// Prevent text selection during drag
+		e.preventDefault();
 	}
 
 	function handleDragMove(e) {
-		if (!isDragging) return;
+		if (!isDragging || e.pointerId !== pointerId) return;
 		e.preventDefault();
 
-		if (e.type === "mousemove") {
-			currentX = e.clientX - initialX;
-			currentY = e.clientY - initialY;
-		} else if (e.type === "touchmove") {
-			currentX = e.touches[0].clientX - initialX;
-			currentY = e.touches[0].clientY - initialY;
-		}
+		currentX = e.clientX - initialX;
+		currentY = e.clientY - initialY;
 
 		// Ensure the element stays within the viewport
 		const maxX = window.innerWidth - element.offsetWidth;
@@ -49,34 +50,35 @@ function makeDraggable(element, dragHandle = null) {
 		element.style.bottom = 'auto';
 	}
 
-	function handleDragEnd() {
+	function handleDragEnd(e) {
+		if (e.pointerId !== pointerId) return;
+		
 		isDragging = false;
+		pointerId = null;
 		dragElement.style.cursor = dragHandle ? 'move' : 'grab';
+		
+		// Release the pointer capture
+		dragElement.releasePointerCapture(e.pointerId);
 	}
 
-	// Mouse events
-	dragElement.addEventListener('mousedown', handleDragStart);
-	document.addEventListener('mousemove', handleDragMove);
-	document.addEventListener('mouseup', handleDragEnd);
-
-	// Touch events
-	dragElement.addEventListener('touchstart', handleDragStart, { passive: false });
-	document.addEventListener('touchmove', handleDragMove, { passive: false });
-	document.addEventListener('touchend', handleDragEnd);
-	document.addEventListener('touchcancel', handleDragEnd);
+	// Pointer events (covers mouse, touch, and pen)
+	dragElement.addEventListener('pointerdown', handleDragStart);
+	dragElement.addEventListener('pointermove', handleDragMove);
+	dragElement.addEventListener('pointerup', handleDragEnd);
+	dragElement.addEventListener('pointercancel', handleDragEnd);
 
 	// Set initial cursor style
 	dragElement.style.cursor = dragHandle ? 'move' : 'grab';
+	
+	// Prevent touch scrolling when dragging
+	dragElement.style.touchAction = 'none';
 
 	// Return a cleanup function
 	return () => {
-		dragElement.removeEventListener('mousedown', handleDragStart);
-		document.removeEventListener('mousemove', handleDragMove);
-		document.removeEventListener('mouseup', handleDragEnd);
-		dragElement.removeEventListener('touchstart', handleDragStart);
-		document.removeEventListener('touchmove', handleDragMove);
-		document.removeEventListener('touchend', handleDragEnd);
-		document.removeEventListener('touchcancel', handleDragEnd);
+		dragElement.removeEventListener('pointerdown', handleDragStart);
+		dragElement.removeEventListener('pointermove', handleDragMove);
+		dragElement.removeEventListener('pointerup', handleDragEnd);
+		dragElement.removeEventListener('pointercancel', handleDragEnd);
 	};
 }
 
@@ -325,7 +327,7 @@ class SettingsCard extends FloatingCard {
 				} catch (error) {
 					// Show error
 					resetButton.textContent = 'Reset Failed';
-					console.error('Reset failed:', error);
+					await Log("error", 'Reset failed:', error);
 
 					// Reset button after delay
 					setTimeout(() => {

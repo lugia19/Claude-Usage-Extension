@@ -114,6 +114,12 @@
 	user-select: none;
 }
 
+.ut-tooltip-trigger {
+    -webkit-touch-callout: none; /* Disable callout on long press */
+    -webkit-user-select: none;   /* Disable text selection */
+    user-select: none;
+}
+
 .ut-content-box {
 	padding: 8px;
 	border-radius: 4px;

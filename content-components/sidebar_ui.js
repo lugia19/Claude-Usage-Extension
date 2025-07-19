@@ -65,37 +65,7 @@ class ProgressBar {
 
 		this.container.appendChild(this.bar);
 		document.body.appendChild(this.tooltip);
-		this.setupEventListeners();
-	}
-
-	setupEventListeners() {
-		this.container.addEventListener('mouseenter', () => {
-			const rect = this.container.getBoundingClientRect();
-			const tooltipRect = this.tooltip.getBoundingClientRect();
-
-			let leftPos = rect.left + (rect.width / 2);
-			if (leftPos + (tooltipRect.width / 2) > window.innerWidth) {
-				leftPos = window.innerWidth - tooltipRect.width - 10;
-			}
-			if (leftPos - (tooltipRect.width / 2) < 0) {
-				leftPos = tooltipRect.width / 2 + 10;
-			}
-
-			let topPos = rect.top - 30;
-			if (topPos < 10) {
-				topPos = rect.bottom + 10;
-			}
-
-			this.tooltip.style.left = `${leftPos}px`;
-			this.tooltip.style.top = `${topPos}px`;
-			this.tooltip.style.transform = 'translateX(-50%)';
-			this.tooltip.style.opacity = '1';
-		});
-
-
-		this.container.addEventListener('mouseleave', () => {
-			this.tooltip.style.opacity = '0';
-		});
+		setupTooltip(this.container, this.tooltip, { topOffset: 20 });
 	}
 
 	updateProgress(total, maxTokens) {
@@ -178,20 +148,7 @@ class UsageSection {
 
 	updateResetTime(usageData) {
 		const timeInfo = usageData.getTimeUntilReset();
-
-		if (!timeInfo) {
-			this.resetTimeDisplay.innerHTML = 'Reset in: Not Set';
-			return;
-		}
-
-		if (timeInfo.expired) {
-			this.resetTimeDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">Reset pending...</span>`;
-		} else {
-			const timeString = timeInfo.hours > 0 ?
-				`${timeInfo.hours}h ${timeInfo.minutes}m` :
-				`${timeInfo.minutes}m`;
-			this.resetTimeDisplay.innerHTML = `Reset in: <span style="color: ${BLUE_HIGHLIGHT}">${timeString}</span>`;
-		}
+		this.resetTimeDisplay.innerHTML = getResetTimeHTML(timeInfo);
 	}
 }
 

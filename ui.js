@@ -156,7 +156,7 @@ class UIManager {
 // Event Handlers
 // Listen for messages from background
 browser.runtime.onMessage.addListener(async (message) => {
-	console.warn("Content received message:", message.type);
+	await Log("Content received message:", message.type);
 	if (message.type === 'updateUsage') {
 		if (ui) await ui.updateUsage(message.data.usageData);
 	}
