@@ -19,7 +19,7 @@ async function findSidebarContainers() {
 	// Look for the Starred section
 	const starredSection = await waitForElement(mainContainer, 'div.flex.flex-col.mb-6', 5000);
 	if (!starredSection) {
-		await Log("error", 'Could not find Starred section, falling back to just recents');
+		await Log("error", 'Could not find Starred section.');
 	}
 
 	// Check if the Recents section exists as the next sibling
@@ -31,7 +31,7 @@ async function findSidebarContainers() {
 	}
 
 	if (!recentsSection) {
-		await Log("error", 'Could not find Recents section');
+		await Log("error", 'Could not find any injection site');
 		return null;
 	}
 
@@ -178,7 +178,7 @@ class SidebarUI {
 			const { container, starredSection, recentsSection } = sidebarContainers;
 
 			// Insert our container between Starred and Recents
-			container.insertBefore(this.container, recentsSection);
+			container.insertBefore(this.container, starredSection);
 		}
 
 		this.uiReady = true;
@@ -214,13 +214,9 @@ class SidebarUI {
 
 	async buildHeader() {
 		const header = document.createElement('div');
-		header.className = 'ut-row ut-justify-between ut-sticky';
-		header.style.cssText = `
-			padding-bottom: 8px;
-			padding-left: 8px;
-			z-index: 9999;
-			background: linear-gradient(to bottom, var(--bg-200) 50%, var(--bg-200) 40%);
-		`;
+		header.className = 'ut-row ut-justify-between ut-sticky bg-gradient-to-b from-bg-200 from-50% to-bg-200/40 px-1.5';
+		header.style.paddingBottom = "0.5rem"
+		header.style.zIndex = 9999;
 
 		const title = document.createElement('h3');
 		title.textContent = 'Usage';
@@ -229,6 +225,9 @@ class SidebarUI {
 		const settingsButton = document.createElement('button');
 		settingsButton.className = 'ut-button ut-button-icon hover:bg-bg-400 hover:text-text-100';
 		settingsButton.style.color = BLUE_HIGHLIGHT;
+		settingsButton.style.padding = '0';  // Add this line to remove button padding
+		settingsButton.style.width = '1rem';  // Add explicit width
+		settingsButton.style.height = '1rem'; // Add explicit height
 		settingsButton.innerHTML = `
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M19.43 12.98c.04-.32.07-.64.07-.98 0-.34-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98 0 .33.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>
@@ -258,11 +257,11 @@ class SidebarUI {
 		// Create our container div that matches the Starred/Recents sections style
 		const content = document.createElement('div');
 		content.className = 'flex min-h-0 flex-col pl-2';
-
+		content.style.paddingRight = "0.25rem"
+		
 		// Container for usage section
 		const sectionsContainer = document.createElement('ul');
 		sectionsContainer.className = '-mx-1.5 flex flex-1 flex-col px-1.5 gap-px';
-
 		// Create single usage section
 		this.usageSection = new UsageSection();
 		sectionsContainer.appendChild(this.usageSection.container);
@@ -291,7 +290,7 @@ class SidebarUI {
 			if (sidebarContainers) {
 				await Log('UI not present in sidebar, re-injecting...');
 				this.uiReady = false;
-				sidebarContainers.container.insertBefore(this.container, sidebarContainers.recentsSection);
+				sidebarContainers.container.insertBefore(this.container, sidebarContainers.starredSection);
 				this.uiReady = true;
 			}
 			return false;

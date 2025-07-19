@@ -33,7 +33,7 @@ class ChatUI {
 	initialize() {
 		// Create container for the separated displays
 		this.costAndLengthContainer = document.createElement('div');
-		this.costAndLengthContainer.className = `text-text-500 text-xs ut-select-none`;
+		this.costAndLengthContainer.className = `text-text-500 text-xs !px-1 ut-select-none`;
 		this.costAndLengthContainer.style.marginTop = '2px';
 
 		// Create individual display elements
@@ -76,7 +76,7 @@ class ChatUI {
 		this.statLine.appendChild(this.estimateDisplay);
 		this.statLine.appendChild(this.resetDisplay);
 
-		this.tooltips.length = this.createTooltip('Length of the conversation, in tokens');
+		this.tooltips.length = this.createTooltip('Length of the conversation, in tokens. The longer it is, the faster your limits run out.');
 		this.tooltips.cost = this.createTooltip('Estimated cost of sending another message\nIncludes ephemeral items like thinking.\nCost = length*model mult / caching factor');
 		this.tooltips.cached = this.createTooltip('Follow up messages in this conversation will have a reduced cost');
 		this.tooltips.estimate = this.createTooltip('Number of messages left based on the current cost');
@@ -134,6 +134,10 @@ class ChatUI {
 					}
 				}
 
+				
+				titleLine.classList.remove('md:items-center');
+				titleLine.classList.add('md:items-start'); // This aligns to the left in column layout
+				
 				// Keep the alignment classes on the titleLine
 				titleLine.classList.remove('md:flex-row');
 				titleLine.classList.add('md:flex-col');
