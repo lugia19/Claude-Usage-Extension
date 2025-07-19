@@ -107,9 +107,8 @@ class ChatUI {
 					header = header.parentElement;
 				}
 
-				if (header && header.classList.contains('h-12')) {
-					header.classList.remove('h-12');
-					header.classList.add('h-20');
+				if (header && header.classList.contains('h-12') && isMobileView()) {
+					header.classList.remove('h-12') // Let it size naturally based on content
 				}
 
 				// Check if there's a project link
