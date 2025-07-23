@@ -58,17 +58,10 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
 
 if (!isElectron) {
 	browser.action.onClicked.addListener(() => {
-		if (browser.contextMenus) {
-			// Desktop - open ko-fi
-			browser.tabs.create({
-				url: "https://ko-fi.com/lugia19"
-			});
-		} else {
-			// Mobile - open debug page
-			browser.tabs.create({
-				url: browser.runtime.getURL('debug.html')
-			});
-		}
+		// Always open debug page when clicking the extension icon
+		browser.tabs.create({
+			url: browser.runtime.getURL('debug.html')
+		});
 	});
 }
 
@@ -82,10 +75,20 @@ if (browser.contextMenus) {
 		});
 	});
 
+	browser.contextMenus.create({
+		id: 'openDonatePage',
+		title: 'Donate',
+		contexts: ['action']
+	});
+
 	browser.contextMenus.onClicked.addListener((info, tab) => {
 		if (info.menuItemId === 'openDebugPage') {
 			browser.tabs.create({
 				url: browser.runtime.getURL('debug.html')
+			});
+		} else if (info.menuItemId === 'openDonatePage') {
+			browser.tabs.create({
+				url: "https://ko-fi.com/lugia19"
 			});
 		}
 	});
