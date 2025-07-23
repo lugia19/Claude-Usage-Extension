@@ -827,11 +827,11 @@ async function updateAllTabsWithUsage() {
 }
 
 // Updates a specific tab with conversation metrics
-async function updateTabWithConversationMetrics(tabId, conversationData) {
+async function updateTabWithConversationData(tabId, conversationData) {
 	await Log("Updating tab with conversation metrics:", tabId, conversationData);
 
 	sendTabMessage(tabId, {
-		type: 'updateConversationMetrics',
+		type: 'updateConversationData',
 		data: {
 			conversationData: conversationData.toJSON()
 		}
@@ -1022,7 +1022,7 @@ async function requestData(message, sender, orgId) {
 			conversationData.length += profileTokens;
 			conversationData.cost += profileTokens * CONFIG.CACHING_MULTIPLIER;
 
-			await updateTabWithConversationMetrics(sender.tab.id, conversationData);
+			await updateTabWithConversationData(sender.tab.id, conversationData);
 		}
 	}
 
@@ -1218,7 +1218,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	await updateAllTabsWithUsage();
 
 	// Update specific tab with conversation metrics
-	await updateTabWithConversationMetrics(tabId, conversationData);
+	await updateTabWithConversationData(tabId, conversationData);
 
 	return true;
 }

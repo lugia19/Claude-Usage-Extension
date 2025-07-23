@@ -8,7 +8,7 @@ class UIManager {
 		this.chatUI = new ChatUI();
 		this.currentConversation = -1;
 		this.usageData = null;          // Changed from rawModelData
-		this.conversationData = null;   // Changed from conversationMetrics
+		this.conversationData = null;
 	}
 
 	async initialize() {
@@ -94,8 +94,8 @@ class UIManager {
 		}
 
 		// Update home page state if needed
-		if (isHomePage && this.conversationMetrics !== null) {
-			this.conversationMetrics = null;
+		if (isHomePage && this.conversationData !== null) {
+			this.conversationData = null;
 			this.chatUI.updateEstimate();
 			this.chatUI.updateCostAndLength();
 			this.currentConversation = null;
@@ -161,7 +161,7 @@ browser.runtime.onMessage.addListener(async (message) => {
 		if (ui) await ui.updateUsage(message.data.usageData);
 	}
 
-	if (message.type === 'updateConversationMetrics') {
+	if (message.type === 'updateConversationData') {
 		if (ui) await ui.updateConversation(message.data.conversationData);
 	}
 
