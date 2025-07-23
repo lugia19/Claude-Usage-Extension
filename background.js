@@ -73,12 +73,13 @@ if (browser.contextMenus) {
 			title: 'Open Debug Page',
 			contexts: ['action']
 		});
-	});
 
-	browser.contextMenus.create({
-		id: 'openDonatePage',
-		title: 'Donate',
-		contexts: ['action']
+		browser.contextMenus.create({
+			id: 'openDonatePage',
+			title: 'Donate',
+			contexts: ['action']
+		});
+
 	});
 
 	browser.contextMenus.onClicked.addListener((info, tab) => {
