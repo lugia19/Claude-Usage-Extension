@@ -102,7 +102,7 @@ async function logError(error) {
 
 	await Log("error", error.toString());
 	if ("captureStackTrace" in Error) {
-		Error.captureStackTrace(error, getStack);
+		Error.captureStackTrace(error, logError);
 	}
 	await Log("error", JSON.stringify(error.stack));
 }
