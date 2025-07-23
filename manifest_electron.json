@@ -30,7 +30,9 @@
                 "content-components/notification_card.js",
                 "content-components/sidebar_ui.js",
                 "content-components/chat_ui.js",
-                "ui.js"
+                "ui.js",
+                "injections/rate-limit-watcher.js",
+				"injections/webrequest-polyfill.js"
             ]
         }
     ],

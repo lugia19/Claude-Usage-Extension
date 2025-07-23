@@ -54,7 +54,9 @@
 				"kofi-button.png",
 				"debug.html",
 				"update_patchnotes.txt",
-				"tracker-styles.css"
+				"tracker-styles.css",
+				"injections/rate-limit-watcher.js",
+				"injections/webrequest-polyfill.js"
 			],
 			"matches": [
 				"<all_urls>"

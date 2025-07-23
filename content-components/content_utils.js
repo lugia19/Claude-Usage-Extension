@@ -202,80 +202,13 @@ async function setupRateLimitMonitoring() {
 		})
 	});
 
-	const rateLimitScript = document.createElement('script');
-	rateLimitScript.textContent = `
-        (function() {
-            const originalFetch = window.fetch;
-            
-            window.fetch = async function(...args) {
-                const response = await originalFetch.apply(this, args);
-                
-                if (response.headers.get('content-type')?.includes('event-stream')) {
-                    const clone = response.clone();
-                    const reader = clone.body.getReader();
-                    const decoder = new TextDecoder();
-
-                    const readStream = async () => {
-                        while (true) {
-                            const { done, value } = await reader.read();
-                            if (done) break;
-
-                            const chunk = decoder.decode(value);
-                            const lines = chunk.split('\\n');
-
-                            for (const line of lines) {
-                                if (line.startsWith('data:')) {
-                                    const data = line.substring(5).trim();
-                                    try {
-                                        const json = JSON.parse(data);
-                                        if (json.type === 'message_limit' && (json.message_limit?.type === 'exceeded_limit' || json.message_limit?.type === 'approaching_limit')) {
-                                            window.dispatchEvent(new CustomEvent('rateLimitExceeded', { 
-                                                detail: json.message_limit 
-                                            }));
-											// Timestamp is in json.message_limit.resetsAt
-                                        }
-                                    } catch (e) {
-                                        // Not JSON, ignore
-                                    }
-                                }
-                            }
-                        }
-                    };
-
-                    readStream().catch(err => err.name !== 'AbortError' && console.error('Rate limit stream reading error:', err));
-                }
-
-				if (response.status === 429) {
-					try {
-						const clone = response.clone();
-						const errorData = await clone.json();
-						
-						if (errorData.type === 'error' && 
-							errorData.error?.type === 'rate_limit_error' && 
-							errorData.error?.message) {
-							
-							// Parse the nested JSON message
-							try {
-								const limitDetails = JSON.parse(errorData.error.message);
-								// Dispatch the same event as SSE rate limits
-								window.dispatchEvent(new CustomEvent('rateLimitExceeded', { 
-									detail: limitDetails
-								}));
-							} catch (e) {
-								//Not JSON, ignore
-							}
-						}
-					} catch (error) {
-						console.error('Failed to parse 429 rate limit error:', error);
-					}
-            	}
-                
-                return response;
-            };
-        })();
-    `;
-	(document.head || document.documentElement).appendChild(rateLimitScript);
-	rateLimitScript.remove();
+	// Inject external rate limit monitoring script
+	const script = document.createElement('script');
+	script.src = browser.runtime.getURL('injections/rate-limit-watcher.js');
+	script.onload = function () {
+		this.remove();
+	};
+	(document.head || document.documentElement).appendChild(script);
 }
 
 async function setupRequestInterception(patterns) {
@@ -296,81 +229,14 @@ async function setupRequestInterception(patterns) {
 		});
 	});
 
-	const setupScript = document.createElement('script');
-	setupScript.textContent = `
-		window.__interceptPatterns = ${JSON.stringify(patterns)};
-		const originalFetch = window.fetch;
-
-		async function getBodyDetails(body) {
-			if (!body) return null;
-			
-			// If it's already a string (like JSON), just pass it through
-			if (typeof body === 'string') {
-				return { raw: [{ bytes: body }], fromMonkeypatch: true };
-			}
-			
-			// Handle FormData and other complex types
-			if (body instanceof FormData) {
-				const text = Array.from(body.entries())
-					.map(entry => entry[0] + '=' + entry[1])
-					.join('&');
-				return { raw: [{ bytes: text }], fromMonkeypatch: true };
-			}
-			
-			// For everything else, try to stringify
-			try {
-				return { raw: [{ bytes: JSON.stringify(body) }], fromMonkeypatch: true };
-			} catch (e) {
-				console.error('Failed to serialize body:', e);
-				return null;
-			}
-		}
-
-		window.fetch = async (...args) => {
-			const patterns = window.__interceptPatterns;
-			if (!patterns) return originalFetch(...args);
-			
-			const [input, config] = args;
-			
-			let url;
-			if (input instanceof URL) {
-				url = input.href;
-			} else if (typeof input === 'string') {
-				url = input;
-			} else if (input instanceof Request) {
-				url = input.url;
-			}
-			if (url.startsWith('/')) {
-				url = 'https://claude.ai' + url;
-			}
-
-			const details = {
-				url: url,
-				method: config?.method || 'GET',
-				requestBody: config?.body ? await getBodyDetails(config.body) : null
-			};
-			
-			if (patterns.onBeforeRequest.regexes.some(pattern => new RegExp(pattern).test(url))) {
-				window.dispatchEvent(new CustomEvent('interceptedRequest', { detail: details }));
-			}
-
-			const response = await originalFetch(...args);
-			
-			if (patterns.onCompleted.regexes.some(pattern => new RegExp(pattern).test(url))) {
-				window.dispatchEvent(new CustomEvent('interceptedResponse', { 
-					detail: {
-						...details,
-						status: response.status,
-						statusText: response.statusText
-					}
-				}));
-			}
-
-			return response;
-		};
-	`;
-	(document.head || document.documentElement).appendChild(setupScript);
-	setupScript.remove();
+	// Inject external request interception script with patterns as data attribute
+	const script = document.createElement('script');
+	script.src = browser.runtime.getURL('injections/webrequest-polyfill.js');
+	script.dataset.patterns = JSON.stringify(patterns);
+	script.onload = function () {
+		this.remove();
+	};
+	(document.head || document.documentElement).appendChild(script);
 }
 
 function calculateWeightedTotal(modelData) {
@@ -385,108 +251,108 @@ function calculateWeightedTotal(modelData) {
 }
 
 function getResetTimeHTML(timeInfo) {
-    const prefix = 'Reset in: ';
-    
-    if (!timeInfo) {
-        return `${prefix}<span>Not set</span>`;
-    }
-    
-    if (timeInfo.expired) {
-        return `${prefix}<span style="color: ${BLUE_HIGHLIGHT}">Pending...</span>`;
-    }
-    
-    const timeString = timeInfo.hours > 0 
-        ? `${timeInfo.hours}h ${timeInfo.minutes}m` 
-        : `${timeInfo.minutes}m`;
-    
-    return `${prefix}<span style="color: ${BLUE_HIGHLIGHT}">${timeString}</span>`;
+	const prefix = 'Reset in: ';
+
+	if (!timeInfo) {
+		return `${prefix}<span>Not set</span>`;
+	}
+
+	if (timeInfo.expired) {
+		return `${prefix}<span style="color: ${BLUE_HIGHLIGHT}">Pending...</span>`;
+	}
+
+	const timeString = timeInfo.hours > 0
+		? `${timeInfo.hours}h ${timeInfo.minutes}m`
+		: `${timeInfo.minutes}m`;
+
+	return `${prefix}<span style="color: ${BLUE_HIGHLIGHT}">${timeString}</span>`;
 }
 
-function setupTooltip(element, tooltip, options = {}) {    
-    if (!element || !tooltip) return;
-    
-    // Check if already set up
-    if (element.hasAttribute('data-tooltip-setup')) {
-        return;
-    }
-    element.setAttribute('data-tooltip-setup', 'true');
-    
-    const { topOffset = 10 } = options;
+function setupTooltip(element, tooltip, options = {}) {
+	if (!element || !tooltip) return;
 
-    // Add standard classes for all tooltip elements
-    element.classList.add('ut-tooltip-trigger', 'ut-info-item');
-    element.style.cursor = 'help';
-    
-    
-    let pressTimer;
-    let tooltipHideTimer;
-    
-    const showTooltip = () => {
-        const rect = element.getBoundingClientRect();
-        tooltip.style.opacity = '1';
-        const tooltipRect = tooltip.getBoundingClientRect();
+	// Check if already set up
+	if (element.hasAttribute('data-tooltip-setup')) {
+		return;
+	}
+	element.setAttribute('data-tooltip-setup', 'true');
 
-        let leftPos = rect.left + (rect.width / 2);
-        if (leftPos + (tooltipRect.width / 2) > window.innerWidth) {
-            leftPos = window.innerWidth - tooltipRect.width - 10;
-        }
-        if (leftPos - (tooltipRect.width / 2) < 0) {
-            leftPos = tooltipRect.width / 2 + 10;
-        }
+	const { topOffset = 10 } = options;
 
-        let topPos = rect.top - tooltipRect.height - topOffset;
-        if (topPos < 10) {
-            topPos = rect.bottom + 10;
-        }
+	// Add standard classes for all tooltip elements
+	element.classList.add('ut-tooltip-trigger', 'ut-info-item');
+	element.style.cursor = 'help';
 
-        tooltip.style.left = `${leftPos}px`;
-        tooltip.style.top = `${topPos}px`;
-        tooltip.style.transform = 'translateX(-50%)';
-    };
-    
-    const hideTooltip = () => {
-        tooltip.style.opacity = '0';
-        clearTimeout(tooltipHideTimer);
-    };
-    
-    // Pointer events work for both mouse and touch
-    element.addEventListener('pointerdown', (e) => {
-        
-        if (e.pointerType === 'touch' || isMobileView()) {
-            // Touch/mobile: long press
-            pressTimer = setTimeout(() => {
-                showTooltip();
-                
-                // Auto-hide after 3 seconds
-                tooltipHideTimer = setTimeout(hideTooltip, 3000);
-            }, 500);
-        }
-        // Mouse is handled by enter/leave below
-    });
-    
-    element.addEventListener('pointerup', (e) => {
-        if (e.pointerType === 'touch' || isMobileView()) {
-            clearTimeout(pressTimer);
-        }
-    });
-    
-    element.addEventListener('pointercancel', (e) => {
-        clearTimeout(pressTimer);
-        hideTooltip();
-    });
-    
-    // Keep mouse hover for desktop
-    if (!isMobileView()) {
-        element.addEventListener('pointerenter', (e) => {
-            if (e.pointerType === 'mouse') {
-                showTooltip();
-            }
-        });
-        
-        element.addEventListener('pointerleave', (e) => {
-            if (e.pointerType === 'mouse') {
-                hideTooltip();
-            }
-        });
-    }
+
+	let pressTimer;
+	let tooltipHideTimer;
+
+	const showTooltip = () => {
+		const rect = element.getBoundingClientRect();
+		tooltip.style.opacity = '1';
+		const tooltipRect = tooltip.getBoundingClientRect();
+
+		let leftPos = rect.left + (rect.width / 2);
+		if (leftPos + (tooltipRect.width / 2) > window.innerWidth) {
+			leftPos = window.innerWidth - tooltipRect.width - 10;
+		}
+		if (leftPos - (tooltipRect.width / 2) < 0) {
+			leftPos = tooltipRect.width / 2 + 10;
+		}
+
+		let topPos = rect.top - tooltipRect.height - topOffset;
+		if (topPos < 10) {
+			topPos = rect.bottom + 10;
+		}
+
+		tooltip.style.left = `${leftPos}px`;
+		tooltip.style.top = `${topPos}px`;
+		tooltip.style.transform = 'translateX(-50%)';
+	};
+
+	const hideTooltip = () => {
+		tooltip.style.opacity = '0';
+		clearTimeout(tooltipHideTimer);
+	};
+
+	// Pointer events work for both mouse and touch
+	element.addEventListener('pointerdown', (e) => {
+
+		if (e.pointerType === 'touch' || isMobileView()) {
+			// Touch/mobile: long press
+			pressTimer = setTimeout(() => {
+				showTooltip();
+
+				// Auto-hide after 3 seconds
+				tooltipHideTimer = setTimeout(hideTooltip, 3000);
+			}, 500);
+		}
+		// Mouse is handled by enter/leave below
+	});
+
+	element.addEventListener('pointerup', (e) => {
+		if (e.pointerType === 'touch' || isMobileView()) {
+			clearTimeout(pressTimer);
+		}
+	});
+
+	element.addEventListener('pointercancel', (e) => {
+		clearTimeout(pressTimer);
+		hideTooltip();
+	});
+
+	// Keep mouse hover for desktop
+	if (!isMobileView()) {
+		element.addEventListener('pointerenter', (e) => {
+			if (e.pointerType === 'mouse') {
+				showTooltip();
+			}
+		});
+
+		element.addEventListener('pointerleave', (e) => {
+			if (e.pointerType === 'mouse') {
+				hideTooltip();
+			}
+		});
+	}
 }
