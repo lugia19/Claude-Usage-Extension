@@ -468,58 +468,122 @@ class ClaudeAPI {
 	}
 
 	async getConversationInfo(conversationId, isNewMessage) {
-		const conversationData = await this.getConversation(conversationId);
-		// Count messages by sender
-		let humanMessagesCount = 0;
-		let assistantMessagesCount = 0;
-		if (!conversationData.chat_messages || conversationData.chat_messages.length == 0) return 0;
+		const conversationData = await this.getConversation(conversationId, true); // Always get full tree
 
-		const lastMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
+		// Single pass to build message map and find latest assistants
+		const messageMap = new Map();
+		let latestAssistant = null;
+		let secondLatestAssistant = null;
 
 		for (const message of conversationData.chat_messages) {
+			messageMap.set(message.uuid, message);
+
+			if (message.sender === "assistant") {
+				if (!latestAssistant || message.created_at > latestAssistant.created_at) {
+					secondLatestAssistant = latestAssistant;
+					latestAssistant = message;
+				} else if (!secondLatestAssistant || message.created_at > secondLatestAssistant.created_at) {
+					secondLatestAssistant = message;
+				}
+			}
+		}
+
+		// Reconstruct trunk, count messages, and build ID set
+		const currentTrunk = [];
+		const currentTrunkIds = new Set();
+		let humanMessagesCount = 0;
+		let assistantMessagesCount = 0;
+		let currentId = conversationData.current_leaf_message_uuid;
+		const rootId = "00000000-0000-4000-8000-000000000000";
+
+		while (currentId && currentId !== rootId) {
+			const message = messageMap.get(currentId);
+			if (!message) {
+				await Log("warn", `Message ${currentId} not found in tree`);
+				break;
+			}
+
+			currentTrunk.unshift(message);
+			currentTrunkIds.add(message.uuid);
+
+			// Count while building
 			if (message.sender === "human") humanMessagesCount++;
-			if (message.sender === "assistant") assistantMessagesCount++;
+			else if (message.sender === "assistant") assistantMessagesCount++;
+
+			currentId = message.parent_message_uuid;
 		}
 
 		// Sanity check
+		if (!currentTrunk || currentTrunk.length == 0) return 0;
+
+		const lastMessage = currentTrunk[currentTrunk.length - 1];
+
 		if (humanMessagesCount === 0 || assistantMessagesCount === 0 || humanMessagesCount !== assistantMessagesCount ||
 			!lastMessage || lastMessage.sender !== "assistant") {
 			await Log(`Message count mismatch or wrong last sender - Human: ${humanMessagesCount}, Assistant: ${assistantMessagesCount}, Last message sender: ${lastMessage?.sender}`);
 			return undefined;
 		}
 
-		let cacheIsWarm = false;
-		let conversationIsCachedUntil = null;
-		const cache_lifetime = 60 * 60 * 1000; // 1 hour in milliseconds
+		// Pick reference message based on whether we just sent a message
+		const referenceMessage = isNewMessage ? secondLatestAssistant : latestAssistant;
+		console.log("Reference message:", referenceMessage?.uuid, "Created at:", referenceMessage?.created_at);
+		console.log("Because isNewMessage:", isNewMessage, "Latest assistant:", latestAssistant?.uuid, "Second latest assistant:", secondLatestAssistant?.uuid);
 
-		let referenceMessage;
-
-		if (!isNewMessage) {
-			// When checking potential costs for a future message, use the latest message
-			referenceMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
-		} else {
-			// When calculating costs for a message we just sent, use the third-to-last message
-			// to check if conversation was cached when we sent it
-			referenceMessage = conversationData.chat_messages[conversationData.chat_messages.length - 3];
-		}
+		let cacheEndId = null;
+		let cacheCanBeWarm = false;
+		const cache_lifetime = 60 * 60 * 1000; // 1 hour
 
 		if (!referenceMessage) {
-			// New conversation or not enough messages - assume cache starts being warm now
-			cacheIsWarm = false;
-			conversationIsCachedUntil = Date.now() + cache_lifetime;
-			await Log("New conversation - cache will be warm from now on.");
+			// Not enough messages for cache to be warm
+			cacheCanBeWarm = false;
+			await Log("Not enough messages to determine cache status - cache is cold");
 		} else {
-			// Check if cache was warm based on reference message age
-			const messageTimestamp = new Date(referenceMessage.created_at).getTime();
-			const messageAge = Date.now() - messageTimestamp;
-			cacheIsWarm = messageAge < cache_lifetime;
+			const messageAge = Date.now() - Date.parse(referenceMessage.created_at);
+			if (messageAge >= cache_lifetime) {
+				// Cache definitely cold
+				cacheCanBeWarm = false;
+				await Log("Reference message too old - cache is cold");
+			} else {
+				// Cache could be warm, check if reference is in current trunk
+				if (currentTrunkIds.has(referenceMessage.uuid)) {
+					// Reference is in trunk - cache available up to reference message
+					cacheCanBeWarm = true;
+					cacheEndId = referenceMessage.uuid;
+					await Log("Reference message in current trunk - cache available up to:", cacheEndId);
+				} else {
+					// Need to find common ancestor
+					let currentId = referenceMessage.uuid;
 
-			// Calculate cache expiry based on the latest message
-			const latestMessage = conversationData.chat_messages[conversationData.chat_messages.length - 1];
-			const latestMessageTimestamp = new Date(latestMessage.created_at).getTime();
-			conversationIsCachedUntil = latestMessageTimestamp + cache_lifetime;
+					while (currentId && currentId !== rootId) {
+						if (currentTrunkIds.has(currentId)) {
+							cacheCanBeWarm = true;
+							cacheEndId = currentId;
+							await Log(`Cache ends at common ancestor: ${cacheEndId}`);
+							break;
+						}
+						const message = messageMap.get(currentId);
+						currentId = message?.parent_message_uuid;
+					}
+
+					if (!cacheCanBeWarm) {
+						await Log("No common ancestor found - cache is cold");
+					}
+				}
+			}
 		}
 
+		// Calculate when conversation cache expires (based on the latest message)
+		let conversationIsCachedUntil = null;
+		if (!latestAssistant) {
+			await Log("No latest assistant message found - assuming cache expires in lifetime");
+			conversationIsCachedUntil = Date.now() + cache_lifetime;
+		} else {
+			conversationIsCachedUntil = new Date(latestAssistant?.created_at).getTime() + cache_lifetime;
+		}
+
+
+		// Initialize cacheIsWarm - will be toggled during message processing
+		let cacheIsWarm = cacheCanBeWarm;
 
 		let lengthTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH; // Base tokens for system prompt
 		let costTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER; // Base cost tokens for system prompt
@@ -543,14 +607,12 @@ class ClaudeAPI {
 
 		let humanMessageData = [];
 		let assistantMessageData = [];
-		const messageCount = conversationData.chat_messages.length;
+		const messageCount = currentTrunk.length;
 
 		// Process each message
 		for (let i = 0; i < messageCount; i++) {
-			const message = conversationData.chat_messages[i];
-			//For new messages: All except the last are cached
-			//For cost estimation: All current messages are cached
-			const isCached = cacheIsWarm && (!isNewMessage || i < (messageCount - 1));
+			const message = currentTrunk[i];
+			const isCached = cacheIsWarm;
 
 			// Files_v2 tokens (handle separately)
 			for (const file of message.files_v2) {
@@ -593,6 +655,12 @@ class ClaudeAPI {
 				humanMessageData.push({ content: messageContent.join(' '), isCached });
 			} else {
 				assistantMessageData.push({ content: messageContent.join(' '), isCached });
+			}
+
+			// Check if we've hit the cache boundary at the END of processing this message
+			if (message.uuid === cacheEndId) {
+				cacheIsWarm = false;
+				await Log("Hit cache boundary at message:", message.uuid);
 			}
 		}
 
@@ -843,7 +911,6 @@ messageRegistry.register('rateLimitExceeded', async (message, sender, orgId) => 
 		await Log(`Rate limit exceeded for org ${orgId}, adding reset`);
 		const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
 		const tier = await api.getSubscriptionTier();
-		const usageData = await tokenStorageManager.getUsageData(orgId, tier);
 
 		await tokenStorageManager.addReset(orgId, "Sonnet", tier)
 			.catch(async err => await Log("error", 'Adding reset failed:', err));
