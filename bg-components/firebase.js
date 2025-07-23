@@ -191,7 +191,7 @@ class FirebaseSyncManager {
 		try {
 			// Group all entries by orgId
 			const groupedResets = {};
-			for (const [key, value] of (await this.tokenStorage.resetsHit.entries())) {
+			for (const [key, value] of (await this.tokenStorage.capHits.entries())) {
 				const orgId = key.split(':')[0];
 				if (!groupedResets[orgId]) {
 					groupedResets[orgId] = {};

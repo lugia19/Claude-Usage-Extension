@@ -265,13 +265,10 @@ class TokenStorageManager {
 		this.externalLock = false; // NEW: For external sync coordination
 		this.orgIds = undefined;
 		this.filesTokenCache = new StoredMap("fileTokens");
-		this.resetsHit = new StoredMap("resetsHit");
+		this.capHits = new StoredMap("capHits");
 		this.projectCache = new StoredMap("projectCache");
-
-		// REMOVED: this.firebaseManager = new FirebaseSyncManager(this);
 	}
 
-	// NEW: Method to set external lock
 	setExternalLock(isLocked) {
 		this.externalLock = isLocked;
 	}
@@ -422,8 +419,8 @@ class TokenStorageManager {
 		}
 
 		// Only add if not already present
-		if (!(await this.resetsHit.has(key))) {
-			await this.resetsHit.set(key, {
+		if (!(await this.capHits.has(key))) {
+			await this.capHits.set(key, {
 				total: `${weightedTotal}/${usageData.usageCap}`,
 				weightedTotal: weightedTotal,
 				models: modelBreakdown,
