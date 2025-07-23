@@ -135,10 +135,10 @@ class ChatUI {
 					}
 				}
 
-				
+
 				titleLine.classList.remove('md:items-center');
 				titleLine.classList.add('md:items-start'); // This aligns to the left in column layout
-				
+
 				// Keep the alignment classes on the titleLine
 				titleLine.classList.remove('md:flex-row');
 				titleLine.classList.add('md:flex-col');
@@ -257,7 +257,7 @@ class ChatUI {
 		if (displayData.isCurrentlyCached()) {
 			this.lastCachedUntilTimestamp = displayData.conversationIsCachedUntil;
 			const timeInfo = displayData.getTimeUntilCacheExpires();
-			this.cachedDisplay.innerHTML = `Cached: <span class="ut-cached-time" style="color: ${SUCCESS_GREEN}">${timeInfo.minutes}m</span>`;
+			this.cachedDisplay.innerHTML = `Cached for: <span class="ut-cached-time" style="color: ${SUCCESS_GREEN}">${timeInfo.minutes}m</span>`;
 		} else {
 			this.lastCachedUntilTimestamp = null;
 			this.cachedDisplay.innerHTML = '';
