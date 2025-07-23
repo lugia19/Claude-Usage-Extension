@@ -1,3 +1,4 @@
+/* global config, Log, isMobileView, ProgressBar, RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, setupTooltip, getConversationId, getResetTimeHTML */
 'use strict';
 
 // Chat UI Manager

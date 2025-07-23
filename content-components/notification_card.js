@@ -1,3 +1,4 @@
+/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, originalText */
 'use strict';
 
 // Draggable functionality for cards

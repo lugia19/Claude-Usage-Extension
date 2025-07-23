@@ -1,3 +1,4 @@
+/* global GPTTokenizer_o200k_base */
 import { CONFIG, sleep, RawLog, FORCE_DEBUG, StoredMap } from './utils.js';
 import { UsageData, ConversationData } from './bg-dataclasses.js';
 

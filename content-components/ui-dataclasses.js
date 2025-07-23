@@ -1,3 +1,4 @@
+/* global config */
 // ui-dataclasses.js - Global version for content scripts
 
 class UsageData {

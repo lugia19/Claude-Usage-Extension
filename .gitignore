@@ -6,3 +6,7 @@ manifest.json
 background_mv2.js
 run-android.bat
 .vscode/*
+node_modules/*
+package-lock.json
+package.json
+eslint.config.js

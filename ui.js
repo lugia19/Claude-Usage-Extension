@@ -1,3 +1,4 @@
+/* global UsageData, ConversationData, SidebarUI, ChatUI, NotificationCard, sendBackgroundMessage, config:writable, getConversationId, getCurrentModel, findSidebarContainers, Log, ui:writable, waitForElement, sleep, initializeFetch */
 'use strict';
 
 // Main UI Manager

@@ -1,3 +1,4 @@
+/* global Log, waitForElement, sleep, config, RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, setupTooltip, NotificationCard, getResetTimeHTML, sendBackgroundMessage, VersionNotificationCard, SettingsCard */
 'use strict';
 
 // Helper function to find sidebar containers
