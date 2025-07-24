@@ -434,7 +434,7 @@ class ClaudeAPI {
 
 		// Return 0 tokens if cached, docs say it "doesn't count against your limits when reused"
 		// This is unlike conversations which are listed as "partially cached"
-		return Math.round(isCached ? 0 : projectSize);
+		return { length: projectSize, isCached: isCached };
 	}
 
 
@@ -683,9 +683,9 @@ class ClaudeAPI {
 
 		// If part of a project, get project data
 		if (conversationData.project_uuid) {
-			const projectTokens = await this.getProjectTokens(conversationData.project_uuid, isNewMessage);
-			lengthTokens += projectTokens;
-			costTokens += projectTokens;
+			const projectData = await this.getProjectTokens(conversationData.project_uuid, isNewMessage);
+			lengthTokens += projectData.length;
+			costTokens += projectData.isCached ? 0 : projectData.length;
 		}
 
 		let conversationModelType = undefined;

@@ -3,7 +3,7 @@ const CONFIG = {
 	UI_UPDATE_INTERVAL_MS: 3000,
 	"OUTPUT_TOKEN_MULTIPLIER": 5,
 	"USAGE_CAP": {
-		"BASELINE": 750000,
+		"BASELINE": 700000,
 		"MULTIPLIERS": {
 			"claude_free": 0.2,
 			"claude_pro": 1,
