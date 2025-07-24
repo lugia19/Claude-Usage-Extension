@@ -124,7 +124,7 @@ class UIManager {
 		if (!usageData) return;
 
 		this.usageData = UsageData.fromJSON(usageData);
-
+		this.usageData.usageCap = this.usageData.usageCap * (await sendBackgroundMessage({ type: 'getCapModifier' }) || 1);
 		// Update sidebar
 		if (this.usageData) {
 			await this.sidebarUI.updateProgressBars(this.usageData);
