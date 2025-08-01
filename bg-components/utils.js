@@ -62,13 +62,14 @@ const CONFIG = {
 		10000000,
 		50000000,
 		100000000,
-		300000000
+		300000000,
+		1000000000
 	],
 	"CACHING_MULTIPLIER": 0.1
 };
 
 const isElectron = chrome.action === undefined;
-const FORCE_DEBUG = false; // Set to true to force debug mode
+const FORCE_DEBUG = true; // Set to true to force debug mode
 
 browser.storage.local.set({
 	force_debug: FORCE_DEBUG // or false, or whatever your debug setting is
@@ -161,7 +162,7 @@ async function addContainerFetchListener() {
 				)?.value;
 
 				if (containerStore) {
-					await Log("Processing request for container:", containerStore, "URL:", details.url);
+					//await Log("Processing request for container:", containerStore, "URL:", details.url);
 
 					// Extract domain from URL
 					const url = new URL(details.url);
@@ -172,7 +173,7 @@ async function addContainerFetchListener() {
 						domain: domain,
 						storeId: containerStore
 					});
-					await Log("Found cookies for domain:", domain, "in container:", containerStore);
+					//await Log("Found cookies for domain:", domain, "in container:", containerStore);
 					if (domainCookies.length > 0) {
 						// Create or find the cookie header
 						let cookieHeader = details.requestHeaders.find(h => h.name === 'Cookie');
@@ -286,6 +287,22 @@ class StoredMap {
 	}
 }
 
+
+// Browser storage helpers
+function getOrgStorageKey(orgId, type) {
+	return `claudeUsageTracker_v6_${orgId}_${type}`;
+}
+
+async function setStorageValue(key, value) {
+	await browser.storage.local.set({ [key]: value });
+	return true;
+}
+
+async function getStorageValue(key, defaultValue = null) {
+	const result = await browser.storage.local.get(key) || {};
+	return result[key] ?? defaultValue;
+}
+
 export {
 	CONFIG,
 	isElectron,
@@ -294,5 +311,8 @@ export {
 	FORCE_DEBUG,
 	containerFetch,
 	addContainerFetchListener,
-	StoredMap
+	StoredMap,
+	getOrgStorageKey,
+	getStorageValue,
+	setStorageValue
 };

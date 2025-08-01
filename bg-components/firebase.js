@@ -1,4 +1,4 @@
-import { CONFIG, sleep, RawLog, StoredMap } from './utils.js';
+import { CONFIG, sleep, RawLog, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey } from './utils.js';
 import { UsageData, ConversationData } from './bg-dataclasses.js';
 
 // Create component-specific logger
@@ -24,50 +24,42 @@ class FirebaseSyncManager {
 		// Get current local counter
 		const localCounter = await this.resetCounters.get(orgId) || 0;
 		const newCounter = localCounter + 1;
-
-		// Update local counter immediately
 		await this.resetCounters.set(orgId, newCounter);
 
-		// Clear our own data (passing true to clean remote)
-		await this.clearOrgData(orgId, true);
-		await this.updateAllTabs();
+		const lockerId = `firebase_reset_${Date.now()}`;
 
-		// Attempt to update remote counter if we're not a lone device
-		const isLoneDevice = await this.checkDevices(orgId);
-		if (!isLoneDevice) {
-			const resetCounterUrl = `${this.firebase_base_url}/users/${orgId}/reset_counter.json`;
-			await fetch(resetCounterUrl, {
-				method: 'PUT',
-				body: JSON.stringify({
-					value: newCounter,
-					lastReset: Date.now(),
-					triggeredBy: await this.ensureDeviceId()
-				})
-			});
+		try {
+			await this.tokenStorage.acquireLock(lockerId);
+			await this.clearOrgData(orgId, true, lockerId);
+			await this.updateAllTabs();
+
+			const isLoneDevice = await this.checkDevices(orgId);
+			if (!isLoneDevice) {
+				const resetCounterUrl = `${this.firebase_base_url}/users/${orgId}/reset_counter.json`;
+				await fetch(resetCounterUrl, {
+					method: 'PUT',
+					body: JSON.stringify({
+						value: newCounter,
+						lastReset: Date.now(),
+						triggeredBy: await this.ensureDeviceId()
+					})
+				});
+			}
+			await Log(`Reset completed for org ${orgId}, new counter: ${newCounter}`);
+			return true;
+		} finally {
+			this.tokenStorage.releaseLock(lockerId);
 		}
-
-		await Log(`Reset completed for org ${orgId}, new counter: ${newCounter}`);
-		return true;
 	}
 
-	async clearOrgData(orgId, cleanRemote = false) {
-		// Clear models data
-		await this.tokenStorage.setValue(
-			this.tokenStorage.getStorageKey(orgId, 'models'),
-			{}
-		);
-
-		// Clear related data
-		await this.tokenStorage.setValue(
-			this.tokenStorage.getStorageKey(orgId, 'lastSyncHash'),
+	async clearOrgData(orgId, cleanRemote = false, lockerId = null) {
+		await this.tokenStorage.clearModelData(orgId, lockerId);
+		await setStorageValue(
+			getOrgStorageKey(orgId, 'lastSyncHash'),
 			null
 		);
-
-		// Write empty data back to Firebase
 		if (cleanRemote) {
-			const emptyUsageData = new UsageData({
-				usageCap: 0
-			});
+			const emptyUsageData = new UsageData({ usageCap: 0 });
 			await this.uploadData(orgId, emptyUsageData, await this.ensureDeviceId());
 		}
 
@@ -81,15 +73,15 @@ class FirebaseSyncManager {
 		}
 
 		this.isSyncing = true;
-		this.tokenStorage.setExternalLock(true);
-		await Log("=== FIREBASE SYNC STARTING ===");
+		const lockerId = `firebase_sync_${Date.now()}`;
 
 		try {
+			await this.tokenStorage.acquireLock(lockerId);
 			await this.tokenStorage.ensureOrgIds();
 			const deviceId = await this.ensureDeviceId();
-			await Log("Syncing device ID:", deviceId);
+
 			for (const orgId of this.tokenStorage.orgIds) {
-				await this.syncSingleOrg(orgId, deviceId);
+				await this.syncSingleOrg(orgId, deviceId, lockerId);
 			}
 
 			await Log("=== SYNC COMPLETED SUCCESSFULLY, UPDATING TABS ===");
@@ -100,7 +92,7 @@ class FirebaseSyncManager {
 			await Log("error", 'Stack:', error.stack);
 		} finally {
 			this.isSyncing = false;
-			this.tokenStorage.setExternalLock(false);
+			this.tokenStorage.releaseLock(lockerId);
 		}
 	}
 
@@ -247,7 +239,7 @@ class FirebaseSyncManager {
 		return deviceId;
 	}
 
-	async syncResetCounter(orgId) {
+	async syncResetCounter(orgId, lockerId) {
 		const resetCounterUrl = `${this.firebase_base_url}/users/${orgId}/reset_counter.json`;
 		const response = await fetch(resetCounterUrl);
 		const remoteData = await response.json();
@@ -275,13 +267,10 @@ class FirebaseSyncManager {
 		} else if (remoteCounter > localCounter) {
 			// If remote counter is higher, we need to reset
 			await Log(`Remote reset counter is higher, resetting local data`);
-
 			// Clear our data
-			await this.clearOrgData(orgId);
-
+			await this.clearOrgData(orgId, false, lockerId);
 			// Update our local counter
 			await this.resetCounters.set(orgId, remoteCounter);
-
 			return true;
 		}
 
@@ -289,7 +278,7 @@ class FirebaseSyncManager {
 		return false;
 	}
 
-	async syncSingleOrg(orgId, deviceId) {
+	async syncSingleOrg(orgId, deviceId, lockerId) {
 		if (!orgId) return;
 
 		try {
@@ -302,13 +291,13 @@ class FirebaseSyncManager {
 			}
 
 			// Check for resets before doing normal sync
-			const resetProcessed = await this.syncResetCounter(orgId);
+			const resetProcessed = await this.syncResetCounter(orgId, lockerId);
 			if (resetProcessed) {
 				await Log(`Reset processed for org ${orgId}, continuing with sync`);
 			}
 
 			// Get local state + remote info
-			const localState = await this.prepareLocalState(orgId);
+			const localState = await this.prepareLocalState(orgId, lockerId);
 			const lastUpdateInfo = await this.getLastUpdateInfo(orgId);
 			await Log("Remote info for org", orgId, ":", lastUpdateInfo);
 
@@ -325,13 +314,10 @@ class FirebaseSyncManager {
 			}
 
 			// Update local storage - convert UsageData back to storage format
-			await this.tokenStorage.setValue(
-				this.tokenStorage.getStorageKey(orgId, 'models'),
-				mergedUsageData.toModelData()
-			);
+			await this.tokenStorage.setUsageData(orgId, mergedUsageData, lockerId);
 
-			await this.tokenStorage.setValue(
-				this.tokenStorage.getStorageKey(orgId, 'lastSyncHash'),
+			await setStorageValue(
+				getOrgStorageKey(orgId, 'lastSyncHash'),
 				localState.currentHashString
 			);
 
@@ -373,13 +359,12 @@ class FirebaseSyncManager {
 		return { shouldDownload, shouldUpload, uploadReason };
 	}
 
-	async prepareLocalState(orgId) {
-		const localUsageData = await this.tokenStorage.getUsageData(orgId, 'claude_free');
-
+	async prepareLocalState(orgId, lockerId) {
+		const localUsageData = await this.tokenStorage.getUsageData(orgId, 'claude_free', lockerId);
 		const currentHashString = await localUsageData.getHash();
 
-		const lastSyncHash = await this.tokenStorage.getValue(
-			this.tokenStorage.getStorageKey(orgId, 'lastSyncHash')
+		const lastSyncHash = await getStorageValue(
+			getOrgStorageKey(orgId, 'lastSyncHash')
 		);
 
 		const hasLocalChanges = !lastSyncHash || currentHashString !== lastSyncHash;

@@ -1,5 +1,5 @@
 /* global GPTTokenizer_o200k_base */
-import { CONFIG, sleep, RawLog, FORCE_DEBUG, StoredMap } from './utils.js';
+import { CONFIG, sleep, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey as getOrgStorageKey } from './utils.js';
 import { UsageData, ConversationData } from './bg-dataclasses.js';
 
 // Create component-specific logger
@@ -262,16 +262,52 @@ class TokenCounter {
 class TokenStorageManager {
 	constructor() {
 		this.firebase_base_url = "https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app";
-		this.storageLock = false;
-		this.externalLock = false; // NEW: For external sync coordination
 		this.orgIds = undefined;
 		this.filesTokenCache = new StoredMap("fileTokens");
 		this.capHits = new StoredMap("capHits");
 		this.projectCache = new StoredMap("projectCache");
+
+		// Lock system
+		this.currentLock = null;
+		this.lockCounter = 0;
+		this.lockAcquiredAt = null;
+		this.LOCK_TIMEOUT = 30000;
 	}
 
-	setExternalLock(isLocked) {
-		this.externalLock = isLocked;
+	async acquireLock(lockerId = null) {
+		if (!lockerId) {
+			lockerId = `lock_${++this.lockCounter}_${Date.now()}`;
+		}
+
+		const startTime = Date.now();
+
+		while (this.currentLock && this.currentLock !== lockerId) {
+			// Check for timeout
+			const elapsedTime = Date.now() - startTime;
+			if (elapsedTime > this.LOCK_TIMEOUT) {
+				await Log("error", `Lock timeout. Force releasing stale lock: ${this.currentLock}`);
+
+				// Force release if stale
+				if (this.lockAcquiredAt && Date.now() - this.lockAcquiredAt > this.LOCK_TIMEOUT) {
+					this.currentLock = null;
+					this.lockAcquiredAt = null;
+				}
+			}
+
+			await sleep(50);
+		}
+
+		// Acquire lock
+		this.currentLock = lockerId;
+		this.lockAcquiredAt = Date.now();
+		return lockerId;
+	}
+
+	releaseLock(lockerId) {
+		if (this.currentLock === lockerId) {
+			this.currentLock = null;
+			this.lockAcquiredAt = null;
+		}
 	}
 
 	async ensureOrgIds() {
@@ -291,64 +327,51 @@ class TokenStorageManager {
 		await browser.storage.local.set({ 'orgIds': Array.from(this.orgIds) });
 	}
 
-	// Helper methods for browser.storage
-	getStorageKey(orgId, type) {
-		return `claudeUsageTracker_v6_${orgId}_${type}`;
-	}
-
-	async setValue(key, value) {
-		await browser.storage.local.set({ [key]: value });
-		return true;
-	}
-
-	async getValue(key, defaultValue = null) {
-		const result = await browser.storage.local.get(key) || {};
-		return result[key] ?? defaultValue;
-	}
-
-
-	async checkAndCleanExpiredData(orgId = null) {
+	async checkAndCleanExpiredData(orgId = null, lockerId = null) {
 		// If no orgId provided, check all orgs
 		if (!orgId) {
 			await this.ensureOrgIds();
 			let wasOrgDataCleared = false;
 			for (const org of this.orgIds) {
-				const result = await this.checkAndCleanExpiredData(org);  // Recursive call with specific orgId
+				const result = await this.checkAndCleanExpiredData(org, lockerId);  // Recursive call with specific orgId
 				if (result) wasOrgDataCleared = true;
 			}
 			return wasOrgDataCleared;
 		}
 
-		// Original single-org logic
-		const allModelData = await this.getValue(this.getStorageKey(orgId, 'models'));
-		if (!allModelData || !allModelData.resetTimestamp) return false;
+		// Single org - USE THE SAME LOCK as addTokensToModel
+		const myLockerId = await this.acquireLock(lockerId);
 
-		const currentTime = new Date().getTime();
+		try {
+			const allModelData = await getStorageValue(getOrgStorageKey(orgId, 'models'));
+			if (!allModelData || !allModelData.resetTimestamp) return false;
 
-		if (currentTime >= allModelData.resetTimestamp) {
-			await this.setValue(this.getStorageKey(orgId, 'models'), {});
-			return true;
+			if (Date.now() >= allModelData.resetTimestamp) {
+				await setStorageValue(getOrgStorageKey(orgId, 'models'), {});
+				return true;
+			}
+			return false;
+		} finally {
+			this.releaseLock(myLockerId);
 		}
 	}
 
-	async getUsageData(orgId, subscriptionTier) {
-		await this.checkAndCleanExpiredData(orgId);
-		const allModelData = await this.getValue(this.getStorageKey(orgId, 'models')) || {};
+	async getUsageData(orgId, subscriptionTier, lockerId = null) {
+		await this.checkAndCleanExpiredData(orgId, lockerId);
+		const allModelData = await getStorageValue(getOrgStorageKey(orgId, 'models')) || {};
 
 
 		// Get usage cap with modifiers
 		const baseline = CONFIG.USAGE_CAP.BASELINE;
 		const tierMultiplier = CONFIG.USAGE_CAP.MULTIPLIERS[subscriptionTier];
-		const capModifier = await this.getValue('capModifier_global') || 1;
+		const capModifier = await getStorageValue('capModifier_global') || 1;
 		const usageCap = baseline * tierMultiplier * capModifier;
 
 		return UsageData.fromModelData(allModelData, usageCap, subscriptionTier);
 	}
 
-	async addTokensToModel(orgId, model, newTokens, subscriptionTier) {
-		while (this.externalLock || this.storageLock) {
-			await sleep(50);
-		}
+	async addTokensToModel(orgId, model, newTokens, subscriptionTier, lockerId = null) {
+		const myLockerId = await this.acquireLock(lockerId);
 
 		try {
 			this.storageLock = true;
@@ -365,7 +388,7 @@ class TokenStorageManager {
 					usageCap: usageData.usageCap,
 					subscriptionTier: usageData.subscriptionTier
 				});
-				await this.setValue(this.getStorageKey(orgId, 'models'), freshUsageData.toModelData());
+				await setStorageValue(getOrgStorageKey(orgId, 'models'), freshUsageData.toModelData());
 
 				// Use the fresh data
 				usageData.modelData = {};
@@ -381,14 +404,14 @@ class TokenStorageManager {
 			usageData.addTokensToModel(model, newTokens);
 
 			// Save back to storage
-			await this.setValue(this.getStorageKey(orgId, 'models'), usageData.toModelData());
+			await setStorageValue(getOrgStorageKey(orgId, 'models'), usageData.toModelData());
 			await browser.storage.local.set({
 				'totalTokensTracked': await this.getTotalTokens() + newTokens
 			});
 
 			return usageData.getModelData(model);
 		} finally {
-			this.storageLock = false;
+			this.releaseLock(myLockerId);
 		}
 	}
 
@@ -436,6 +459,28 @@ class TokenStorageManager {
 	async getTotalTokens() {
 		const result = await browser.storage.local.get('totalTokensTracked');
 		return result.totalTokensTracked || 0;
+	}
+
+	// Helpers for firebase
+	async clearModelData(orgId, lockerId = null) {
+		const myLockerId = await this.acquireLock(lockerId);
+		try {
+			await setStorageValue(getOrgStorageKey(orgId, 'models'), {});
+		} finally {
+			this.releaseLock(myLockerId);
+		}
+	}
+
+	async setUsageData(orgId, usageData, lockerId = null) {
+		const myLockerId = await this.acquireLock(lockerId);
+		try {
+			await setStorageValue(
+				getOrgStorageKey(orgId, 'models'),
+				usageData.toModelData()
+			);
+		} finally {
+			this.releaseLock(myLockerId);
+		}
 	}
 }
 
