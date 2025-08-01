@@ -1,5 +1,5 @@
 /* global GPTTokenizer_o200k_base */
-import { CONFIG, sleep, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey as getOrgStorageKey } from './utils.js';
+import { CONFIG, sleep, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey as getOrgStorageKey } from './utils.js';
 import { UsageData, ConversationData } from './bg-dataclasses.js';
 
 // Create component-specific logger
@@ -242,8 +242,7 @@ class TokenCounter {
 
 	// Helper to get API key
 	async getApiKey() {
-		const result = await browser.storage.local.get('apiKey');
-		return result?.apiKey || null;
+		return await getStorageValue('apiKey');
 	}
 
 	// Test if API key is valid
@@ -313,8 +312,8 @@ class TokenStorageManager {
 	async ensureOrgIds() {
 		if (this.orgIds) return;
 		try {
-			const result = await browser.storage.local.get('orgIds');
-			this.orgIds = new Set(result.orgIds || []);
+			const orgIds = await getStorageValue('orgIds', []);
+			this.orgIds = new Set(orgIds);
 		} catch (error) {
 			this.orgIds = new Set(); // Return empty Set if there's an error
 		}
@@ -324,7 +323,7 @@ class TokenStorageManager {
 	async addOrgId(orgId) {
 		await this.ensureOrgIds();
 		this.orgIds.add(orgId);
-		await browser.storage.local.set({ 'orgIds': Array.from(this.orgIds) });
+		await setStorageValue('orgIds', Array.from(this.orgIds));
 	}
 
 	async checkAndCleanExpiredData(orgId = null, lockerId = null) {
@@ -377,7 +376,7 @@ class TokenStorageManager {
 			this.storageLock = true;
 
 			// Get current usage data
-			const usageData = await this.getUsageData(orgId, subscriptionTier);
+			const usageData = await this.getUsageData(orgId, subscriptionTier, myLockerId);
 
 			// Check if expired and reset if needed
 			if (usageData.isExpired()) {
@@ -405,9 +404,7 @@ class TokenStorageManager {
 
 			// Save back to storage
 			await setStorageValue(getOrgStorageKey(orgId, 'models'), usageData.toModelData());
-			await browser.storage.local.set({
-				'totalTokensTracked': await this.getTotalTokens() + newTokens
-			});
+			await setStorageValue('totalTokensTracked', await this.getTotalTokens() + newTokens);
 
 			return usageData.getModelData(model);
 		} finally {
@@ -430,7 +427,7 @@ class TokenStorageManager {
 		if (!usageData.resetTimestamp) return;
 
 		const key = `${orgId}:${usageData.resetTimestamp}`;
-		const hasApiKey = !!(await browser.storage.local.get('apiKey'))?.apiKey;
+		const hasApiKey = !!(await getStorageValue('apiKey'));
 
 		// Get weighted total and model breakdown
 		const weightedTotal = usageData.getWeightedTotal();
@@ -457,8 +454,7 @@ class TokenStorageManager {
 	}
 
 	async getTotalTokens() {
-		const result = await browser.storage.local.get('totalTokensTracked');
-		return result.totalTokensTracked || 0;
+		return await getStorageValue('totalTokensTracked', 0);
 	}
 
 	// Helpers for firebase

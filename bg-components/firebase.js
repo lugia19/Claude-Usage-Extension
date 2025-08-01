@@ -229,12 +229,10 @@ class FirebaseSyncManager {
 
 	// Helper methods
 	async ensureDeviceId() {
-		let deviceId = await browser.storage.local.get('deviceId');
-		if (!deviceId?.deviceId) {
+		let deviceId = await getStorageValue('deviceId');
+		if (!deviceId) {
 			deviceId = crypto.randomUUID();
-			await browser.storage.local.set({ deviceId });
-		} else {
-			deviceId = deviceId.deviceId;
+			await setStorageValue('deviceId', deviceId);
 		}
 		return deviceId;
 	}

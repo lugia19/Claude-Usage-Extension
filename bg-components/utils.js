@@ -69,11 +69,9 @@ const CONFIG = {
 };
 
 const isElectron = chrome.action === undefined;
-const FORCE_DEBUG = true; // Set to true to force debug mode
+const FORCE_DEBUG = false; // Set to true to force debug mode
 
-browser.storage.local.set({
-	force_debug: FORCE_DEBUG // or false, or whatever your debug setting is
-});
+setStorageValue('force_debug', FORCE_DEBUG);
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -84,8 +82,7 @@ async function RawLog(sender, ...args) {
 		level = args.shift();
 	}
 
-	const result = await browser.storage.local.get('debug_mode_until');
-	const debugUntil = result.debug_mode_until;
+	const debugUntil = await getStorageValue('debug_mode_until');
 	const now = Date.now();
 
 	if ((!debugUntil || debugUntil <= now) && !FORCE_DEBUG) {
@@ -122,13 +119,12 @@ async function RawLog(sender, ...args) {
 		}).join(' ')
 	};
 
-	const logsResult = await browser.storage.local.get('debug_logs');
-	const logs = logsResult.debug_logs || [];
+	const logs = await getStorageValue('debug_logs', []);
 	logs.push(logEntry);
 
 	if (logs.length > 1000) logs.shift();
 
-	await browser.storage.local.set({ debug_logs: logs });
+	await setStorageValue('debug_logs', logs);
 }
 
 async function Log(...args) {
@@ -211,8 +207,8 @@ class StoredMap {
 
 	async ensureInitialized() {
 		if (!this.initialized) {
-			this.initialized = browser.storage.local.get(this.storageKey).then(stored => {
-				this.map = new Map(stored[this.storageKey] || []);
+			this.initialized = getStorageValue(this.storageKey, []).then(storedArray => {
+				this.map = new Map(storedArray);
 			});
 		}
 		return this.initialized;
@@ -225,9 +221,7 @@ class StoredMap {
 			expires: Date.now() + lifetime
 		} : value;
 		this.map.set(key, storedValue);
-		await browser.storage.local.set({
-			[this.storageKey]: Array.from(this.map)
-		});
+		await setStorageValue(this.storageKey, Array.from(this.map));
 	}
 
 	async get(key) {
@@ -265,9 +259,7 @@ class StoredMap {
 	async delete(key) {
 		await this.ensureInitialized();
 		this.map.delete(key);
-		await browser.storage.local.set({
-			[this.storageKey]: Array.from(this.map)
-		});
+		await setStorageValue(this.storageKey, Array.from(this.map));
 	}
 
 	async entries() {
@@ -303,6 +295,11 @@ async function getStorageValue(key, defaultValue = null) {
 	return result[key] ?? defaultValue;
 }
 
+async function removeStorageValue(key) {
+	await browser.storage.local.remove(key);
+	return true;
+}
+
 export {
 	CONFIG,
 	isElectron,
@@ -314,5 +311,6 @@ export {
 	StoredMap,
 	getOrgStorageKey,
 	getStorageValue,
-	setStorageValue
+	setStorageValue,
+	removeStorageValue
 };

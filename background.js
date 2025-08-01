@@ -1,6 +1,6 @@
 import './lib/browser-polyfill.min.js';
 import './lib/o200k_base.js';
-import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addContainerFetchListener, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey } from './bg-components/utils.js';
+import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addContainerFetchListener, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey } from './bg-components/utils.js';
 import { TokenCounter, TokenStorageManager, getTextFromContent } from './bg-components/tokenManagement.js';
 import { FirebaseSyncManager } from './bg-components/firebase.js';
 import { UsageData, ConversationData } from './bg-components/bg-dataclasses.js';
@@ -328,7 +328,6 @@ class ClaudeAPI {
 
 			const data = await response.json();
 			const syncText = data?.text || "";
-			await Log("Gdrive sync text:", syncText?.substring(0, 100) + (syncText?.length > 100 ? "..." : ""));
 			return syncText;
 		}
 		else if (syncType === "github") {
@@ -349,7 +348,7 @@ class ClaudeAPI {
 
 					// Use the GitHub raw URL format directly - redirects will be followed automatically
 					const githubUrl = `https://github.com/${owner}/${repo}/raw/refs/heads/${branch}/${cleanPath}`;
-					await Log("Fetching GitHub file from:", githubUrl);
+					//await Log("Fetching GitHub file from:", githubUrl);
 
 					try {
 						// Let containerFetch handle everything
@@ -358,7 +357,7 @@ class ClaudeAPI {
 						if (response.ok) {
 							const fileContent = await response.text();
 							allContent += fileContent + "\n";
-							await Log(`GitHub file fetched: ${filePath}, size: ${fileContent.length} bytes`);
+							//await Log(`GitHub file fetched: ${filePath}, size: ${fileContent.length} bytes`);
 						} else {
 							await Log("warn", `Failed to fetch GitHub file: ${githubUrl}, status: ${response.status}`);
 						}
@@ -628,7 +627,7 @@ class ClaudeAPI {
 
 			// Sync tokens
 			for (const sync of message.sync_sources) {
-				await Log("Sync source:", sync.uuid)
+				//await Log("Sync source:", sync.uuid)
 				messageContent.push(await this.getSyncText(sync));
 			}
 
@@ -939,11 +938,11 @@ messageRegistry.register('rateLimitExceeded', async (message, sender, orgId) => 
 	return true;
 });
 
-messageRegistry.register('getAPIKey', () => browser.storage.local.get('apiKey').then(data => data.apiKey));
+messageRegistry.register('getAPIKey', () => getStorageValue('apiKey'));
 messageRegistry.register('setAPIKey', async (message) => {
 	const newKey = message.newKey;
 	if (newKey === "") {
-		await browser.storage.local.remove('apiKey');
+		await removeStorageValue('apiKey');
 		return true;
 	}
 
@@ -951,7 +950,7 @@ messageRegistry.register('setAPIKey', async (message) => {
 	const isValid = await tokenCounter.testApiKey(newKey);
 
 	if (isValid) {
-		await browser.storage.local.set({ apiKey: newKey });
+		await setStorageValue('apiKey', newKey);
 		await Log("API key validated and saved");
 		return true;
 	} else {
@@ -1049,7 +1048,7 @@ messageRegistry.register(interceptedResponse);
 
 async function shouldShowDonationNotification(message) {
 	const { currentVersion } = message;
-	let previousVersion = await browser.storage.local.get('previousVersion').then(data => data.previousVersion);
+	let previousVersion = await getStorageValue('previousVersion');
 
 	// Prepare response object
 	const donationInfo = {
@@ -1060,14 +1059,14 @@ async function shouldShowDonationNotification(message) {
 
 	// First install - don't show notification
 	if (!previousVersion) {
-		await browser.storage.local.set({ previousVersion: currentVersion });
+		await setStorageValue('previousVersion', currentVersion);
 		return donationInfo;
 	}
 
 	// Get total tokens tracked
 	const totalTokens = await tokenStorageManager.getTotalTokens();
 	const tokenThresholds = CONFIG.DONATION_TOKEN_THRESHOLDS;
-	const { shownDonationThresholds = [] } = await browser.storage.local.get('shownDonationThresholds');
+	const shownDonationThresholds = await getStorageValue('shownDonationThresholds', []);
 
 	const exceededThreshold = tokenThresholds.find(threshold =>
 		totalTokens >= threshold && !shownDonationThresholds.includes(threshold)
@@ -1090,7 +1089,7 @@ async function shouldShowDonationNotification(message) {
 			await Log("error", "Failed to load patch notes:", error);
 		}
 
-		await browser.storage.local.set({ previousVersion: currentVersion });
+		await setStorageValue('previousVersion', currentVersion);
 	}
 	else if (exceededThreshold) {
 		const tokenMillions = Math.floor(exceededThreshold / 1000000);
@@ -1101,9 +1100,7 @@ async function shouldShowDonationNotification(message) {
 		];
 
 		// Mark this threshold as shown
-		await browser.storage.local.set({
-			shownDonationThresholds: [...shownDonationThresholds, exceededThreshold]
-		});
+		await setStorageValue('shownDonationThresholds', [...shownDonationThresholds, exceededThreshold]);
 	}
 	return donationInfo;
 }
