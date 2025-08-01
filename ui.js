@@ -101,6 +101,24 @@ class UIManager {
 			this.chatUI.updateCostAndLength();
 			this.currentConversation = null;
 		}
+
+		// Check if the current usage data is expired
+		if (this.usageData && this.usageData.isExpired()) {
+			await Log("Usage data expired, triggering reset");
+
+			const orgId = document.cookie
+				.split('; ')
+				.find(row => row.startsWith('lastActiveOrg='))
+				?.split('=')[1];
+
+			if (orgId) {
+				// Just trigger the reset - background will handle updating all tabs, including us
+				await sendBackgroundMessage({
+					type: 'checkAndResetExpired',
+					orgId: orgId
+				});
+			}
+		}
 	}
 
 	async lowFrequencyUpdates() {

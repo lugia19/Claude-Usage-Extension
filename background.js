@@ -145,11 +145,6 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 		await firebaseManager.syncCapHits();
 	}
 
-	if (alarm.name === 'checkExpiredData') {
-		const wasOrgDataCleared = await tokenStorageManager.checkAndCleanExpiredData();
-		if (wasOrgDataCleared) await updateAllTabsWithUsage();
-	}
-
 	if (alarm.name.startsWith('notifyReset_')) {
 		// Handle notification alarm
 		await Log(`Notification alarm triggered: ${alarm.name}`);
@@ -175,10 +170,6 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 //#endregion
 
 //#region Alarms
-browser.alarms.create('checkExpiredData', {
-	periodInMinutes: 5
-});
-
 async function updateSyncAlarmIntervalAndFetchData(sourceTabId, fromRemovedEvent = false) {
 	const allClaudeTabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 	let state;
@@ -220,12 +211,6 @@ async function updateSyncAlarmIntervalAndFetchData(sourceTabId, fromRemovedEvent
 
 browser.alarms.create('capHitsSync', { periodInMinutes: 10 });
 Log("Firebase alarms created.");
-
-Log("Initializing config refresh...");
-browser.alarms.create('refreshConfig', {
-	periodInMinutes: 15
-});
-Log("Config refresh alarm created.");
 //#endregion
 
 
@@ -994,6 +979,16 @@ async function openDebugPage() {
 	return 'fallback';
 }
 messageRegistry.register(openDebugPage);
+
+messageRegistry.register('checkAndResetExpired', async (message, sender, orgId) => {
+	await Log(`UI triggered reset check for org ${orgId}`);
+	const wasCleared = await tokenStorageManager.checkAndCleanExpiredData(orgId);
+	if (wasCleared) {
+		await Log("Usage was expired and reset");
+		await updateAllTabsWithUsage();
+	}
+	return wasCleared;
+});
 
 // Complex handlers
 async function requestData(message, sender, orgId) {
