@@ -69,7 +69,7 @@ const CONFIG = {
 };
 
 const isElectron = chrome.action === undefined;
-const FORCE_DEBUG = false; // Set to true to force debug mode
+const FORCE_DEBUG = true; // Set to true to force debug mode
 
 setStorageValue('force_debug', FORCE_DEBUG);
 
@@ -300,6 +300,59 @@ async function removeStorageValue(key) {
 	return true;
 }
 
+// Background -> Content messaging
+async function sendTabMessage(tabId, message, maxRetries = 10, delay = 100) {
+	let counter = maxRetries;
+	await Log("Sending message to tab:", tabId, message);
+	while (counter > 0) {
+		try {
+			const response = await browser.tabs.sendMessage(tabId, message);
+			await Log("Got response from tab:", response);
+			return response;
+		} catch (error) {
+			if (error.message?.includes('Receiving end does not exist')) {
+				await Log("warn", `Tab ${tabId} not ready, retrying...`, error);
+				await new Promise(resolve => setTimeout(resolve, delay));
+			} else {
+				// For any other error, throw immediately
+				throw error;
+			}
+		}
+		counter--;
+	}
+	throw new Error(`Failed to send message to tab ${tabId} after ${maxRetries} retries.`);
+}
+
+// Content -> Background messaging
+class MessageHandlerRegistry {
+	constructor() {
+		this.handlers = new Map();
+	}
+
+	register(messageTypeOrHandler, handlerFn = null) {
+		if (typeof messageTypeOrHandler === 'function') {
+			this.handlers.set(messageTypeOrHandler.name, messageTypeOrHandler);
+		} else {
+			this.handlers.set(messageTypeOrHandler, handlerFn);
+		}
+	}
+
+	async handle(message, sender) {
+		await Log("Background received message:", message.type);
+		const handler = this.handlers.get(message.type);
+		if (!handler) {
+			await Log("warn", `No handler for message type: ${message.type}`);
+			return null;
+		}
+
+		// Extract common parameters
+		const orgId = message.orgId;
+
+		// Pass common parameters to the handler
+		return handler(message, sender, orgId);
+	}
+}
+
 export {
 	CONFIG,
 	isElectron,
@@ -312,5 +365,7 @@ export {
 	getOrgStorageKey,
 	getStorageValue,
 	setStorageValue,
-	removeStorageValue
+	removeStorageValue,
+	sendTabMessage,
+	MessageHandlerRegistry
 };

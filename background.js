@@ -1,9 +1,10 @@
 import './lib/browser-polyfill.min.js';
 import './lib/o200k_base.js';
-import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addContainerFetchListener, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey } from './bg-components/utils.js';
-import { TokenCounter, TokenStorageManager, getTextFromContent } from './bg-components/tokenManagement.js';
-import { FirebaseSyncManager } from './bg-components/firebase.js';
+import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addContainerFetchListener, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, MessageHandlerRegistry } from './bg-components/utils.js';
+import { tokenStorageManager, tokenCounter, getTextFromContent } from './bg-components/tokenManagement.js';
+import { firebaseSyncManager } from './bg-components/firebase.js';
 import { UsageData, ConversationData } from './bg-components/bg-dataclasses.js';
+import { ClaudeAPI } from './bg-components/claude-api.js';
 
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
@@ -30,13 +31,9 @@ const INTERCEPT_PATTERNS = {
 
 //#region Variable declarations
 let processingQueue = Promise.resolve();
-let pendingResponses;
+let pendingRequests;
 let capModifiers;
-let subscriptionTiersCache;
-let tokenStorageManager;
-let firebaseManager;
 let scheduledNotifications;
-let tokenCounter;
 
 let isInitialized = false;
 let functionsPendingUntilInitialization = [];
@@ -134,15 +131,14 @@ if (!isElectron) {
 browser.alarms.onAlarm.addListener(async (alarm) => {
 	await Log("Alarm triggered:", alarm.name);
 
-	if (!tokenStorageManager) tokenStorageManager = new TokenStorageManager();
 	await tokenStorageManager.ensureOrgIds();
 
 	if (alarm.name === 'firebaseSync') {
-		await firebaseManager.syncWithFirebase();
+		await firebaseSyncManager.syncWithFirebase();
 	}
 
 	if (alarm.name === 'capHitsSync') {
-		await firebaseManager.syncCapHits();
+		await firebaseSyncManager.syncCapHits();
 	}
 
 	if (alarm.name.startsWith('notifyReset_')) {
@@ -164,7 +160,7 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 		}
 		const orgId = alarm.name.split('_')[1];
 		await Log(`Notification sent`);
-		await firebaseManager.triggerReset(orgId)
+		await firebaseSyncManager.triggerReset(orgId)
 	}
 });
 //#endregion
@@ -204,7 +200,7 @@ async function updateSyncAlarmIntervalAndFetchData(sourceTabId, fromRemovedEvent
 			await Log("Changed to active, triggering immediate sync! Ensuring we have the orgId first.")
 			const orgId = await requestActiveOrgId(sourceTabId);
 			await tokenStorageManager.addOrgId(orgId);
-			await firebaseManager.syncWithFirebase();
+			await firebaseSyncManager.syncWithFirebase();
 		}
 	}
 }
@@ -254,501 +250,6 @@ if (!FORCE_DEBUG) {
 
 //#endregion
 
-//#region Manager classes
-
-// Claude API interface
-class ClaudeAPI {
-	constructor(cookieStoreId, orgId) {
-		this.baseUrl = 'https://claude.ai/api';
-		this.cookieStoreId = cookieStoreId;
-		this.orgId = orgId;
-	}
-
-	// Core GET method with auth
-	async getRequest(endpoint) {
-		const response = await containerFetch(`${this.baseUrl}${endpoint}`, {
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			method: 'GET'
-		}, this.cookieStoreId);
-		return response.json();
-	}
-
-	// API methods
-	async getUploadedFileAsBase64(url) {
-		try {
-			await Log(`Starting file download from: https://claude.ai${url}`);
-			const response = await containerFetch(`https://claude.ai${url}`, undefined, this.cookieStoreId);
-			if (!response.ok) {
-				await Log("error", 'Fetch failed:', response.status, response.statusText);
-				return null;
-			}
-
-			const blob = await response.blob();
-			return new Promise((resolve) => {
-				const reader = new FileReader();
-				reader.onloadend = async () => {
-					const base64Data = reader.result.split(',')[1];
-					await Log('Base64 length:', base64Data.length);
-					resolve({
-						data: base64Data,
-						media_type: blob.type
-					});
-				};
-				reader.readAsDataURL(blob);
-			});
-
-		} catch (e) {
-			await Log("error", 'Download error:', e);
-			return null;
-		}
-	}
-
-	async getSyncText(sync) {
-		if (!sync) return "";
-
-		const syncType = sync.type;
-		await Log("Processing sync:", syncType, sync.uuid || sync.id);
-
-		if (syncType === "gdrive") {
-			const uri = sync.config?.uri;
-			if (!uri) return "";
-
-			// Use the existing API endpoint for Google Drive
-			const response = await containerFetch(`${this.baseUrl}/organizations/${this.orgId}/sync/mcp/drive/document/${uri}`,
-				{ headers: { 'Content-Type': 'application/json' } },
-				this.cookieStoreId
-			);
-
-			if (!response.ok) {
-				await Log("warn", `Failed to fetch Google Drive document: ${uri}, status: ${response.status}`);
-				return "";
-			}
-
-			const data = await response.json();
-			const syncText = data?.text || "";
-			return syncText;
-		}
-		else if (syncType === "github") {
-			try {
-				const { owner, repo, branch, filters } = sync.config || {};
-				if (!owner || !repo || !branch || !filters?.filters) {
-					await Log("warn", "Incomplete GitHub sync config", sync.config);
-					return "";
-				}
-
-				// For each included file, fetch and aggregate content
-				let allContent = "";
-				for (const [filePath, action] of Object.entries(filters.filters)) {
-					if (action !== "include") continue;
-
-					// Remove leading slash if present
-					const cleanPath = filePath.startsWith('/') ? filePath.substring(1) : filePath;
-
-					// Use the GitHub raw URL format directly - redirects will be followed automatically
-					const githubUrl = `https://github.com/${owner}/${repo}/raw/refs/heads/${branch}/${cleanPath}`;
-					//await Log("Fetching GitHub file from:", githubUrl);
-
-					try {
-						// Let containerFetch handle everything
-						const response = await containerFetch(githubUrl, { method: 'GET' }, this.cookieStoreId);
-
-						if (response.ok) {
-							const fileContent = await response.text();
-							allContent += fileContent + "\n";
-							//await Log(`GitHub file fetched: ${filePath}, size: ${fileContent.length} bytes`);
-						} else {
-							await Log("warn", `Failed to fetch GitHub file: ${githubUrl}, status: ${response.status}`);
-						}
-					} catch (error) {
-						await Log("error", `Error fetching GitHub file: ${githubUrl}`, error);
-					}
-				}
-
-				return allContent;
-			} catch (error) {
-				await Log("error", "Error processing GitHub sync source:", error);
-				return "";
-			}
-		}
-
-		// Unsupported sync type
-		await Log("warn", `Unsupported sync type: ${syncType}`);
-		return "";
-	}
-
-	async getStyleTokens(styleId, tabId) {
-		if (!styleId) {
-			//Ask the tabId to fetch it from localStorage.
-			await Log("Fetching styleId from tab:", tabId);
-			const response = await sendTabMessage(tabId, {
-				action: "getStyleId"
-			});
-			styleId = response?.styleId;
-
-			// If we still don't have a styleId, return 0
-			if (!styleId) return 0;
-		}
-		const styleData = await this.getRequest(`/organizations/${this.orgId}/list_styles`);
-		let style = styleData?.defaultStyles?.find(style => style.key === styleId);
-		if (!style) {
-			style = styleData?.customStyles?.find(style => style.uuid === styleId);
-		}
-		await Log("Got style:", style);
-		if (style) {
-			return await tokenCounter.countText(style.prompt);
-		} else {
-			return 0;
-		}
-	}
-
-	async getProjectTokens(projectId, isNewMessage) {
-		const projectStats = await this.getRequest(`/organizations/${this.orgId}/projects/${projectId}/kb/stats`);
-		const projectSize = projectStats.use_project_knowledge_search ? 0 : projectStats.knowledge_size;
-
-		// Check cache
-		const cachedAmount = await tokenStorageManager.projectCache.get(projectId) || -1;
-		const isCached = cachedAmount == projectSize;
-
-		// Update cache with 1 hour TTL if htis is a new message
-		if (isNewMessage) {
-			await tokenStorageManager.projectCache.set(projectId, projectSize, 60 * 60 * 1000);
-		}
-
-		// Return 0 tokens if cached, docs say it "doesn't count against your limits when reused"
-		// This is unlike conversations which are listed as "partially cached"
-		return { length: projectSize, isCached: isCached };
-	}
-
-
-	async getUploadedFileTokens(fileMetadata) {
-		// Only fetch content if we have an API key
-		const tokenCountingAPIKey = await tokenCounter.getApiKey();
-		if (tokenCountingAPIKey && this) {
-			try {
-				const fileUrl = fileMetadata.file_kind === "image" ?
-					fileMetadata.preview_asset.url :
-					fileMetadata.document_asset.url;
-
-				const fileInfo = await this.getUploadedFileAsBase64(fileUrl);
-				if (fileInfo?.data) {
-					return await tokenCounter.getNonTextFileTokens(
-						fileInfo.data,
-						fileInfo.media_type,
-						fileMetadata,
-						this.orgId
-					);
-				}
-			} catch (error) {
-				await Log("error", "Failed to fetch file content:", error);
-			}
-		}
-
-		// Fallback to estimation
-		return await tokenCounter.getNonTextFileTokens(null, null, fileMetadata, this.orgId);
-	}
-
-	async getConversation(conversationId, full_tree = false) {
-		return this.getRequest(
-			`/organizations/${this.orgId}/chat_conversations/${conversationId}?tree=${full_tree}&rendering_mode=messages&render_all_tools=true`
-		);
-	}
-
-	async getConversationInfo(conversationId, isNewMessage) {
-		const conversationData = await this.getConversation(conversationId, true); // Always get full tree
-
-		// Single pass to build message map and find latest assistants
-		const messageMap = new Map();
-		let latestAssistant = null;
-		let secondLatestAssistant = null;
-
-		for (const message of conversationData.chat_messages) {
-			messageMap.set(message.uuid, message);
-
-			if (message.sender === "assistant") {
-				if (!latestAssistant || message.created_at > latestAssistant.created_at) {
-					secondLatestAssistant = latestAssistant;
-					latestAssistant = message;
-				} else if (!secondLatestAssistant || message.created_at > secondLatestAssistant.created_at) {
-					secondLatestAssistant = message;
-				}
-			}
-		}
-
-		// Reconstruct trunk, count messages, and build ID set
-		const currentTrunk = [];
-		const currentTrunkIds = new Set();
-		let humanMessagesCount = 0;
-		let assistantMessagesCount = 0;
-		let currentId = conversationData.current_leaf_message_uuid;
-		const rootId = "00000000-0000-4000-8000-000000000000";
-
-		while (currentId && currentId !== rootId) {
-			const message = messageMap.get(currentId);
-			if (!message) {
-				await Log("warn", `Message ${currentId} not found in tree`);
-				break;
-			}
-
-			currentTrunk.unshift(message);
-			currentTrunkIds.add(message.uuid);
-
-			// Count while building
-			if (message.sender === "human") humanMessagesCount++;
-			else if (message.sender === "assistant") assistantMessagesCount++;
-
-			currentId = message.parent_message_uuid;
-		}
-
-		// Sanity check
-		if (!currentTrunk || currentTrunk.length == 0) return 0;
-
-		const lastMessage = currentTrunk[currentTrunk.length - 1];
-
-		if (humanMessagesCount === 0 || assistantMessagesCount === 0 || humanMessagesCount !== assistantMessagesCount ||
-			!lastMessage || lastMessage.sender !== "assistant") {
-			await Log(`Message count mismatch or wrong last sender - Human: ${humanMessagesCount}, Assistant: ${assistantMessagesCount}, Last message sender: ${lastMessage?.sender}`);
-			return undefined;
-		}
-
-		// Pick reference message based on whether we just sent a message
-		const referenceMessage = isNewMessage ? secondLatestAssistant : latestAssistant;
-		console.log("Reference message:", referenceMessage?.uuid, "Created at:", referenceMessage?.created_at);
-		console.log("Because isNewMessage:", isNewMessage, "Latest assistant:", latestAssistant?.uuid, "Second latest assistant:", secondLatestAssistant?.uuid);
-
-		let cacheEndId = null;
-		let cacheCanBeWarm = false;
-		const cache_lifetime = 60 * 60 * 1000; // 1 hour
-
-		if (!referenceMessage) {
-			// Not enough messages for cache to be warm
-			cacheCanBeWarm = false;
-			await Log("Not enough messages to determine cache status - cache is cold");
-		} else {
-			const messageAge = Date.now() - Date.parse(referenceMessage.created_at);
-			if (messageAge >= cache_lifetime) {
-				// Cache definitely cold
-				cacheCanBeWarm = false;
-				await Log("Reference message too old - cache is cold");
-			} else {
-				// Cache could be warm, check if reference is in current trunk
-				if (currentTrunkIds.has(referenceMessage.uuid)) {
-					// Reference is in trunk - cache available up to reference message
-					cacheCanBeWarm = true;
-					cacheEndId = referenceMessage.uuid;
-					await Log("Reference message in current trunk - cache available up to:", cacheEndId);
-				} else {
-					// Need to find common ancestor
-					let currentId = referenceMessage.uuid;
-
-					while (currentId && currentId !== rootId) {
-						if (currentTrunkIds.has(currentId)) {
-							cacheCanBeWarm = true;
-							cacheEndId = currentId;
-							await Log(`Cache ends at common ancestor: ${cacheEndId}`);
-							break;
-						}
-						const message = messageMap.get(currentId);
-						currentId = message?.parent_message_uuid;
-					}
-
-					if (!cacheCanBeWarm) {
-						await Log("No common ancestor found - cache is cold");
-					}
-				}
-			}
-		}
-
-		// Calculate when conversation cache expires (based on the latest message)
-		let conversationIsCachedUntil = null;
-		if (!latestAssistant) {
-			await Log("No latest assistant message found - assuming cache expires in lifetime");
-			conversationIsCachedUntil = Date.now() + cache_lifetime;
-		} else {
-			conversationIsCachedUntil = new Date(latestAssistant?.created_at).getTime() + cache_lifetime;
-		}
-
-
-		// Initialize cacheIsWarm - will be toggled during message processing
-		let cacheIsWarm = cacheCanBeWarm;
-
-		let lengthTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH; // Base tokens for system prompt
-		let costTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER; // Base cost tokens for system prompt
-
-
-		// Add settings costs
-		for (const [setting, enabled] of Object.entries(conversationData.settings)) {
-			await Log("Setting:", setting, enabled);
-			if (enabled && CONFIG.FEATURE_COSTS[setting]) {
-				lengthTokens += CONFIG.FEATURE_COSTS[setting];
-				costTokens += CONFIG.FEATURE_COSTS[setting] * CONFIG.CACHING_MULTIPLIER;
-			}
-		}
-
-		if ("enabled_web_search" in conversationData.settings || "enabled_bananagrams" in conversationData.settings) {
-			if (conversationData.settings?.enabled_websearch || conversationData.settings?.enabled_bananagrams) {
-				lengthTokens += CONFIG.FEATURE_COSTS["citation_info"];
-				costTokens += CONFIG.FEATURE_COSTS["citation_info"] * CONFIG.CACHING_MULTIPLIER;
-			}
-		}
-
-		let humanMessageData = [];
-		let assistantMessageData = [];
-		const messageCount = currentTrunk.length;
-
-		// Process each message
-		for (let i = 0; i < messageCount; i++) {
-			const message = currentTrunk[i];
-			const isCached = cacheIsWarm;
-
-			// Files_v2 tokens (handle separately)
-			for (const file of message.files_v2) {
-				await Log("File_v2:", file.file_name, file.file_uuid)
-				let fileTokens = await this.getUploadedFileTokens(file)
-				lengthTokens += fileTokens;
-				costTokens += isCached ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
-			}
-
-			let messageContent = [];
-			// Process content array
-			for (const content of message.content) {
-				//We don't consider the thinking tokens in the length calculation at all, as they don't remain in the context.
-				messageContent = messageContent.concat(await getTextFromContent(content, false, this, this.orgId));
-			}
-			// Attachment tokens
-			for (const attachment of message.attachments) {
-				await Log("Attachment:", attachment.file_name, attachment.id);
-				if (attachment.extracted_content) {
-					messageContent.push(attachment.extracted_content);
-				}
-			}
-
-
-			// Sync tokens
-			for (const sync of message.sync_sources) {
-				//await Log("Sync source:", sync.uuid)
-				messageContent.push(await this.getSyncText(sync));
-			}
-
-			if (message === lastMessage) {
-				let lastMessageContent = [];
-				for (const content of message.content) {
-					lastMessageContent = lastMessageContent.concat(await getTextFromContent(content, true, this, this.orgId));
-				}
-				costTokens += await tokenCounter.countText(lastMessageContent.join(' ')) * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
-			}
-
-			if (message.sender === "human") {
-				humanMessageData.push({ content: messageContent.join(' '), isCached });
-			} else {
-				assistantMessageData.push({ content: messageContent.join(' '), isCached });
-			}
-
-			// Check if we've hit the cache boundary at the END of processing this message
-			if (message.uuid === cacheEndId) {
-				cacheIsWarm = false;
-				await Log("Hit cache boundary at message:", message.uuid);
-			}
-		}
-
-
-		const allMessageTokens = await tokenCounter.countMessages(humanMessageData.map(m => m.content), assistantMessageData.map(m => m.content));
-		lengthTokens += allMessageTokens;
-		costTokens += allMessageTokens;
-
-		const cachedHuman = humanMessageData.filter(m => m.isCached).map(m => m.content);
-		const cachedAssistant = assistantMessageData.filter(m => m.isCached).map(m => m.content);
-		if (cachedHuman.length > 0 || cachedAssistant.length > 0) {
-			const cachedTokens = await tokenCounter.countMessages(cachedHuman, cachedAssistant);
-			// Subtract 90% of cached tokens (leaving 10%)
-			costTokens -= cachedTokens * (1 - CONFIG.CACHING_MULTIPLIER);
-		}
-
-		// If part of a project, get project data
-		if (conversationData.project_uuid) {
-			const projectData = await this.getProjectTokens(conversationData.project_uuid, isNewMessage);
-			lengthTokens += projectData.length;
-			costTokens += projectData.isCached ? 0 : projectData.length;
-		}
-
-		let conversationModelType = undefined;
-		let modelString = "sonnet"
-		if (conversationData.model) modelString = conversationData.model.toLowerCase();
-		for (const modelType of CONFIG.MODELS) {
-			if (modelString.includes(modelType.toLowerCase())) {
-				conversationModelType = modelType;
-				break;
-			}
-		}
-
-		await Log(`Total tokens for conversation ${conversationId}: ${lengthTokens} with model ${conversationModelType}`);
-
-		let futureCost;
-		if (isNewMessage) {
-			// We just calculated the cost of the message that was sent
-			// Now calculate what the next message will cost
-
-			const futureConversation = await this.getConversationInfo(conversationId, false);
-			futureCost = futureConversation.cost;
-		} else {
-			// Already calculating future cost, so they're the same
-			futureCost = Math.round(costTokens);
-		}
-
-		return new ConversationData({
-			conversationId: conversationId,
-			length: Math.round(lengthTokens),
-			cost: Math.round(costTokens),
-			futureCost: futureCost,  // New field
-			model: conversationModelType,
-			costUsedCache: cacheIsWarm,
-			conversationIsCachedUntil: conversationIsCachedUntil,
-			projectUuid: conversationData.project_uuid,
-			settings: conversationData.settings
-		});
-	}
-
-	async getProfileTokens() {
-		const profileData = await this.getRequest('/account_profile');
-		let totalTokens = 0;
-		if (profileData.conversation_preferences) {
-			totalTokens = await tokenCounter.countText(profileData.conversation_preferences) + CONFIG.FEATURE_COSTS["profile_preferences"];
-		}
-
-		await Log(`Profile tokens: ${totalTokens}`);
-		return totalTokens;
-	}
-
-
-
-	async getSubscriptionTier(skipCache = false) {
-		let subscriptionTier = await subscriptionTiersCache.get(this.orgId);
-		if (subscriptionTier && !skipCache) return subscriptionTier;
-
-		const statsigData = await this.getRequest(`/bootstrap/${this.orgId}/statsig`);
-		const identifier = statsigData.user?.custom?.orgType;
-		await Log("User identifier:", identifier);
-		if (statsigData.user?.custom?.isRaven) {
-			subscriptionTier = "claude_team"; //IDK if this is the actual identifier, so I'm just overriding it based on the old value.
-		} else if (identifier === "claude_max") {
-			const orgData = await this.getRequest(`/organizations/${this.orgId}`);
-			await Log("Org data for tier check:", orgData);
-			if (orgData?.settings?.rate_limit_tier === "default_claude_max_20x") {
-				subscriptionTier = "claude_max_20x";
-			} else {
-				subscriptionTier = "claude_max_5x";
-			}
-		} else {
-			subscriptionTier = identifier;
-		}
-
-		// Cache for 24 hours instead of 1 hour
-		await subscriptionTiersCache.set(this.orgId, subscriptionTier, 24 * 60 * 60 * 1000);
-
-		return subscriptionTier;
-	}
-}
 
 async function requestActiveOrgId(tab) {
 	if (typeof tab === "number") {
@@ -823,59 +324,6 @@ async function updateTabWithConversationData(tabId, conversationData) {
 	});
 }
 
-// Background -> Content messaging
-async function sendTabMessage(tabId, message, maxRetries = 10, delay = 100) {
-	let counter = maxRetries;
-	await Log("Sending message to tab:", tabId, message);
-	while (counter > 0) {
-		try {
-			const response = await browser.tabs.sendMessage(tabId, message);
-			await Log("Got response from tab:", response);
-			return response;
-		} catch (error) {
-			if (error.message?.includes('Receiving end does not exist')) {
-				await Log("warn", `Tab ${tabId} not ready, retrying...`, error);
-				await new Promise(resolve => setTimeout(resolve, delay));
-			} else {
-				// For any other error, throw immediately
-				throw error;
-			}
-		}
-		counter--;
-	}
-	throw new Error(`Failed to send message to tab ${tabId} after ${maxRetries} retries.`);
-}
-
-// Content -> Background messaging
-class MessageHandlerRegistry {
-	constructor() {
-		this.handlers = new Map();
-	}
-
-	register(messageTypeOrHandler, handlerFn = null) {
-		if (typeof messageTypeOrHandler === 'function') {
-			this.handlers.set(messageTypeOrHandler.name, messageTypeOrHandler);
-		} else {
-			this.handlers.set(messageTypeOrHandler, handlerFn);
-		}
-	}
-
-	async handle(message, sender) {
-		await Log("Background received message:", message.type);
-		const handler = this.handlers.get(message.type);
-		if (!handler) {
-			await Log("warn", `No handler for message type: ${message.type}`);
-			return null;
-		}
-
-		// Extract common parameters
-		const orgId = message.orgId;
-
-		// Pass common parameters to the handler
-		return handler(message, sender, orgId);
-	}
-}
-
 // Create the registry
 const messageRegistry = new MessageHandlerRegistry();
 
@@ -890,7 +338,7 @@ messageRegistry.register('getUsageCap', async (message, sender, orgId) => {
 	return usageData.usageCap;
 });
 
-messageRegistry.register('resetOrgData', (message, sender, orgId) => firebaseManager.triggerReset(orgId));
+messageRegistry.register('resetOrgData', (message, sender, orgId) => firebaseSyncManager.triggerReset(orgId));
 
 
 messageRegistry.register('rateLimitExceeded', async (message, sender, orgId) => {
@@ -1151,8 +599,8 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	const api = new ClaudeAPI(details.cookieStoreId, orgId);
 	await Log("Processing response...")
 
-	const pendingResponse = await pendingResponses.get(responseKey);
-	const isNewMessage = pendingResponse !== undefined;
+	const pendingRequest = await pendingRequests.get(responseKey);
+	const isNewMessage = pendingRequest !== undefined;
 
 	// Get subscription tier
 	const subscriptionTier = await api.getSubscriptionTier();
@@ -1163,36 +611,37 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 		return false;
 	}
 
-	const profileTokens = await api.getProfileTokens();
-	conversationData.cost += profileTokens;
-
 	await Log("Current base length:", conversationData.length);
 	await Log("Current message cost (raw):", conversationData.cost);
 
-	// The style is processed _after_ we set the conversationLengthCache, as it can vary.
-	const styleTokens = await api.getStyleTokens(pendingResponse?.styleId, tabId);
-	conversationData.cost += styleTokens;
+	// Process all the modifiers
+	let modifierCost = 0;
+	const profileTokens = await api.getProfileTokens();
+	modifierCost += profileTokens;
+
+	const styleTokens = await api.getStyleTokens(pendingRequest?.styleId, tabId);
+	modifierCost += styleTokens;
 	await Log("Added style tokens:", styleTokens);
 
-	if (pendingResponse?.toolDefinitions) {
+	if (pendingRequest?.toolDefinitions) {
 		let toolTokens = 0;
-		for (const tool of pendingResponse.toolDefinitions) {
+		for (const tool of pendingRequest.toolDefinitions) {
 			toolTokens += await tokenCounter.countText(
 				`${tool.name} ${tool.description} ${tool.schema}`
 			);
 		}
 		await Log("Added tool definition tokens:", toolTokens);
-		conversationData.cost += toolTokens;
+		modifierCost += toolTokens;
 	}
+	conversationData.cost += modifierCost;
 
+	const model = pendingRequest?.model || conversationData.model || "Sonnet";
 	if (isNewMessage) {
-		const model = pendingResponse.model;
-		const modelWeight = CONFIG.MODEL_WEIGHTS[model] || 1;
-		const weightedCost = conversationData.cost * modelWeight;
+		const weightedCost = conversationData.getWeightedCost(model);
 
-		await Log(`Raw message cost: ${conversationData.cost}, Model weight: ${modelWeight}, Weighted cost: ${weightedCost}`);
+		await Log(`Raw message cost: ${conversationData.cost}, Model: ${model}, Weighted cost: ${weightedCost}`);
 
-		const requestTime = pendingResponse.requestTimestamp;
+		const requestTime = pendingRequest.requestTimestamp;
 		const conversationFullData = await api.getConversation(conversationId);
 		const latestMessageTime = new Date(conversationFullData.chat_messages[conversationFullData.chat_messages.length - 1].created_at).getTime();
 		if (latestMessageTime < requestTime - 5000) {
@@ -1204,8 +653,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 		}
 	}
 
-	const model = pendingResponse?.model || conversationData.model || "Sonnet";
-	conversationData.model = model;  // Ensure it's set
+	conversationData.model = model;  // Ensure it's set before forwarding it
 
 	// Update all tabs with usage data
 	await updateAllTabsWithUsage();
@@ -1259,8 +707,8 @@ async function onBeforeRequestHandler(details) {
 		})) || [];
 		await Log("Tool definitions:", toolDefs);
 
-		// Store pending response with all data
-		await pendingResponses.set(key, {
+		// Store pending request with all data
+		await pendingRequests.set(key, {
 			orgId: orgId,
 			conversationId: conversationId,
 			tabId: details.tabId,
@@ -1295,8 +743,8 @@ async function onCompletedHandler(details) {
 			const key = `${orgId}:${conversationId}`;
 			const result = await processResponse(orgId, conversationId, key, details);
 
-			if (result && await pendingResponses.has(key)) {
-				await pendingResponses.delete(key);
+			if (result && await pendingRequests.has(key)) {
+				await pendingRequests.delete(key);
 			}
 		});
 	}
@@ -1305,13 +753,10 @@ async function onCompletedHandler(details) {
 //#endregion
 
 //#region Variable fill in and initialization
-pendingResponses = new StoredMap("pendingResponses"); // conversationId -> {userId, tabId}
+pendingRequests = new StoredMap("pendingRequests"); // conversationId -> {userId, tabId}
 capModifiers = new StoredMap('capModifiers');
-subscriptionTiersCache = new StoredMap("subscriptionTiers");
 scheduledNotifications = new StoredMap('scheduledNotifications');
-tokenCounter = new TokenCounter();
-if (!tokenStorageManager) tokenStorageManager = new TokenStorageManager();
-firebaseManager = new FirebaseSyncManager(tokenStorageManager, updateAllTabsWithUsage);
+firebaseSyncManager.setUpdateAllTabsCallback(updateAllTabsWithUsage);
 
 isInitialized = true;
 for (const handler of functionsPendingUntilInitialization) {
