@@ -215,13 +215,17 @@ export class ConversationData {
 
 
 	// Calculate weighted cost based on model
-	getWeightedCost() {
-		const weight = CONFIG.MODEL_WEIGHTS[this.model] || 1;
+	getWeightedCost(modelOverride) {
+		let model = this.model;
+		if (modelOverride) model = modelOverride;
+		const weight = CONFIG.MODEL_WEIGHTS[model] || 1;
 		return Math.round(this.cost * weight);
 	}
 
-	getWeightedFutureCost() {
-		const weight = CONFIG.MODEL_WEIGHTS[this.model] || 1;
+	getWeightedFutureCost(modelOverride) {
+		let model = this.model;
+		if (modelOverride) model = modelOverride;
+		const weight = CONFIG.MODEL_WEIGHTS[model] || 1;
 		return Math.round(this.futureCost * weight);
 	}
 
