@@ -252,7 +252,8 @@ export class ConversationData {
 			conversationIsCachedUntil: this.conversationIsCachedUntil,
 			projectUuid: this.projectUuid,
 			styleId: this.styleId,
-			settings: this.settings
+			settings: this.settings,
+			lastMessageTimestamp: this.lastMessageTimestamp
 		};
 	}
 

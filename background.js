@@ -457,7 +457,7 @@ async function requestData(message, sender, orgId) {
 	// If conversationId provided, also send conversation metrics
 	if (conversationId) {
 		await Log(`Requested metrics for conversation: ${conversationId}`);
-		const conversation = api.getConversation(conversationId);
+		const conversation = await api.getConversation(conversationId);
 		const conversationData = await conversation.getInfo(false);
 		const profileTokens = await api.getProfileTokens();
 

@@ -262,7 +262,6 @@ class TokenStorageManager {
 	constructor() {
 		this.firebase_base_url = "https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app";
 		this.orgIds = undefined;
-		this.filesTokenCache = new StoredMap("fileTokens");
 		this.capHits = new StoredMap("capHits");
 		this.projectCache = new StoredMap("projectCache");
 
