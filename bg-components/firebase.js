@@ -1,6 +1,6 @@
 import { CONFIG, sleep, RawLog, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey } from './utils.js';
 import { UsageData, ConversationData } from './bg-dataclasses.js';
-
+import { tokenStorageManager } from './tokenManagement.js';
 // Create component-specific logger
 async function Log(...args) {
 	await RawLog("firebase", ...args)
@@ -8,14 +8,17 @@ async function Log(...args) {
 
 // Firebase sync manager
 class FirebaseSyncManager {
-	constructor(tokenStorageManager, updateAllTabsCallback) {
-		this.tokenStorage = tokenStorageManager;
-		this.updateAllTabs = updateAllTabsCallback;
+	constructor() {
 		this.firebase_base_url = "https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app";
 		this.isSyncing = false;
 		this.isSyncingCapHits = false;
 		this.deviceStateMap = new StoredMap("deviceStates"); // Unified map for device states
 		this.resetCounters = new StoredMap("resetCounters");
+		this.updateCallback = async () => { };  // Default no-op callback
+	}
+
+	setUpdateAllTabsCallback(callback) {
+		this.updateAllTabs = callback;
 	}
 
 	async triggerReset(orgId) {
@@ -29,7 +32,7 @@ class FirebaseSyncManager {
 		const lockerId = `firebase_reset_${Date.now()}`;
 
 		try {
-			await this.tokenStorage.acquireLock(lockerId);
+			await tokenStorageManager.acquireLock(lockerId);
 			await this.clearOrgData(orgId, true, lockerId);
 			await this.updateAllTabs();
 
@@ -48,12 +51,12 @@ class FirebaseSyncManager {
 			await Log(`Reset completed for org ${orgId}, new counter: ${newCounter}`);
 			return true;
 		} finally {
-			this.tokenStorage.releaseLock(lockerId);
+			tokenStorageManager.releaseLock(lockerId);
 		}
 	}
 
 	async clearOrgData(orgId, cleanRemote = false, lockerId = null) {
-		await this.tokenStorage.clearModelData(orgId, lockerId);
+		await tokenStorageManager.clearModelData(orgId, lockerId);
 		await setStorageValue(
 			getOrgStorageKey(orgId, 'lastSyncHash'),
 			null
@@ -76,11 +79,11 @@ class FirebaseSyncManager {
 		const lockerId = `firebase_sync_${Date.now()}`;
 
 		try {
-			await this.tokenStorage.acquireLock(lockerId);
-			await this.tokenStorage.ensureOrgIds();
+			await tokenStorageManager.acquireLock(lockerId);
+			await tokenStorageManager.ensureOrgIds();
 			const deviceId = await this.ensureDeviceId();
 
-			for (const orgId of this.tokenStorage.orgIds) {
+			for (const orgId of tokenStorageManager.orgIds) {
 				await this.syncSingleOrg(orgId, deviceId, lockerId);
 			}
 
@@ -92,7 +95,7 @@ class FirebaseSyncManager {
 			await Log("error", 'Stack:', error.stack);
 		} finally {
 			this.isSyncing = false;
-			this.tokenStorage.releaseLock(lockerId);
+			tokenStorageManager.releaseLock(lockerId);
 		}
 	}
 
@@ -183,7 +186,7 @@ class FirebaseSyncManager {
 		try {
 			// Group all entries by orgId
 			const groupedResets = {};
-			for (const [key, value] of (await this.tokenStorage.capHits.entries())) {
+			for (const [key, value] of (await tokenStorageManager.capHits.entries())) {
 				const orgId = key.split(':')[0];
 				if (!groupedResets[orgId]) {
 					groupedResets[orgId] = {};
@@ -312,7 +315,7 @@ class FirebaseSyncManager {
 			}
 
 			// Update local storage - convert UsageData back to storage format
-			await this.tokenStorage.setUsageData(orgId, mergedUsageData, lockerId);
+			await tokenStorageManager.setUsageData(orgId, mergedUsageData, lockerId);
 
 			await setStorageValue(
 				getOrgStorageKey(orgId, 'lastSyncHash'),
@@ -358,7 +361,7 @@ class FirebaseSyncManager {
 	}
 
 	async prepareLocalState(orgId, lockerId) {
-		const localUsageData = await this.tokenStorage.getUsageData(orgId, 'claude_free', lockerId);
+		const localUsageData = await tokenStorageManager.getUsageData(orgId, 'claude_free', lockerId);
 		const currentHashString = await localUsageData.getHash();
 
 		const lastSyncHash = await getStorageValue(
@@ -435,5 +438,6 @@ class FirebaseSyncManager {
 		});
 	}
 }
+const firebaseSyncManager = new FirebaseSyncManager()
 
-export { FirebaseSyncManager };
+export { firebaseSyncManager };

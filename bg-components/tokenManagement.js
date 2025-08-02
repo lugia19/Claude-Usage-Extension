@@ -480,4 +480,6 @@ class TokenStorageManager {
 	}
 }
 
-export { TokenCounter, TokenStorageManager, getTextFromContent };
+const tokenCounter = new TokenCounter();
+const tokenStorageManager = new TokenStorageManager();
+export { getTextFromContent, tokenCounter, tokenStorageManager };
