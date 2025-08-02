@@ -6,6 +6,7 @@ async function Log(...args) {
 	await RawLog("claude-api", ...args);
 }
 const subscriptionTiersCache = new StoredMap("subscriptionTiers");
+const syncTokenCache = new StoredMap("syncTokens");
 
 // Pure HTTP/API layer
 class ClaudeAPI {
@@ -221,6 +222,48 @@ class MessageAPI {
 		return "";
 	}
 
+	async getSyncTokens() {
+		const SYNC_CACHE_TIME_THRESHOLD = 60 * 60 * 1000;
+		let totalTokens = 0;
+
+		for (const sync of this.data.sync_sources || []) {
+			const cacheKey = `${this.api.orgId}:${sync.uuid}`;
+			const cachedData = await syncTokenCache.get(cacheKey);
+
+			// Check cache first
+			if (cachedData &&
+				cachedData.sizeBytes === sync.status.current_size_bytes &&
+				cachedData.fileCount === sync.status.current_file_count) {
+
+				const timeDiff = new Date(sync.status.last_synced_at).getTime() -
+					new Date(cachedData.lastSyncedAt).getTime();
+
+				if (timeDiff < SYNC_CACHE_TIME_THRESHOLD) {
+					totalTokens += cachedData.tokenCount;
+					continue; // Skip to next sync
+				}
+			}
+
+			// Cache miss - fetch and count
+			const syncText = await this.getSyncText(sync);
+			if (!syncText) continue;
+
+			const tokenCount = await tokenCounter.countText(syncText);
+			totalTokens += tokenCount;
+
+			// Update cache
+			await syncTokenCache.set(cacheKey, {
+				sizeBytes: sync.status.current_size_bytes,
+				fileCount: sync.status.current_file_count,
+				lastSyncedAt: sync.status.last_synced_at,
+				tokenCount: tokenCount
+			});
+		}
+
+		return totalTokens;
+	}
+
+
 	// Get text content
 	async getTextContent(includeEphemeral = false) {
 		let messageContent = [];
@@ -235,14 +278,6 @@ class MessageAPI {
 		for (const attachment of this.data.attachments || []) {
 			if (attachment.extracted_content) {
 				messageContent.push(attachment.extracted_content);
-			}
-		}
-
-		// Process sync sources
-		for (const sync of this.data.sync_sources || []) {
-			const syncText = await this.getSyncText(sync);
-			if (syncText) {
-				messageContent.push(syncText);
 			}
 		}
 
@@ -412,7 +447,7 @@ class ConversationAPI {
 
 	async getInfo(isNewMessage) {
 		const conversationData = await this.getData(true);
-		const cachingInfo = await this.getConversationCachingInfo(conversationData, isNewMessage);
+		const cachingInfo = await this.getCachingInfo(conversationData, isNewMessage);
 		if (!cachingInfo) return undefined;
 
 		const { currentTrunk, cacheCanBeWarm, cacheEndId, conversationIsCachedUntil } = cachingInfo;
@@ -444,12 +479,16 @@ class ConversationAPI {
 
 		for (let i = 0; i < currentTrunk.length; i++) {
 			const rawMessageData = currentTrunk[i];
-			const message = new MessageAPI(rawMessageData, cacheIsWarm);
+			const message = new MessageAPI(rawMessageData, cacheIsWarm, this.api);
 
 			// File tokens
-			const fileTokens = await message.getFileTokens(this);
+			const fileTokens = await message.getFileTokens();
 			lengthTokens += fileTokens;
 			costTokens += message.isCached ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
+
+			const syncTokens = await message.getSyncTokens();
+			lengthTokens += syncTokens;
+			costTokens += message.isCached ? syncTokens * CONFIG.CACHING_MULTIPLIER : syncTokens;
 
 			// Text content
 			const textContent = await message.getTextContent(false, this, this.orgId);
