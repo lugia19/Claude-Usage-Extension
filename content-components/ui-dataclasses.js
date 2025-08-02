@@ -186,6 +186,7 @@ class ConversationData {
 		this.projectUuid = data.projectUuid || null;
 		this.styleId = data.styleId || null;
 		this.settings = data.settings || {};
+		this.lastMessageTimestamp = data.lastMessageTimestamp || null; // Timestamp of the last message in the conversation
 	}
 
 	// Add helper method to check if currently cached

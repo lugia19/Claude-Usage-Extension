@@ -7,7 +7,7 @@ async function Log(...args) {
 }
 const subscriptionTiersCache = new StoredMap("subscriptionTiers");
 
-// Claude API interface
+// Pure HTTP/API layer
 class ClaudeAPI {
 	constructor(cookieStoreId, orgId) {
 		this.baseUrl = 'https://claude.ai/api';
@@ -15,7 +15,7 @@ class ClaudeAPI {
 		this.orgId = orgId;
 	}
 
-	// Core GET method with auth
+	// Core methods
 	async getRequest(endpoint) {
 		const response = await containerFetch(`${this.baseUrl}${endpoint}`, {
 			headers: {
@@ -26,11 +26,125 @@ class ClaudeAPI {
 		return response.json();
 	}
 
-	// API methods
+	async fetchUrl(url, options = {}) {
+		return containerFetch(url, options, this.cookieStoreId);
+	}
+
+	// Factory method - returns a ConversationAPI instance
+	async getConversation(conversationId) {
+		return new ConversationAPI(conversationId, this);
+	}
+
+	// Platform operations
+	async getGoogleDriveDocument(uri) {
+		return this.getRequest(`/organizations/${this.orgId}/sync/mcp/drive/document/${uri}`);
+	}
+
+	// Platform operations with business logic
+	async getProjectStats(projectId, isNewMessage = false) {
+		const projectStats = await this.getRequest(`/organizations/${this.orgId}/projects/${projectId}/kb/stats`);
+		const projectSize = projectStats.use_project_knowledge_search ? 0 : projectStats.knowledge_size;
+
+		// Check cache
+		const cachedAmount = await tokenStorageManager.projectCache.get(projectId) || -1;
+		const isCached = cachedAmount == projectSize;
+
+		// Update cache if this is a new message
+		if (isNewMessage) {
+			await tokenStorageManager.projectCache.set(projectId, projectSize, 60 * 60 * 1000);
+		}
+
+		return {
+			...projectStats,
+			tokenInfo: {
+				length: projectSize,
+				isCached: isCached
+			}
+		};
+	}
+
+	async getStyleTokens(styleId, tabId) {
+		if (!styleId) {
+			await Log("Fetching styleId from tab:", tabId);
+			const response = await sendTabMessage(tabId, {
+				action: "getStyleId"
+			});
+			styleId = response?.styleId;
+			if (!styleId) return 0;
+		}
+
+		const styleData = await this.getRequest(`/organizations/${this.orgId}/list_styles`);
+		let style = styleData?.defaultStyles?.find(style => style.key === styleId);
+		if (!style) {
+			style = styleData?.customStyles?.find(style => style.uuid === styleId);
+		}
+
+		await Log("Got style:", style);
+		if (style) {
+			return await tokenCounter.countText(style.prompt);
+		} else {
+			return 0;
+		}
+	}
+
+	async getProfileTokens() {
+		const profileData = await this.getRequest('/account_profile');
+		let totalTokens = 0;
+		if (profileData.conversation_preferences) {
+			totalTokens = await tokenCounter.countText(profileData.conversation_preferences) + CONFIG.FEATURE_COSTS["profile_preferences"];
+		}
+		await Log(`Profile tokens: ${totalTokens}`);
+		return totalTokens;
+	}
+
+	async getSubscriptionTier(skipCache = false) {
+		let subscriptionTier = await subscriptionTiersCache.get(this.orgId);
+		if (subscriptionTier && !skipCache) return subscriptionTier;
+
+		const statsigData = await this.getRequest(`/bootstrap/${this.orgId}/statsig`);
+		const identifier = statsigData.user?.custom?.orgType;
+		await Log("User identifier:", identifier);
+
+		if (statsigData.user?.custom?.isRaven) {
+			subscriptionTier = "claude_team";
+		} else if (identifier === "claude_max") {
+			const orgData = await this.getRequest(`/organizations/${this.orgId}`);
+			await Log("Org data for tier check:", orgData);
+			if (orgData?.settings?.rate_limit_tier === "default_claude_max_20x") {
+				subscriptionTier = "claude_max_20x";
+			} else {
+				subscriptionTier = "claude_max_5x";
+			}
+		} else {
+			subscriptionTier = identifier;
+		}
+
+		await subscriptionTiersCache.set(this.orgId, subscriptionTier, 24 * 60 * 60 * 1000);
+		return subscriptionTier;
+	}
+}
+
+// Message-level operations
+class MessageAPI {
+	constructor(messageData, isCached, api) {
+		this.data = messageData;
+		this.isCached = isCached;
+		this.api = api;
+	}
+
+	get uuid() {
+		return this.data.uuid;
+	}
+
+	get sender() {
+		return this.data.sender;
+	}
+
+	// Now owns file download logic
 	async getUploadedFileAsBase64(url) {
 		try {
 			await Log(`Starting file download from: https://claude.ai${url}`);
-			const response = await containerFetch(`https://claude.ai${url}`, undefined, this.cookieStoreId);
+			const response = await this.api.fetchUrl(`https://claude.ai${url}`);
 			if (!response.ok) {
 				await Log("error", 'Fetch failed:', response.status, response.statusText);
 				return null;
@@ -49,13 +163,13 @@ class ClaudeAPI {
 				};
 				reader.readAsDataURL(blob);
 			});
-
 		} catch (e) {
 			await Log("error", 'Download error:', e);
 			return null;
 		}
 	}
 
+	// Now owns sync text logic
 	async getSyncText(sync) {
 		if (!sync) return "";
 
@@ -66,20 +180,8 @@ class ClaudeAPI {
 			const uri = sync.config?.uri;
 			if (!uri) return "";
 
-			// Use the existing API endpoint for Google Drive
-			const response = await containerFetch(`${this.baseUrl}/organizations/${this.orgId}/sync/mcp/drive/document/${uri}`,
-				{ headers: { 'Content-Type': 'application/json' } },
-				this.cookieStoreId
-			);
-
-			if (!response.ok) {
-				await Log("warn", `Failed to fetch Google Drive document: ${uri}, status: ${response.status}`);
-				return "";
-			}
-
-			const data = await response.json();
-			const syncText = data?.text || "";
-			return syncText;
+			const response = await this.api.getGoogleDriveDocument(uri);
+			return response?.text || "";
 		}
 		else if (syncType === "github") {
 			try {
@@ -89,26 +191,18 @@ class ClaudeAPI {
 					return "";
 				}
 
-				// For each included file, fetch and aggregate content
 				let allContent = "";
 				for (const [filePath, action] of Object.entries(filters.filters)) {
 					if (action !== "include") continue;
 
-					// Remove leading slash if present
 					const cleanPath = filePath.startsWith('/') ? filePath.substring(1) : filePath;
-
-					// Use the GitHub raw URL format directly - redirects will be followed automatically
 					const githubUrl = `https://github.com/${owner}/${repo}/raw/refs/heads/${branch}/${cleanPath}`;
-					//await Log("Fetching GitHub file from:", githubUrl);
 
 					try {
-						// Let containerFetch handle everything
-						const response = await containerFetch(githubUrl, { method: 'GET' }, this.cookieStoreId);
-
+						const response = await this.api.fetchUrl(githubUrl, { method: 'GET' });
 						if (response.ok) {
 							const fileContent = await response.text();
 							allContent += fileContent + "\n";
-							//await Log(`GitHub file fetched: ${filePath}, size: ${fileContent.length} bytes`);
 						} else {
 							await Log("warn", `Failed to fetch GitHub file: ${githubUrl}, status: ${response.status}`);
 						}
@@ -116,7 +210,6 @@ class ClaudeAPI {
 						await Log("error", `Error fetching GitHub file: ${githubUrl}`, error);
 					}
 				}
-
 				return allContent;
 			} catch (error) {
 				await Log("error", "Error processing GitHub sync source:", error);
@@ -124,110 +217,110 @@ class ClaudeAPI {
 			}
 		}
 
-		// Unsupported sync type
 		await Log("warn", `Unsupported sync type: ${syncType}`);
 		return "";
 	}
 
-	async getStyleTokens(styleId, tabId) {
-		if (!styleId) {
-			//Ask the tabId to fetch it from localStorage.
-			await Log("Fetching styleId from tab:", tabId);
-			const response = await sendTabMessage(tabId, {
-				action: "getStyleId"
-			});
-			styleId = response?.styleId;
+	// Get text content
+	async getTextContent(includeEphemeral = false) {
+		let messageContent = [];
 
-			// If we still don't have a styleId, return 0
-			if (!styleId) return 0;
-		}
-		const styleData = await this.getRequest(`/organizations/${this.orgId}/list_styles`);
-		let style = styleData?.defaultStyles?.find(style => style.key === styleId);
-		if (!style) {
-			style = styleData?.customStyles?.find(style => style.uuid === styleId);
-		}
-		await Log("Got style:", style);
-		if (style) {
-			return await tokenCounter.countText(style.prompt);
-		} else {
-			return 0;
-		}
-	}
-
-	async getProjectTokens(projectId, isNewMessage) {
-		const projectStats = await this.getRequest(`/organizations/${this.orgId}/projects/${projectId}/kb/stats`);
-		const projectSize = projectStats.use_project_knowledge_search ? 0 : projectStats.knowledge_size;
-
-		// Check cache
-		const cachedAmount = await tokenStorageManager.projectCache.get(projectId) || -1;
-		const isCached = cachedAmount == projectSize;
-
-		// Update cache with 1 hour TTL if htis is a new message
-		if (isNewMessage) {
-			await tokenStorageManager.projectCache.set(projectId, projectSize, 60 * 60 * 1000);
+		// Process content array
+		for (const content of this.data.content || []) {
+			const textParts = await getTextFromContent(content, includeEphemeral, this.api, this.api.orgId);
+			messageContent = messageContent.concat(textParts);
 		}
 
-		// Return 0 tokens if cached, docs say it "doesn't count against your limits when reused"
-		// This is unlike conversations which are listed as "partially cached"
-		return { length: projectSize, isCached: isCached };
-	}
-
-
-	async getUploadedFileTokens(fileMetadata) {
-		// Only fetch content if we have an API key
-		const tokenCountingAPIKey = await tokenCounter.getApiKey();
-		if (tokenCountingAPIKey && this) {
-			try {
-				const fileUrl = fileMetadata.file_kind === "image" ?
-					fileMetadata.preview_asset.url :
-					fileMetadata.document_asset.url;
-
-				const fileInfo = await this.getUploadedFileAsBase64(fileUrl);
-				if (fileInfo?.data) {
-					return await tokenCounter.getNonTextFileTokens(
-						fileInfo.data,
-						fileInfo.media_type,
-						fileMetadata,
-						this.orgId
-					);
-				}
-			} catch (error) {
-				await Log("error", "Failed to fetch file content:", error);
+		// Process attachments
+		for (const attachment of this.data.attachments || []) {
+			if (attachment.extracted_content) {
+				messageContent.push(attachment.extracted_content);
 			}
 		}
 
-		// Fallback to estimation
-		return await tokenCounter.getNonTextFileTokens(null, null, fileMetadata, this.orgId);
+		// Process sync sources
+		for (const sync of this.data.sync_sources || []) {
+			const syncText = await this.getSyncText(sync);
+			if (syncText) {
+				messageContent.push(syncText);
+			}
+		}
+
+		return messageContent.join(' ');
 	}
 
-	async getConversation(conversationId, full_tree = false) {
-		return this.getRequest(
-			`/organizations/${this.orgId}/chat_conversations/${conversationId}?tree=${full_tree}&rendering_mode=messages&render_all_tools=true`
-		);
+	// Get file tokens
+	async getFileTokens() {
+		let totalTokens = 0;
+		for (const file of this.data.files_v2 || []) {
+			// Fetch content if we have an API key
+			const tokenCountingAPIKey = await tokenCounter.getApiKey();
+			if (tokenCountingAPIKey) {
+				try {
+					const fileUrl = file.file_kind === "image" ?
+						file.preview_asset.url :
+						file.document_asset.url;
+
+					const fileInfo = await this.getUploadedFileAsBase64(fileUrl);
+					if (fileInfo?.data) {
+						totalTokens += await tokenCounter.getNonTextFileTokens(
+							fileInfo.data,
+							fileInfo.media_type,
+							file,
+							this.api.orgId
+						);
+						continue;
+					}
+				} catch (error) {
+					await Log("error", "Failed to fetch file content:", error);
+				}
+			}
+			// Fallback to estimation
+			totalTokens += await tokenCounter.getNonTextFileTokens(null, null, file, this.api.orgId);
+		}
+		return totalTokens;
+	}
+}
+
+// Conversation-level operations
+class ConversationAPI {
+	constructor(conversationId, api) {
+		this.conversationId = conversationId;
+		this.api = api;
+		this.conversationData = null;
 	}
 
-	async getConversationInfo(conversationId, isNewMessage) {
-		const conversationData = await this.getConversation(conversationId, true); // Always get full tree
+	// Lazy load conversation data
+	async getData(full_tree = false) {
+		if (!this.conversationData || full_tree) {
+			this.conversationData = await this.api.getRequest(
+				`/organizations/${this.api.orgId}/chat_conversations/${this.conversationId}?tree=${full_tree}&rendering_mode=messages&render_all_tools=true`
+			);
+		}
+		return this.conversationData;
+	}
 
-		// Single pass to build message map and find latest assistants
+	async getCachingInfo(isNewMessage) {
+		const conversationData = await this.getData(true);
+		// Build message map and find latest assistants
 		const messageMap = new Map();
 		let latestAssistant = null;
 		let secondLatestAssistant = null;
 
-		for (const message of conversationData.chat_messages) {
-			messageMap.set(message.uuid, message);
+		for (const rawMessage of conversationData.chat_messages) {
+			messageMap.set(rawMessage.uuid, rawMessage);
 
-			if (message.sender === "assistant") {
-				if (!latestAssistant || message.created_at > latestAssistant.created_at) {
+			if (rawMessage.sender === "assistant") {
+				if (!latestAssistant || rawMessage.created_at > latestAssistant.created_at) {
 					secondLatestAssistant = latestAssistant;
-					latestAssistant = message;
-				} else if (!secondLatestAssistant || message.created_at > secondLatestAssistant.created_at) {
-					secondLatestAssistant = message;
+					latestAssistant = rawMessage;
+				} else if (!secondLatestAssistant || rawMessage.created_at > secondLatestAssistant.created_at) {
+					secondLatestAssistant = rawMessage;
 				}
 			}
 		}
 
-		// Reconstruct trunk, count messages, and build ID set
+		// Reconstruct trunk
 		const currentTrunkIds = new Set();
 		let humanMessagesCount = 0;
 		let assistantMessagesCount = 0;
@@ -236,58 +329,52 @@ class ClaudeAPI {
 
 		const tempTrunk = [];
 		while (currentId && currentId !== rootId) {
-			const message = messageMap.get(currentId);
-			tempTrunk.push(message);  // O(1) - just adds to end
-			currentTrunkIds.add(message.uuid);
+			const rawMessage = messageMap.get(currentId);
+			tempTrunk.push(rawMessage);
+			currentTrunkIds.add(rawMessage.uuid);
 
-			if (message.sender === "human") humanMessagesCount++;
-			else if (message.sender === "assistant") assistantMessagesCount++;
+			if (rawMessage.sender === "human") humanMessagesCount++;
+			else if (rawMessage.sender === "assistant") assistantMessagesCount++;
 
-			currentId = message.parent_message_uuid;
+			currentId = rawMessage.parent_message_uuid;
 		}
 		const currentTrunk = tempTrunk.reverse();
 
-		// Sanity check
-		if (!currentTrunk || currentTrunk.length == 0) return 0;
-
-		const lastMessage = currentTrunk[currentTrunk.length - 1];
-
-		if (humanMessagesCount === 0 || assistantMessagesCount === 0 || humanMessagesCount !== assistantMessagesCount ||
-			!lastMessage || lastMessage.sender !== "assistant") {
-			await Log(`Message count mismatch or wrong last sender - Human: ${humanMessagesCount}, Assistant: ${assistantMessagesCount}, Last message sender: ${lastMessage?.sender}`);
-			return undefined;
+		// Validation
+		if (!currentTrunk || currentTrunk.length == 0) {
+			return null; // Caller should handle this
 		}
 
-		// Pick reference message based on whether we just sent a message
-		const referenceMessage = isNewMessage ? secondLatestAssistant : latestAssistant;
-		console.log("Reference message:", referenceMessage?.uuid, "Created at:", referenceMessage?.created_at);
-		console.log("Because isNewMessage:", isNewMessage, "Latest assistant:", latestAssistant?.uuid, "Second latest assistant:", secondLatestAssistant?.uuid);
+		const lastRawMessage = currentTrunk[currentTrunk.length - 1];
+		if (humanMessagesCount === 0 || assistantMessagesCount === 0 ||
+			humanMessagesCount !== assistantMessagesCount ||
+			!lastRawMessage || lastRawMessage.sender !== "assistant") {
+			await Log(`Message count mismatch or wrong last sender - Human: ${humanMessagesCount}, Assistant: ${assistantMessagesCount}, Last message sender: ${lastRawMessage?.sender}`);
+			return null;
+		}
 
+		// Cache determination
+		const referenceMessage = isNewMessage ? secondLatestAssistant : latestAssistant;
 		let cacheEndId = null;
 		let cacheCanBeWarm = false;
-		const cache_lifetime = 60 * 60 * 1000; // 1 hour
+		const cache_lifetime = 60 * 60 * 1000;
 
 		if (!referenceMessage) {
-			// Not enough messages for cache to be warm
 			cacheCanBeWarm = false;
 			await Log("Not enough messages to determine cache status - cache is cold");
 		} else {
 			const messageAge = Date.now() - Date.parse(referenceMessage.created_at);
 			if (messageAge >= cache_lifetime) {
-				// Cache definitely cold
 				cacheCanBeWarm = false;
 				await Log("Reference message too old - cache is cold");
 			} else {
-				// Cache could be warm, check if reference is in current trunk
 				if (currentTrunkIds.has(referenceMessage.uuid)) {
-					// Reference is in trunk - cache available up to reference message
 					cacheCanBeWarm = true;
 					cacheEndId = referenceMessage.uuid;
 					await Log("Reference message in current trunk - cache available up to:", cacheEndId);
 				} else {
-					// Need to find common ancestor
+					// Find common ancestor
 					let currentId = referenceMessage.uuid;
-
 					while (currentId && currentId !== rootId) {
 						if (currentTrunkIds.has(currentId)) {
 							cacheCanBeWarm = true;
@@ -295,8 +382,8 @@ class ClaudeAPI {
 							await Log(`Cache ends at common ancestor: ${cacheEndId}`);
 							break;
 						}
-						const message = messageMap.get(currentId);
-						currentId = message?.parent_message_uuid;
+						const rawMessage = messageMap.get(currentId);
+						currentId = rawMessage?.parent_message_uuid;
 					}
 
 					if (!cacheCanBeWarm) {
@@ -306,7 +393,7 @@ class ClaudeAPI {
 			}
 		}
 
-		// Calculate when conversation cache expires (based on the latest message)
+		// Calculate cache expiration
 		let conversationIsCachedUntil = null;
 		if (!latestAssistant) {
 			await Log("No latest assistant message found - assuming cache expires in lifetime");
@@ -315,13 +402,25 @@ class ClaudeAPI {
 			conversationIsCachedUntil = new Date(latestAssistant?.created_at).getTime() + cache_lifetime;
 		}
 
+		return {
+			currentTrunk,
+			cacheCanBeWarm,
+			cacheEndId,
+			conversationIsCachedUntil
+		};
+	}
 
-		// Initialize cacheIsWarm - will be toggled during message processing
+	async getInfo(isNewMessage) {
+		const conversationData = await this.getData(true);
+		const cachingInfo = await this.getConversationCachingInfo(conversationData, isNewMessage);
+		if (!cachingInfo) return undefined;
+
+		const { currentTrunk, cacheCanBeWarm, cacheEndId, conversationIsCachedUntil } = cachingInfo;
+
+		// Initialize token counting
 		let cacheIsWarm = cacheCanBeWarm;
-
-		let lengthTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH; // Base tokens for system prompt
-		let costTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER; // Base cost tokens for system prompt
-
+		let lengthTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
+		let costTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER;
 
 		// Add settings costs
 		for (const [setting, enabled] of Object.entries(conversationData.settings)) {
@@ -339,83 +438,62 @@ class ClaudeAPI {
 			}
 		}
 
-		let humanMessageData = [];
-		let assistantMessageData = [];
-		const messageCount = currentTrunk.length;
+		// Steps 7-8: Process messages and count tokens
+		const humanMessageData = [];
+		const assistantMessageData = [];
 
-		// Process each message
-		for (let i = 0; i < messageCount; i++) {
-			const message = currentTrunk[i];
-			const isCached = cacheIsWarm;
+		for (let i = 0; i < currentTrunk.length; i++) {
+			const rawMessageData = currentTrunk[i];
+			const message = new MessageAPI(rawMessageData, cacheIsWarm);
 
-			// Files_v2 tokens (handle separately)
-			for (const file of message.files_v2) {
-				await Log("File_v2:", file.file_name, file.file_uuid)
-				let fileTokens = await this.getUploadedFileTokens(file)
-				lengthTokens += fileTokens;
-				costTokens += isCached ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
-			}
+			// File tokens
+			const fileTokens = await message.getFileTokens(this);
+			lengthTokens += fileTokens;
+			costTokens += message.isCached ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
 
-			let messageContent = [];
-			// Process content array
-			for (const content of message.content) {
-				//We don't consider the thinking tokens in the length calculation at all, as they don't remain in the context.
-				messageContent = messageContent.concat(await getTextFromContent(content, false, this, this.orgId));
-			}
-			// Attachment tokens
-			for (const attachment of message.attachments) {
-				await Log("Attachment:", attachment.file_name, attachment.id);
-				if (attachment.extracted_content) {
-					messageContent.push(attachment.extracted_content);
-				}
-			}
-
-
-			// Sync tokens
-			for (const sync of message.sync_sources) {
-				//await Log("Sync source:", sync.uuid)
-				messageContent.push(await this.getSyncText(sync));
-			}
-
-			if (message === lastMessage) {
-				let lastMessageContent = [];
-				for (const content of message.content) {
-					lastMessageContent = lastMessageContent.concat(await getTextFromContent(content, true, this, this.orgId));
-				}
-				costTokens += await tokenCounter.countText(lastMessageContent.join(' ')) * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
-			}
+			// Text content
+			const textContent = await message.getTextContent(false, this, this.orgId);
 
 			if (message.sender === "human") {
-				humanMessageData.push({ content: messageContent.join(' '), isCached });
+				humanMessageData.push({ content: textContent, isCached: message.isCached });
 			} else {
-				assistantMessageData.push({ content: messageContent.join(' '), isCached });
+				assistantMessageData.push({ content: textContent, isCached: message.isCached });
 			}
 
-			// Check if we've hit the cache boundary at the END of processing this message
+			// Last message output tokens
+			if (i === currentTrunk.length - 1) {
+				const lastMessageContent = await message.getTextContent(true, this, this.orgId);
+				costTokens += await tokenCounter.countText(lastMessageContent) * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
+			}
+
+			// Update cache status
 			if (message.uuid === cacheEndId) {
 				cacheIsWarm = false;
 				await Log("Hit cache boundary at message:", message.uuid);
 			}
 		}
 
-
-		const allMessageTokens = await tokenCounter.countMessages(humanMessageData.map(m => m.content), assistantMessageData.map(m => m.content));
+		// Batch token counting
+		const allMessageTokens = await tokenCounter.countMessages(
+			humanMessageData.map(m => m.content),
+			assistantMessageData.map(m => m.content)
+		);
 		lengthTokens += allMessageTokens;
 		costTokens += allMessageTokens;
 
+		// Subtract cached tokens
 		const cachedHuman = humanMessageData.filter(m => m.isCached).map(m => m.content);
 		const cachedAssistant = assistantMessageData.filter(m => m.isCached).map(m => m.content);
 		if (cachedHuman.length > 0 || cachedAssistant.length > 0) {
 			const cachedTokens = await tokenCounter.countMessages(cachedHuman, cachedAssistant);
-			// Subtract 90% of cached tokens (leaving 10%)
 			costTokens -= cachedTokens * (1 - CONFIG.CACHING_MULTIPLIER);
 		}
 
-		// If part of a project, get project data
+		// Steps 9-10: Project tokens and model detection
 		if (conversationData.project_uuid) {
-			const projectData = await this.getProjectTokens(conversationData.project_uuid, isNewMessage);
-			lengthTokens += projectData.length;
-			costTokens += projectData.isCached ? 0 : projectData.length;
+			const projectStats = await this.api.getProjectStats(conversationData.project_uuid, isNewMessage);
+			lengthTokens += projectStats.tokenInfo.length;
+			costTokens += projectStats.tokenInfo.isCached ? 0 : projectStats.tokenInfo.length;
 		}
 
 		let conversationModelType = undefined;
@@ -428,72 +506,33 @@ class ClaudeAPI {
 			}
 		}
 
-		await Log(`Total tokens for conversation ${conversationId}: ${lengthTokens} with model ${conversationModelType}`);
+		await Log(`Total tokens for conversation ${this.conversationId}: ${lengthTokens} with model ${conversationModelType}`);
 
+		// Step 11: Future cost
 		let futureCost;
 		if (isNewMessage) {
-			// We just calculated the cost of the message that was sent
-			// Now calculate what the next message will cost
-
-			const futureConversation = await this.getConversationInfo(conversationId, false);
+			const futureConversation = await this.getInfo(false);
 			futureCost = futureConversation.cost;
 		} else {
-			// Already calculating future cost, so they're the same
 			futureCost = Math.round(costTokens);
 		}
 
+		const lastRawMessage = currentTrunk[currentTrunk.length - 1];
+		// Step 12: Return result
 		return new ConversationData({
-			conversationId: conversationId,
+			conversationId: this.conversationId,
 			length: Math.round(lengthTokens),
 			cost: Math.round(costTokens),
-			futureCost: futureCost,  // New field
+			futureCost: futureCost,
 			model: conversationModelType,
 			costUsedCache: cacheIsWarm,
 			conversationIsCachedUntil: conversationIsCachedUntil,
 			projectUuid: conversationData.project_uuid,
-			settings: conversationData.settings
+			settings: conversationData.settings,
+			lastMessageTimestamp: new Date(lastRawMessage.created_at).getTime() // Add this!
 		});
-	}
-
-	async getProfileTokens() {
-		const profileData = await this.getRequest('/account_profile');
-		let totalTokens = 0;
-		if (profileData.conversation_preferences) {
-			totalTokens = await tokenCounter.countText(profileData.conversation_preferences) + CONFIG.FEATURE_COSTS["profile_preferences"];
-		}
-
-		await Log(`Profile tokens: ${totalTokens}`);
-		return totalTokens;
-	}
-
-
-
-	async getSubscriptionTier(skipCache = false) {
-		let subscriptionTier = await subscriptionTiersCache.get(this.orgId);
-		if (subscriptionTier && !skipCache) return subscriptionTier;
-
-		const statsigData = await this.getRequest(`/bootstrap/${this.orgId}/statsig`);
-		const identifier = statsigData.user?.custom?.orgType;
-		await Log("User identifier:", identifier);
-		if (statsigData.user?.custom?.isRaven) {
-			subscriptionTier = "claude_team"; //IDK if this is the actual identifier, so I'm just overriding it based on the old value.
-		} else if (identifier === "claude_max") {
-			const orgData = await this.getRequest(`/organizations/${this.orgId}`);
-			await Log("Org data for tier check:", orgData);
-			if (orgData?.settings?.rate_limit_tier === "default_claude_max_20x") {
-				subscriptionTier = "claude_max_20x";
-			} else {
-				subscriptionTier = "claude_max_5x";
-			}
-		} else {
-			subscriptionTier = identifier;
-		}
-
-		// Cache for 24 hours instead of 1 hour
-		await subscriptionTiersCache.set(this.orgId, subscriptionTier, 24 * 60 * 60 * 1000);
-
-		return subscriptionTier;
 	}
 }
 
-export { ClaudeAPI }
+// Export the new structure
+export { ClaudeAPI, ConversationAPI, MessageAPI }

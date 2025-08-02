@@ -4,7 +4,7 @@ import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addCont
 import { tokenStorageManager, tokenCounter, getTextFromContent } from './bg-components/tokenManagement.js';
 import { firebaseSyncManager } from './bg-components/firebase.js';
 import { UsageData, ConversationData } from './bg-components/bg-dataclasses.js';
-import { ClaudeAPI } from './bg-components/claude-api.js';
+import { ClaudeAPI, ConversationAPI } from './bg-components/claude-api.js';
 
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
@@ -457,7 +457,8 @@ async function requestData(message, sender, orgId) {
 	// If conversationId provided, also send conversation metrics
 	if (conversationId) {
 		await Log(`Requested metrics for conversation: ${conversationId}`);
-		const conversationData = await api.getConversationInfo(conversationId, false);
+		const conversation = api.getConversation(conversationId);
+		const conversationData = await conversation.getInfo(false);
 		const profileTokens = await api.getProfileTokens();
 
 		if (conversationData) {
@@ -605,7 +606,8 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	// Get subscription tier
 	const subscriptionTier = await api.getSubscriptionTier();
 
-	const conversationData = await api.getConversationInfo(conversationId, isNewMessage);
+	const conversation = await api.getConversation(conversationId);
+	const conversationData = await conversation.getInfo(isNewMessage);
 	if (!conversationData) {
 		await Log("warn", "Could not get conversation tokens, exiting...")
 		return false;
@@ -642,13 +644,10 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 		await Log(`Raw message cost: ${conversationData.cost}, Model: ${model}, Weighted cost: ${weightedCost}`);
 
 		const requestTime = pendingRequest.requestTimestamp;
-		const conversationFullData = await api.getConversation(conversationId);
-		const latestMessageTime = new Date(conversationFullData.chat_messages[conversationFullData.chat_messages.length - 1].created_at).getTime();
-		if (latestMessageTime < requestTime - 5000) {
+		if (conversationData.lastMessageTimestamp < requestTime - 5000) {
 			await Log("Message appears to be older than our request, likely an error");
 		} else {
 			await Log(`=============Adding tokens for model: ${model}, Raw tokens: ${conversationData.cost}, Weighted tokens: ${weightedCost}============`);
-			// Store the raw tokens internally
 			await tokenStorageManager.addTokensToModel(orgId, model, conversationData.cost, subscriptionTier);
 		}
 	}
