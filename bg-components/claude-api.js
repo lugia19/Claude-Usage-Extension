@@ -224,9 +224,8 @@ class MessageAPI {
 
 	async getSyncTokens() {
 		const SYNC_CACHE_TIME_THRESHOLD = 60 * 60 * 1000;
-		let totalTokens = 0;
-
-		for (const sync of this.data.sync_sources || []) {
+		const syncPromises = (this.data.sync_sources || []).map(async (sync) => {
+			await Log("Processing sync source:", sync.type, sync.uuid);
 			const cacheKey = `${this.api.orgId}:${sync.uuid}`;
 			const cachedData = await syncTokenCache.get(cacheKey);
 
@@ -239,17 +238,17 @@ class MessageAPI {
 					new Date(cachedData.lastSyncedAt).getTime();
 
 				if (timeDiff < SYNC_CACHE_TIME_THRESHOLD) {
-					totalTokens += cachedData.tokenCount;
-					continue; // Skip to next sync
+					await Log("Using cached sync data for:", sync.type, sync.uuid);
+					return cachedData.tokenCount;
 				}
 			}
 
 			// Cache miss - fetch and count
+			await Log("Cache miss for sync source:", sync.type, sync.uuid);
 			const syncText = await this.getSyncText(sync);
-			if (!syncText) continue;
+			if (!syncText) return 0;
 
 			const tokenCount = await tokenCounter.countText(syncText);
-			totalTokens += tokenCount;
 
 			// Update cache
 			await syncTokenCache.set(cacheKey, {
@@ -258,13 +257,45 @@ class MessageAPI {
 				lastSyncedAt: sync.status.last_synced_at,
 				tokenCount: tokenCount
 			});
-		}
 
-		return totalTokens;
+			return tokenCount;
+		});
+
+		const tokenCounts = await Promise.all(syncPromises);
+		return tokenCounts.reduce((total, count) => total + count, 0);
 	}
 
+	async getFileTokens() {
+		const filePromises = (this.data.files_v2 || []).map(async (file) => {
+			const tokenCountingAPIKey = await tokenCounter.getApiKey();
+			if (tokenCountingAPIKey) {
+				try {
+					const fileUrl = file.file_kind === "image" ?
+						file.preview_asset.url :
+						file.document_asset.url;
 
-	// Get text content
+					const fileInfo = await this.getUploadedFileAsBase64(fileUrl);
+					if (fileInfo?.data) {
+						return await tokenCounter.getNonTextFileTokens(
+							fileInfo.data,
+							fileInfo.media_type,
+							file,
+							this.api.orgId
+						);
+					}
+				} catch (error) {
+					await Log("error", "Failed to fetch file content:", error);
+				}
+			}
+			// Fallback to estimation
+			return await tokenCounter.getNonTextFileTokens(null, null, file, this.api.orgId);
+		});
+
+		const tokenCounts = await Promise.all(filePromises);
+		return tokenCounts.reduce((total, count) => total + count, 0);
+	}
+
+	// Get text content (Not tokens, so it can be done all in one call later)
 	async getTextContent(includeEphemeral = false) {
 		let messageContent = [];
 
@@ -282,38 +313,6 @@ class MessageAPI {
 		}
 
 		return messageContent.join(' ');
-	}
-
-	// Get file tokens
-	async getFileTokens() {
-		let totalTokens = 0;
-		for (const file of this.data.files_v2 || []) {
-			// Fetch content if we have an API key
-			const tokenCountingAPIKey = await tokenCounter.getApiKey();
-			if (tokenCountingAPIKey) {
-				try {
-					const fileUrl = file.file_kind === "image" ?
-						file.preview_asset.url :
-						file.document_asset.url;
-
-					const fileInfo = await this.getUploadedFileAsBase64(fileUrl);
-					if (fileInfo?.data) {
-						totalTokens += await tokenCounter.getNonTextFileTokens(
-							fileInfo.data,
-							fileInfo.media_type,
-							file,
-							this.api.orgId
-						);
-						continue;
-					}
-				} catch (error) {
-					await Log("error", "Failed to fetch file content:", error);
-				}
-			}
-			// Fallback to estimation
-			totalTokens += await tokenCounter.getNonTextFileTokens(null, null, file, this.api.orgId);
-		}
-		return totalTokens;
 	}
 }
 
@@ -481,14 +480,17 @@ class ConversationAPI {
 			const rawMessageData = currentTrunk[i];
 			const message = new MessageAPI(rawMessageData, cacheIsWarm, this.api);
 
-			// File tokens
-			const fileTokens = await message.getFileTokens();
-			lengthTokens += fileTokens;
-			costTokens += message.isCached ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
+			// Run both in parallel
+			const [fileTokens, syncTokens] = await Promise.all([
+				message.getFileTokens(),
+				message.getSyncTokens()
+			]);
 
-			const syncTokens = await message.getSyncTokens();
-			lengthTokens += syncTokens;
-			costTokens += message.isCached ? syncTokens * CONFIG.CACHING_MULTIPLIER : syncTokens;
+			// Then apply the calculations
+			lengthTokens += fileTokens + syncTokens;
+			costTokens += message.isCached ?
+				(fileTokens + syncTokens) * CONFIG.CACHING_MULTIPLIER :
+				(fileTokens + syncTokens);
 
 			// Text content
 			const textContent = await message.getTextContent(false, this, this.orgId);
