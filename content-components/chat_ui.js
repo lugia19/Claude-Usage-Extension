@@ -209,11 +209,7 @@ class ChatUI {
 
 		// Update cost and length display with current model
 		this.updateCostAndLength(conversationData, currentModel);
-
-		// Store the weighted cost for future estimates using current model
-		const tempConversation = Object.assign(Object.create(Object.getPrototypeOf(conversationData)), conversationData);
-		tempConversation.model = currentModel;
-		this.nextMessageCost = tempConversation.getWeightedFutureCost();
+		this.nextMessageCost = conversationData.getWeightedFutureCost(currentModel);
 
 		// Update estimate with new cost data
 		if (usageData) {
@@ -230,33 +226,26 @@ class ChatUI {
 			return;
 		}
 
-		// Create a temporary copy with overridden model if provided
-		let displayData = conversationData;
-		if (currentModel) {
-			displayData = Object.assign(Object.create(Object.getPrototypeOf(conversationData)), conversationData);
-			displayData.model = currentModel;
-		}
-
-		const lengthColor = displayData.isLong() ? RED_WARNING : BLUE_HIGHLIGHT;
+		const lengthColor = conversationData.isLong() ? RED_WARNING : BLUE_HIGHLIGHT;
 
 		// Use green if cost was calculated with caching, otherwise use normal logic
 		let costColor;
-		if (displayData.isCurrentlyCached()) {
+		if (conversationData.isCurrentlyCached()) {
 			costColor = SUCCESS_GREEN;
 		} else {
-			costColor = displayData.isExpensive() ? RED_WARNING : BLUE_HIGHLIGHT;
+			costColor = conversationData.isExpensive() ? RED_WARNING : BLUE_HIGHLIGHT;
 		}
 
-		const weightedCost = displayData.getWeightedFutureCost();
+		const weightedCost = conversationData.getWeightedFutureCost(currentModel);
 
 		// Update individual displays
-		this.lengthDisplay.innerHTML = `Length: <span style="color: ${lengthColor}">${displayData.length.toLocaleString()}</span> tokens`;
+		this.lengthDisplay.innerHTML = `Length: <span style="color: ${lengthColor}">${conversationData.length.toLocaleString()}</span> tokens`;
 		this.costDisplay.innerHTML = `Cost: <span style="color: ${costColor}">${weightedCost.toLocaleString()}</span> credits`;
 
 		// Add cached indicator if conversation is currently cached
-		if (displayData.isCurrentlyCached()) {
-			this.lastCachedUntilTimestamp = displayData.conversationIsCachedUntil;
-			const timeInfo = displayData.getTimeUntilCacheExpires();
+		if (conversationData.isCurrentlyCached()) {
+			this.lastCachedUntilTimestamp = conversationData.conversationIsCachedUntil;
+			const timeInfo = conversationData.getTimeUntilCacheExpires();
 			this.cachedDisplay.innerHTML = `Cached for: <span class="ut-cached-time" style="color: ${SUCCESS_GREEN}">${timeInfo.minutes}m</span>`;
 		} else {
 			this.lastCachedUntilTimestamp = null;
@@ -272,7 +261,7 @@ class ChatUI {
 		setupTooltip(this.resetDisplay, this.tooltips.timer);
 		setupTooltip(this.usageDisplay, this.tooltips.usage)
 		// Set up cached tooltip if we have cached content
-		if (displayData.isCurrentlyCached()) {
+		if (conversationData.isCurrentlyCached()) {
 			setupTooltip(this.cachedDisplay, this.tooltips.cached);
 		}
 	}

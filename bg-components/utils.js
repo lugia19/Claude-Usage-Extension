@@ -88,7 +88,7 @@ async function RawLog(sender, ...args) {
 		return;
 	}
 
-	console.log(...args);
+	console.log("[UsageTracker]", ...args);
 
 	const timestamp = new Date().toLocaleString('default', {
 		hour: '2-digit',

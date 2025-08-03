@@ -7,7 +7,6 @@ class UIManager {
 		this.currentlyDisplayedModel = currModel;
 		this.sidebarUI = new SidebarUI(this);
 		this.chatUI = new ChatUI();
-		this.currentConversation = -1;
 		this.usageData = null;          // Changed from rawModelData
 		this.conversationData = null;
 	}
@@ -58,7 +57,8 @@ class UIManager {
 		const newModel = await getCurrentModel(200);
 		if (newModel && newModel !== this.currentlyDisplayedModel) {
 			// Just request data, no modelOverride needed
-			await sendBackgroundMessage({
+			await Log("Requesting data due to model change")
+			sendBackgroundMessage({
 				type: 'requestData',
 				conversationId: currConversation
 			});
@@ -68,7 +68,8 @@ class UIManager {
 		const cacheExpired = this.chatUI.updateCachedTime();
 		if (cacheExpired && currConversation) {
 			// Cache expired - request fresh data to update costs
-			await sendBackgroundMessage({
+			await Log("Cache expired, requesting data");
+			sendBackgroundMessage({
 				type: 'requestData',
 				conversationId: currConversation
 			});
@@ -85,13 +86,14 @@ class UIManager {
 		const newConversation = getConversationId();
 		const isHomePage = newConversation === null;
 
-		if (this.currentConversation !== newConversation && !isHomePage) {
+		if (this.conversationData?.conversationId !== newConversation && !isHomePage) {
 			// Just request, don't await response
-			await sendBackgroundMessage({
+			await Log("Conversation changed, requesting data for new conversation.");
+			sendBackgroundMessage({
 				type: 'requestData',
 				conversationId: newConversation
 			});
-			this.currentConversation = newConversation;
+			if (this.conversationData) this.conversationData.conversationId = newConversation;
 		}
 
 		// Update home page state if needed
@@ -99,7 +101,7 @@ class UIManager {
 			this.conversationData = null;
 			this.chatUI.updateEstimate();
 			this.chatUI.updateCostAndLength();
-			this.currentConversation = null;
+			this.conversationData = null; // Reset conversation data
 		}
 
 		// Check if the current usage data is expired
@@ -122,17 +124,6 @@ class UIManager {
 	}
 
 	async lowFrequencyUpdates() {
-		// Check for message limits
-		const messageLimitElement = document.querySelector(config.SELECTORS.USAGE_LIMIT_LINK);
-		if (messageLimitElement) {
-			const limitTextElement = messageLimitElement.closest('.text-text-400');
-			if (limitTextElement) {
-				await sendBackgroundMessage({
-					type: 'resetHit',
-					model: this.currentlyDisplayedModel
-				});
-			}
-		}
 		this.chatUI.updateResetTime();
 	}
 
@@ -160,13 +151,14 @@ class UIManager {
 
 		this.conversationData = ConversationData.fromJSON(conversationData);
 
-		// Update current model from conversation if available
+		// Update current model from conversation if available - disabled as it can cause bugs
 		/*if (this.conversationData?.model) {
 			this.currentlyDisplayedModel = this.conversationData.model;
 		}*/
 
 		// Update chat UI - cost/length AND estimate (since we have new cost data)
 		if (this.chatUI && this.conversationData) {
+			await Log("Updating conversation data:", this.conversationData);
 			await this.chatUI.updateConversationDisplay(this.conversationData, this.usageData, this.currentlyDisplayedModel);
 		}
 	}
@@ -285,8 +277,8 @@ async function initExtension() {
 	await ui.initialize();
 
 	// Don't await responses anymore
-	await sendBackgroundMessage({ type: 'requestData' });
-	await sendBackgroundMessage({ type: 'initOrg' });
+	sendBackgroundMessage({ type: 'requestData' });
+	sendBackgroundMessage({ type: 'initOrg' });
 	await Log('Initialization complete. Ready to track tokens.');
 }
 
