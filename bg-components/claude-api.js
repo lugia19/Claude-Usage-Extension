@@ -446,7 +446,7 @@ class ConversationAPI {
 
 	async getInfo(isNewMessage) {
 		const conversationData = await this.getData(true);
-		const cachingInfo = await this.getCachingInfo(conversationData, isNewMessage);
+		const cachingInfo = await this.getCachingInfo(isNewMessage);
 		if (!cachingInfo) return undefined;
 
 		const { currentTrunk, cacheCanBeWarm, cacheEndId, conversationIsCachedUntil } = cachingInfo;
