@@ -183,6 +183,7 @@ class FirebaseSyncManager {
 
 		this.isSyncingCapHits = true;
 		await Log("=== CAP HITS SYNC STARTING ===");
+
 		try {
 			// Group all entries by orgId
 			const groupedResets = {};
@@ -193,9 +194,10 @@ class FirebaseSyncManager {
 				}
 				groupedResets[orgId][key] = value;
 			}
+
 			// Sync each orgId's data to Firebase
 			for (const [orgId, resets] of Object.entries(groupedResets)) {
-				// Transform the data to use model:timestamp as keys
+				// Transform the data
 				const transformedResets = {};
 				for (const [_, resetData] of Object.entries(resets)) {
 					const newKey = `${resetData.model}:${resetData.reset_time}`;
@@ -208,20 +210,24 @@ class FirebaseSyncManager {
 						accurateCount: resetData.accurateCount
 					};
 				}
-				await Log("Transformed cap hits:", transformedResets)
 
 				const url = `${this.firebase_base_url}/users/${orgId}/cap_hits.json`;
-				await Log("Writing cap hits for orgId:", orgId);
 
+				// Use PATCH instead of PUT
 				const writeResponse = await fetch(url, {
-					method: 'PUT',
+					method: 'PATCH',  // ← Changed from PUT
 					body: JSON.stringify(transformedResets)
 				});
+
 				if (!writeResponse.ok) {
 					throw new Error(`Write failed! status: ${writeResponse.status}`);
 				}
 			}
-			await Log("=== CAP HITS SYNC COMPLETED SUCCESSFULLY ===");
+
+			// Clear the local map after successful sync
+			await tokenStorageManager.capHits.clear();  // ← Add this method to StoredMap
+
+			await Log("=== CAP HITS SYNC COMPLETED, LOCAL MAP CLEARED ===");
 		} catch (error) {
 			await Log("error", '=== CAP HITS SYNC FAILED ===');
 			await Log("error", 'Error details:', error);

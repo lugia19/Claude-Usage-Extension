@@ -38,7 +38,6 @@ const CONFIG = {
 		"USER_MENU_BUTTON": "button[data-testid=\"user-menu-button\"]",
 		"SIDEBAR_NAV": "nav.h-screen.flex",
 		"SIDEBAR_CONTAINER": ".overflow-y-auto.overflow-x-hidden.flex.flex-col.gap-4",
-		"USAGE_LIMIT_LINK": "a[href*=\"does-claude-pro-have-any-usage-limits\"]",
 		"CHAT_MENU": "[data-testid=\"chat-menu-trigger\"]",
 		"MODEL_SELECTOR": "[data-testid=\"model-selector-dropdown\"]",
 		"INIT_LOGIN_SCREEN": "button[data-testid=\"login-with-google\"]",
@@ -276,6 +275,11 @@ class StoredMap {
 			]);
 		}
 		return entries;
+	}
+
+	async clear() {
+		this.map.clear();
+		await setStorageValue(this.storageKey, []);
 	}
 }
 
