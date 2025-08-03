@@ -348,7 +348,7 @@ messageRegistry.register('rateLimitExceeded', async (message, sender, orgId) => 
 		const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
 		const tier = await api.getSubscriptionTier();
 
-		await tokenStorageManager.addReset(orgId, "Sonnet", tier)
+		await tokenStorageManager.addCapHit(orgId, "Sonnet", tier)
 			.catch(async err => await Log("error", 'Adding reset failed:', err));
 	}
 

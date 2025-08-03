@@ -382,7 +382,7 @@ class TokenStorageManager {
 				await Log("Usage data expired, resetting all models");
 				// Create fresh usage data with just a reset timestamp
 				const freshUsageData = new UsageData({
-					resetTimestamp: this.#getResetFromNow(new Date()).getTime(),
+					resetTimestamp: this.#getResetFromNow().getTime(),
 					usageCap: usageData.usageCap,
 					subscriptionTier: usageData.subscriptionTier
 				});
@@ -395,7 +395,7 @@ class TokenStorageManager {
 
 			// Initialize reset timestamp if it doesn't exist
 			if (!usageData.resetTimestamp) {
-				usageData.resetTimestamp = this.#getResetFromNow(new Date()).getTime();
+				usageData.resetTimestamp = this.#getResetFromNow().getTime();
 			}
 
 			// Add the tokens to the model
@@ -411,15 +411,15 @@ class TokenStorageManager {
 		}
 	}
 
-	#getResetFromNow(currentTime) {
-		const hourStart = new Date(currentTime);
+	#getResetFromNow() {
+		const hourStart = new Date();
 		hourStart.setMinutes(0, 0, 0);
 		const resetTime = new Date(hourStart);
 		resetTime.setHours(hourStart.getHours() + 5);
 		return resetTime;
 	}
 
-	async addReset(orgId, model, subscriptionTier) {
+	async addCapHit(orgId, model, subscriptionTier) {
 		await sleep(15000);
 		const usageData = await this.getUsageData(orgId, subscriptionTier);
 

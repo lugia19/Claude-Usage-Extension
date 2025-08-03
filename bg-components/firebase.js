@@ -186,28 +186,28 @@ class FirebaseSyncManager {
 
 		try {
 			// Group all entries by orgId
-			const groupedResets = {};
+			const groupedCapHits = {};
 			for (const [key, value] of (await tokenStorageManager.capHits.entries())) {
 				const orgId = key.split(':')[0];
-				if (!groupedResets[orgId]) {
-					groupedResets[orgId] = {};
+				if (!groupedCapHits[orgId]) {
+					groupedCapHits[orgId] = {};
 				}
-				groupedResets[orgId][key] = value;
+				groupedCapHits[orgId][key] = value;
 			}
 
 			// Sync each orgId's data to Firebase
-			for (const [orgId, resets] of Object.entries(groupedResets)) {
+			for (const [orgId, capHits] of Object.entries(groupedCapHits)) {
 				// Transform the data
-				const transformedResets = {};
-				for (const [_, resetData] of Object.entries(resets)) {
-					const newKey = `${resetData.model}:${resetData.reset_time}`;
-					transformedResets[newKey] = {
-						total: resetData.total,
-						reset_time: resetData.reset_time,
-						warning_time: resetData.warning_time,
-						model: resetData.model,
-						tier: resetData.tier,
-						accurateCount: resetData.accurateCount
+				const transformedCapHits = {};
+				for (const [_, capHitData] of Object.entries(capHits)) {
+					const newKey = `${capHitData.model}:${capHitData.reset_time}`;
+					transformedCapHits[newKey] = {
+						total: capHitData.total,
+						reset_time: capHitData.reset_time,
+						warning_time: capHitData.warning_time,
+						model: capHitData.model,
+						tier: capHitData.tier,
+						accurateCount: capHitData.accurateCount
 					};
 				}
 
@@ -216,7 +216,7 @@ class FirebaseSyncManager {
 				// Use PATCH instead of PUT
 				const writeResponse = await fetch(url, {
 					method: 'PATCH',  // ← Changed from PUT
-					body: JSON.stringify(transformedResets)
+					body: JSON.stringify(transformedCapHits)
 				});
 
 				if (!writeResponse.ok) {
