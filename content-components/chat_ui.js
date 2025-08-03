@@ -348,20 +348,15 @@ class ChatUI {
 		if (!usageData && this.lastResetTimestamp) {
 			// Convert timestamp to timeInfo format inline
 			const now = Date.now();
-			const diff = this.lastResetTimestamp - now;
-
-			timeInfo = diff <= 0
-				? { expired: true }
-				: {
-					expired: false,
-					hours: Math.floor(diff / (1000 * 60 * 60)),
-					minutes: Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-				};
+			timeInfo = {
+				timestamp: this.lastResetTimestamp,
+				expired: this.lastResetTimestamp <= now
+			};
 		} else if (usageData) {
 			if (usageData.resetTimestamp) {
 				this.lastResetTimestamp = usageData.resetTimestamp;
 			}
-			timeInfo = usageData.getTimeUntilReset();
+			timeInfo = usageData.getResetTimeInfo();
 		}
 
 		this.resetDisplay.innerHTML = getResetTimeHTML(timeInfo);

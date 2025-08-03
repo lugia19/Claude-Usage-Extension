@@ -39,18 +39,10 @@ export class UsageData {
 	}
 
 	// Get time until reset
-	getTimeUntilReset() {
-		if (!this.resetTimestamp) return null;
-
-		const now = Date.now();
-		const diff = this.resetTimestamp - now;
-
-		if (diff <= 0) return { expired: true, hours: 0, minutes: 0 };
-
+	getResetTimeInfo() {
 		return {
-			expired: false,
-			hours: Math.floor(diff / (1000 * 60 * 60)),
-			minutes: Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+			timestamp: this.resetTimestamp,
+			expired: this.resetTimestamp ? this.resetTimestamp <= Date.now() : false
 		};
 	}
 

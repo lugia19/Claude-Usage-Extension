@@ -242,17 +242,24 @@ async function setupRequestInterception(patterns) {
 function getResetTimeHTML(timeInfo) {
 	const prefix = 'Reset in: ';
 
-	if (!timeInfo) {
+	if (!timeInfo.timestamp || timeInfo.expired) {
 		return `${prefix}<span>Not set</span>`;
 	}
 
-	if (timeInfo.expired) {
-		return `${prefix}<span style="color: ${BLUE_HIGHLIGHT}">Pending...</span>`;
+	const now = Date.now();
+	const diff = timeInfo.timestamp - now;
+
+	// Convert to seconds and round to nearest minute
+	const totalMinutes = Math.round(diff / (1000 * 60));
+
+	if (totalMinutes === 0) {
+		return `${prefix}<span style="color: ${BLUE_HIGHLIGHT}"><1m</span>`;
 	}
 
-	const timeString = timeInfo.hours > 0
-		? `${timeInfo.hours}h ${timeInfo.minutes}m`
-		: `${timeInfo.minutes}m`;
+	const hours = Math.floor(totalMinutes / 60);
+	const minutes = totalMinutes % 60;
+
+	const timeString = hours > 0 ? `${hours}h ${minutes}m` : `${totalMinutes}m`;
 
 	return `${prefix}<span style="color: ${BLUE_HIGHLIGHT}">${timeString}</span>`;
 }

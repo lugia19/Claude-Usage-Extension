@@ -148,7 +148,7 @@ class UsageSection {
 	}
 
 	updateResetTime(usageData) {
-		const timeInfo = usageData.getTimeUntilReset();
+		const timeInfo = usageData.getResetTimeInfo();
 		this.resetTimeDisplay.innerHTML = getResetTimeHTML(timeInfo);
 	}
 }
