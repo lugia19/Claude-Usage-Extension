@@ -66,7 +66,7 @@ class ProgressBar {
 
 		this.container.appendChild(this.bar);
 		document.body.appendChild(this.tooltip);
-		setupTooltip(this.container, this.tooltip, { topOffset: 20 });
+		setupTooltip(this.container, this.tooltip, { topOffset: 10 });
 	}
 
 	updateProgress(total, maxTokens) {
@@ -281,10 +281,10 @@ class SidebarUI {
 
 	buildDesktopFooter() {
 		const footer = document.createElement('div');
-		footer.className = 'ut-desktop-footer ut-sidebar-footer mt-3';
+		footer.className = 'ut-desktop-footer ut-sidebar-footer mt-1';
 
 		const link = document.createElement('a');
-		link.href = 'https://github.com/your-repo/desktop-version'; // Replace with your actual URL
+		link.href = 'https://github.com/lugia19/claude-webext-patcher';
 		link.target = '_blank';
 		link.className = 'ut-link hover:text-text-200';
 		link.style.color = BLUE_HIGHLIGHT;

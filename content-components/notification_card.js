@@ -223,7 +223,7 @@ class VersionNotificationCard extends FloatingCard {
 		footer.className = 'ut-desktop-footer';
 
 		const link = document.createElement('a');
-		link.href = 'https://github.com/your-repo/desktop-version'; // Replace with your actual URL
+		link.href = 'https://github.com/lugia19/claude-webext-patcher';
 		link.target = '_blank';
 		link.className = 'ut-link';
 		link.style.color = BLUE_HIGHLIGHT;
