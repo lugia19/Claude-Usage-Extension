@@ -259,7 +259,7 @@ class SidebarUI {
 		const content = document.createElement('div');
 		content.className = 'flex min-h-0 flex-col pl-2';
 		content.style.paddingRight = "0.25rem"
-		
+
 		// Container for usage section
 		const sectionsContainer = document.createElement('ul');
 		sectionsContainer.className = '-mx-1.5 flex flex-1 flex-col px-1.5 gap-px';
@@ -269,7 +269,29 @@ class SidebarUI {
 
 		content.appendChild(sectionsContainer);
 
+		// Add desktop version footer if not in Electron
+		const isElectron = await sendBackgroundMessage({ type: 'isElectron' });
+		if (!isElectron) {
+			const footer = this.buildDesktopFooter();
+			content.appendChild(footer);
+		}
+
 		return content;
+	}
+
+	buildDesktopFooter() {
+		const footer = document.createElement('div');
+		footer.className = 'ut-desktop-footer ut-sidebar-footer mt-3';
+
+		const link = document.createElement('a');
+		link.href = 'https://github.com/your-repo/desktop-version'; // Replace with your actual URL
+		link.target = '_blank';
+		link.className = 'ut-link hover:text-text-200';
+		link.style.color = BLUE_HIGHLIGHT;
+		link.textContent = '💻 Desktop version available';
+
+		footer.appendChild(link);
+		return footer;
 	}
 
 	async updateProgress(usageData) {

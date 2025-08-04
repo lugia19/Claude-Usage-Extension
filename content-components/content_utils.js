@@ -178,18 +178,21 @@ function isMobileView() {
 }
 
 // Fetch interception functions
-async function initializeFetch() {
-	const patterns = await browser.runtime.sendMessage({
-		type: 'needsMonkeypatching'
-	});
-
+async function initializeInjections() {
 	// Always inject rate limit monitoring
 	await setupRateLimitMonitoring();
-
-	// Conditionally inject request/response interception
-	if (patterns) {
-		await setupRequestInterception(patterns);
+	const isElectron = await browser.runtime.sendMessage({ type: 'isElectron' });
+	if (isElectron) {
+		const patterns = await browser.runtime.sendMessage({
+			type: 'getMonkeypatchPatterns'
+		});
+		// Conditionally inject request/response interception
+		if (patterns) {
+			await setupRequestInterception(patterns);
+			await setupElectronEventListeners();
+		}
 	}
+
 }
 
 async function setupRateLimitMonitoring() {
@@ -239,10 +242,37 @@ async function setupRequestInterception(patterns) {
 	(document.head || document.documentElement).appendChild(script);
 }
 
+async function setupElectronEventListeners() {
+	// Electron tab activity listeners
+	window.addEventListener('electronTabActivated', async (event) => {
+		await Log("Electron tab activated", event.detail);
+		browser.runtime.sendMessage({
+			type: 'electronTabActivated',
+			details: event.detail
+		});
+	});
+
+	window.addEventListener('electronTabDeactivated', async (event) => {
+		await Log("Electron tab deactivated", event.detail);
+		browser.runtime.sendMessage({
+			type: 'electronTabDeactivated',
+			details: event.detail
+		});
+	});
+
+	window.addEventListener('electronTabRemoved', async (event) => {
+		await Log("Electron tab removed", event.detail);
+		browser.runtime.sendMessage({
+			type: 'electronTabRemoved',
+			details: event.detail
+		});
+	});
+}
+
 function getResetTimeHTML(timeInfo) {
 	const prefix = 'Reset in: ';
 
-	if (!timeInfo.timestamp || timeInfo.expired) {
+	if (!timeInfo || !timeInfo.timestamp || timeInfo.expired) {
 		return `${prefix}<span>Not set</span>`;
 	}
 

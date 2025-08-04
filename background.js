@@ -92,8 +92,9 @@ if (browser.contextMenus) {
 	});
 }
 
-// WebRequest listeners
+
 if (!isElectron) {
+	// WebRequest listeners
 	browser.webRequest.onBeforeRequest.addListener(
 		(details) => runOnceInitialized(onBeforeRequestHandler, [details]),
 		{ urls: INTERCEPT_PATTERNS.onBeforeRequest.urls },
@@ -156,6 +157,18 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 				});
 			} catch (error) {
 				await Log("error", "Failed to create notification:", error);
+			}
+		} else if (isElectron) {
+			// Send notification request to active Claude tab
+			const tabs = await browser.tabs.query({ url: "*://claude.ai/*", active: true });
+			if (tabs.length > 0) {
+				await sendTabMessage(tabs[0].id, {
+					type: 'createElectronNotification',
+					options: {
+						title: 'Claude Usage Reset',
+						message: 'Your Claude usage limit has been reset!'
+					}
+				});
 			}
 		}
 		const orgId = alarm.name.split('_')[1];
@@ -415,7 +428,9 @@ messageRegistry.register('setCapModifier', async (message) => {
 	return true;
 });
 
-messageRegistry.register('needsMonkeypatching', () => isElectron ? INTERCEPT_PATTERNS : false);
+messageRegistry.register('isElectron', () => isElectron);
+messageRegistry.register('getMonkeypatchPatterns', () => isElectron ? INTERCEPT_PATTERNS : false);
+
 async function openDebugPage() {
 	if (browser.tabs?.create) {
 		browser.tabs.create({
@@ -426,6 +441,22 @@ async function openDebugPage() {
 	return 'fallback';
 }
 messageRegistry.register(openDebugPage);
+
+messageRegistry.register('electronTabActivated', (message, sender) => {
+    updateSyncAlarmIntervalAndFetchData(sender.tab.id);
+    return true;
+});
+
+messageRegistry.register('electronTabDeactivated', (message, sender) => {
+    updateSyncAlarmIntervalAndFetchData(sender.tab.id);
+    return true;
+});
+
+messageRegistry.register('electronTabRemoved', (message, sender) => {
+    updateSyncAlarmIntervalAndFetchData(sender.tab.id, true);
+    return true;
+});
+
 
 messageRegistry.register('checkAndResetExpired', async (message, sender, orgId) => {
 	await Log(`UI triggered reset check for org ${orgId}`);

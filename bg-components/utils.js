@@ -145,7 +145,7 @@ async function containerFetch(url, options = {}, cookieStoreId = null) {
 async function addContainerFetchListener() {
 	if (isElectron) return;
 	const stores = await browser.cookies.getAllCookieStores();
-	const isFirefoxContainers = stores[0].id === "firefox-default";
+	const isFirefoxContainers = stores[0]?.id === "firefox-default";
 
 	if (isFirefoxContainers) {
 		await Log("We're in firefox with containers, registering blocking listener...");

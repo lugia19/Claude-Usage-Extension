@@ -16,18 +16,18 @@ function makeDraggable(element, dragHandle = null) {
 	function handleDragStart(e) {
 		// Only start dragging if we're not already dragging
 		if (isDragging) return;
-		
+
 		isDragging = true;
 		pointerId = e.pointerId;
-		
+
 		// Capture the pointer to this element
 		dragElement.setPointerCapture(e.pointerId);
-		
+
 		initialX = e.clientX - element.offsetLeft;
 		initialY = e.clientY - element.offsetTop;
-		
+
 		dragElement.style.cursor = 'grabbing';
-		
+
 		// Prevent text selection during drag
 		e.preventDefault();
 	}
@@ -53,11 +53,11 @@ function makeDraggable(element, dragHandle = null) {
 
 	function handleDragEnd(e) {
 		if (e.pointerId !== pointerId) return;
-		
+
 		isDragging = false;
 		pointerId = null;
 		dragElement.style.cursor = dragHandle ? 'move' : 'grab';
-		
+
 		// Release the pointer capture
 		dragElement.releasePointerCapture(e.pointerId);
 	}
@@ -70,7 +70,7 @@ function makeDraggable(element, dragHandle = null) {
 
 	// Set initial cursor style
 	dragElement.style.cursor = dragHandle ? 'move' : 'grab';
-	
+
 	// Prevent touch scrolling when dragging
 	dragElement.style.touchAction = 'none';
 
@@ -208,8 +208,29 @@ class VersionNotificationCard extends FloatingCard {
 		if (patchContainer) this.element.appendChild(patchContainer);
 		this.element.appendChild(patchNotesLink);
 		this.element.appendChild(kofiButton);
+
+		this.addDesktopFooter();
+
 		this.addCloseButton();
 		this.makeCardDraggable(dragHandle);
+	}
+
+	async addDesktopFooter() {
+		const isElectron = await sendBackgroundMessage({ type: 'isElectron' });
+		if (isElectron) return;
+
+		const footer = document.createElement('div');
+		footer.className = 'ut-desktop-footer';
+
+		const link = document.createElement('a');
+		link.href = 'https://github.com/your-repo/desktop-version'; // Replace with your actual URL
+		link.target = '_blank';
+		link.className = 'ut-link';
+		link.style.color = BLUE_HIGHLIGHT;
+		link.textContent = 'Get the desktop version →';
+
+		footer.appendChild(link);
+		this.element.appendChild(footer);
 	}
 }
 

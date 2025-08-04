@@ -213,3 +213,15 @@
 .ut-select-text {
 	user-select: text;
 }
+
+.ut-desktop-footer {
+    font-size: 0.75rem;
+    color: var(--text-400);
+    border-top: 1px solid var(--border-400);
+    text-align: center;
+}
+
+.ut-desktop-footer.ut-sidebar-footer {
+    text-align: left;
+    /*padding: 0 0.5rem 0.5rem 0.5rem;*/
+}

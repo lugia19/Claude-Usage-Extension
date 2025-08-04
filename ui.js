@@ -1,4 +1,4 @@
-/* global UsageData, ConversationData, SidebarUI, ChatUI, NotificationCard, sendBackgroundMessage, config:writable, getConversationId, getCurrentModel, findSidebarContainers, Log, ui:writable, waitForElement, sleep, initializeFetch */
+/* global UsageData, ConversationData, SidebarUI, ChatUI, NotificationCard, sendBackgroundMessage, config:writable, getConversationId, getCurrentModel, findSidebarContainers, Log, ui:writable, waitForElement, sleep, initializeInjections */
 'use strict';
 
 // Main UI Manager
@@ -206,6 +206,12 @@ browser.runtime.onMessage.addListener(async (message) => {
 
 		return Promise.resolve({ styleId });
 	}
+
+	if (message.type === 'createElectronNotification') {
+		const CUT_NOTIFICATION_PREFIX = 'CUT_NOTIFICATION:';
+		console.log(CUT_NOTIFICATION_PREFIX + JSON.stringify(message.options));
+		return Promise.resolve(true);
+	}
 });
 
 // Style injection
@@ -271,7 +277,7 @@ async function initExtension() {
 	await Log('We\'re unique, initializing Chat Token Counter...');
 
 	await Log("Initializing fetch...")
-	await initializeFetch();
+	await initializeInjections();
 
 	ui = new UIManager(await getCurrentModel());
 	await ui.initialize();
