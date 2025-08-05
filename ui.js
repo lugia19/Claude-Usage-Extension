@@ -56,15 +56,19 @@ class UIManager {
 		const currConversation = getConversationId();
 		const newModel = await getCurrentModel(200);
 		if (newModel && newModel !== this.currentlyDisplayedModel) {
-			// Just request data, no modelOverride needed
-			await Log("Requesting data due to model change")
-			sendBackgroundMessage({
-				type: 'requestData',
-				conversationId: currConversation
-			});
+			await Log("Model changed, updating UI locally");
 			this.currentlyDisplayedModel = newModel;
-		}
 
+			// Update the UI displays with the new model without requesting data
+			if (this.usageData) {
+				await this.chatUI.updateUsageDisplay(this.usageData, this.currentlyDisplayedModel);
+			}
+
+			if (this.conversationData && this.usageData) {
+				await this.chatUI.updateConversationDisplay(this.conversationData, this.usageData, this.currentlyDisplayedModel);
+			}
+		}
+		
 		const cacheExpired = this.chatUI.updateCachedTime();
 		if (cacheExpired && currConversation) {
 			// Cache expired - request fresh data to update costs
@@ -93,7 +97,11 @@ class UIManager {
 				type: 'requestData',
 				conversationId: newConversation
 			});
-			if (this.conversationData) this.conversationData.conversationId = newConversation;
+			if (this.conversationData) {
+				this.conversationData.conversationId = newConversation;
+			} else {
+				this.conversationData = new ConversationData({ conversationId: newConversation });
+			}
 		}
 
 		// Update home page state if needed
