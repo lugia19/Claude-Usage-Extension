@@ -124,7 +124,7 @@ export class UsageData {
 
 		// If both expired, return null
 		if (localExpired && remoteExpired) {
-			return null;
+			return new UsageData();
 		}
 
 		// If one is expired, return the other
