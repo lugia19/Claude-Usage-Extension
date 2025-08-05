@@ -52,7 +52,15 @@ async function Log(...args) {
 		return;
 	}
 
-	console.log("[UsageTracker]", ...args);
+	if (level === "debug") {
+		console.log("[UsageTracker]", ...args);
+	} else if (level === "warn") {
+		console.warn("[UsageTracker]", ...args);
+	} else if (level === "error") {
+		console.error("[UsageTracker]", ...args);
+	} else {
+		console.log("[UsageTracker]", ...args);
+	}
 
 	const timestamp = new Date().toLocaleString('default', {
 		hour: '2-digit',

@@ -445,6 +445,7 @@ class ConversationAPI {
 	}
 
 	async getInfo(isNewMessage) {
+		await Log("API: Requesting information for conversation:", this.conversationId);
 		const conversationData = await this.getData(true);
 		const cachingInfo = await this.getCachingInfo(isNewMessage);
 		if (!cachingInfo) return undefined;
