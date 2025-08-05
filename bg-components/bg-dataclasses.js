@@ -118,25 +118,28 @@ export class UsageData {
 	}
 
 	static merge(localUsageData, remoteUsageData) {
-		const currentTime = Date.now();
+		// Check which data is still valid
+		const localExpired = localUsageData.isExpired();
+		const remoteExpired = remoteUsageData.isExpired();
 
-		// Determine which reset timestamp to use
-		let mergedResetTimestamp;
-		if (!remoteUsageData.resetTimestamp ||
-			(localUsageData.resetTimestamp && localUsageData.resetTimestamp > remoteUsageData.resetTimestamp)) {
-			mergedResetTimestamp = localUsageData.resetTimestamp;
-		} else {
-			mergedResetTimestamp = remoteUsageData.resetTimestamp;
+		// If both expired, return null
+		if (localExpired && remoteExpired) {
+			return null;
 		}
 
-		// If the merged reset timestamp is in the past, return empty data
-		if (mergedResetTimestamp && mergedResetTimestamp < currentTime) {
-			return new UsageData({
-				resetTimestamp: mergedResetTimestamp,
-				usageCap: localUsageData.usageCap,
-				subscriptionTier: localUsageData.subscriptionTier
-			});
+		// If one is expired, return the other
+		if (localExpired) {
+			return remoteUsageData;
 		}
+		if (remoteExpired) {
+			return localUsageData;
+		}
+
+		// Both are valid, merge them
+		const mergedResetTimestamp = Math.max(
+			localUsageData.resetTimestamp || 0,
+			remoteUsageData.resetTimestamp || 0
+		);
 
 		// Merge model data
 		const mergedModelData = {};
