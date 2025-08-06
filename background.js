@@ -30,7 +30,9 @@ const INTERCEPT_PATTERNS = {
 };
 
 //#region Variable declarations
-let processingQueue = Promise.resolve();
+let processingLock = null;  // Unix timestamp or null
+const pendingTasks = [];
+const LOCK_TIMEOUT = 30000;  // 30 seconds - if a task takes longer, something's wrong
 let pendingRequests;
 let capModifiers;
 let scheduledNotifications;
@@ -758,28 +760,59 @@ async function onBeforeRequestHandler(details) {
 }
 
 async function onCompletedHandler(details) {
-	await Log("Intercepted response:", details.url);
-	if (details.method === "GET" &&
-		details.url.includes("/chat_conversations/") &&
-		details.url.includes("tree=True") &&
-		details.url.includes("render_all_tools=true")) {
-		await Log("Response recieved - URL:", details.url);
-		processingQueue = processingQueue.then(async () => {
-			const urlParts = details.url.split('/');
-			const orgId = urlParts[urlParts.indexOf('organizations') + 1];
-			await tokenStorageManager.addOrgId(orgId);
-			const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
-
-			const key = `${orgId}:${conversationId}`;
-			const result = await processResponse(orgId, conversationId, key, details);
-
-			if (result && await pendingRequests.has(key)) {
-				await pendingRequests.delete(key);
-			}
-		});
-	}
+    if (details.method === "GET" &&
+        details.url.includes("/chat_conversations/") &&
+        details.url.includes("tree=True") &&
+        details.url.includes("render_all_tools=true")) {
+        
+        pendingTasks.push(async () => {
+            const urlParts = details.url.split('/');
+            const orgId = urlParts[urlParts.indexOf('organizations') + 1];
+            await tokenStorageManager.addOrgId(orgId);
+            const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
+            
+            const key = `${orgId}:${conversationId}`;
+            const result = await processResponse(orgId, conversationId, key, details);
+            
+            if (result && await pendingRequests.has(key)) {
+                await pendingRequests.delete(key);
+            }
+        });
+        
+        processNextTask();
+    }
 }
 
+async function processNextTask() {
+    // Check if already processing
+    if (processingLock) {
+        const lockAge = Date.now() - processingLock;
+        if (lockAge < LOCK_TIMEOUT) {
+            return;  // Still legitimately processing
+        }
+        // Lock is stale, force clear it
+        await Log("warn", `Stale processing lock detected (${lockAge}ms old), clearing`);
+    }
+    
+    if (pendingTasks.length === 0) return;
+    
+    processingLock = Date.now();
+    const task = pendingTasks.shift();
+    
+    try {
+        await task();
+    } catch (error) {
+        await Log("error", "Task processing failed:", error);
+    } finally {
+        // ALWAYS clear the lock, no matter what
+        processingLock = null;
+        
+        // Process next task if any
+        if (pendingTasks.length > 0) {
+            processNextTask();  // Not awaited
+        }
+    }
+}
 //#endregion
 
 //#region Variable fill in and initialization
