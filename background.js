@@ -49,6 +49,56 @@ function runOnceInitialized(fn, args) {
 }
 //#endregion
 
+// Temporary telemetry to try and identify the memory leak. Only works if debug mode is enabled.
+const functionCallCounts = new Map();
+const SUSPICIOUS_THRESHOLD = 10000;
+let alertSent = false;
+
+async function trackCall(functionName) {
+    const debugUntil = await getStorageValue('debug_mode_until');
+    const now = Date.now();
+    
+    if ((!debugUntil || debugUntil <= now) && !FORCE_DEBUG) {
+        return;
+    }
+    
+    const count = (functionCallCounts.get(functionName) || 0) + 1;
+    functionCallCounts.set(functionName, count);
+    
+    // Check total across all functions
+    let totalCalls = 0;
+    for (const [_, funcCount] of functionCallCounts) {
+        totalCalls += funcCount;
+    }
+    
+    if (totalCalls >= SUSPICIOUS_THRESHOLD && !alertSent) {
+		console.error("Total count", totalCalls, "has reached the suspicious threshold of", SUSPICIOUS_THRESHOLD);
+		console.error(functionCallCounts)
+        //alertSent = true;  // Only send once per service worker lifetime
+        //await sendTelemetryAlert();
+    }
+}
+
+
+// Send the entire map as one object
+async function sendTelemetryAlert() {
+    const alertId = crypto.randomUUID();
+    const url = `https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app/telemetry/${alertId}.json`;
+    
+    const report = {
+        counts: Object.fromEntries(functionCallCounts),  // The entire map
+        timestamp: Date.now(),
+        version: chrome.runtime.getManifest().version,
+        userAgent: navigator.userAgent,
+        trigger: 'threshold_exceeded'
+    };
+    
+    await fetch(url, {
+        method: 'PUT',
+        body: JSON.stringify(report)
+    });
+}
+
 //#region Listener setup (I hate MV3 - listeners must be initialized here)
 //Extension-related listeners:
 browser.runtime.onMessage.addListener(async (message, sender) => {
@@ -133,6 +183,7 @@ if (!isElectron) {
 //Alarm listeners
 browser.alarms.onAlarm.addListener(async (alarm) => {
 	await Log("Alarm triggered:", alarm.name);
+	trackCall("AlarmWakeup");
 
 	await tokenStorageManager.ensureOrgIds();
 
@@ -182,6 +233,7 @@ browser.alarms.onAlarm.addListener(async (alarm) => {
 
 //#region Alarms
 async function updateSyncAlarmIntervalAndFetchData(sourceTabId, fromRemovedEvent = false) {
+	trackCall("updateSyncAlarmIntervalAndFetchData");
 	const allClaudeTabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 	let state;
 	let desiredInterval;
@@ -267,6 +319,7 @@ if (!FORCE_DEBUG) {
 
 
 async function requestActiveOrgId(tab) {
+	trackCall("requestActiveOrgId");
 	if (typeof tab === "number") {
 		tab = await browser.tabs.get(tab);
 	}
@@ -303,6 +356,7 @@ async function requestActiveOrgId(tab) {
 
 // Updates all tabs with usage data only
 async function updateAllTabsWithUsage() {
+	trackCall("updateAllTabsWithUsage");
 	await Log("Updating all tabs with usage data");
 	const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 
@@ -329,6 +383,7 @@ async function updateAllTabsWithUsage() {
 
 // Updates a specific tab with conversation metrics
 async function updateTabWithConversationData(tabId, conversationData) {
+	trackCall("updateTabWithConversationData");
 	await Log("Updating tab with conversation metrics:", tabId, conversationData);
 
 	sendTabMessage(tabId, {
@@ -357,6 +412,7 @@ messageRegistry.register('resetOrgData', (message, sender, orgId) => firebaseSyn
 
 
 messageRegistry.register('rateLimitExceeded', async (message, sender, orgId) => {
+	trackCall("RateLimitExceeded");
 	// Only add reset if we actually exceeded the limit
 	if (message?.detail?.type === 'exceeded_limit') {
 		await Log(`Rate limit exceeded for org ${orgId}, adding reset`);
@@ -472,6 +528,7 @@ messageRegistry.register('checkAndResetExpired', async (message, sender, orgId) 
 
 // Complex handlers
 async function requestData(message, sender, orgId) {
+	trackCall("requestData");
 	const { conversationId } = message;
 	const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
 
@@ -529,6 +586,7 @@ async function interceptedResponse(message, sender) {
 messageRegistry.register(interceptedResponse);
 
 async function shouldShowDonationNotification(message) {
+	trackCall("shouldShowDonationNotification");
 	const { currentVersion } = message;
 	let previousVersion = await getStorageValue('previousVersion');
 
@@ -590,6 +648,7 @@ messageRegistry.register(shouldShowDonationNotification);
 
 // Main handler function
 async function handleMessageFromContent(message, sender) {
+	trackCall("handleMessageFromContent");
 	return messageRegistry.handle(message, sender);
 }
 //#endregion
@@ -598,6 +657,7 @@ async function handleMessageFromContent(message, sender) {
 
 //#region Network handling
 async function parseRequestBody(requestBody) {
+	trackCall("parseRequestBody");
 	if (!requestBody?.raw?.[0]?.bytes) return undefined;
 
 	// Handle differently based on source
@@ -629,6 +689,7 @@ async function parseRequestBody(requestBody) {
 }
 
 async function processResponse(orgId, conversationId, responseKey, details) {
+	trackCall("processResponse");
 	const tabId = details.tabId;
 	const api = new ClaudeAPI(details.cookieStoreId, orgId);
 	await Log("Processing response...")
@@ -699,6 +760,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 
 // Listen for message sending
 async function onBeforeRequestHandler(details) {
+	trackCall("onBeforeRequestHandler");
 	await Log("Intercepted request:", details.url);
 	await Log("Intercepted body:", details.requestBody);
 	if (details.method === "POST" &&
@@ -760,6 +822,7 @@ async function onBeforeRequestHandler(details) {
 }
 
 async function onCompletedHandler(details) {
+	trackCall("onCompletedHandler");
     if (details.method === "GET" &&
         details.url.includes("/chat_conversations/") &&
         details.url.includes("tree=True") &&
@@ -784,6 +847,7 @@ async function onCompletedHandler(details) {
 }
 
 async function processNextTask() {
+	trackCall("processNextTask");
     // Check if already processing
     if (processingLock) {
         const lockAge = Date.now() - processingLock;
