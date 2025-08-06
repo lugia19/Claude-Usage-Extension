@@ -74,8 +74,8 @@ async function trackCall(functionName) {
     if (totalCalls >= SUSPICIOUS_THRESHOLD && !alertSent) {
 		console.error("Total count", totalCalls, "has reached the suspicious threshold of", SUSPICIOUS_THRESHOLD);
 		console.error(functionCallCounts)
-        //alertSent = true;  // Only send once per service worker lifetime
-        //await sendTelemetryAlert();
+        alertSent = true;  // Only send once per service worker lifetime
+        await sendTelemetryAlert();
     }
 }
 
