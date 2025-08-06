@@ -477,6 +477,35 @@ class TokenStorageManager {
 			this.releaseLock(myLockerId);
 		}
 	}
+
+	async updateAuthoritativeTimestamp(orgId, timestampInSeconds) {
+		const lockerId = `auth_timestamp_${Date.now()}`;
+		const myLockerId = await this.acquireLock(lockerId);
+
+		try {
+			// Convert seconds to milliseconds
+			const timestampInMs = timestampInSeconds * 1000;
+
+			// Get current usage data - let tier default to claude_free, doesn't matter
+			const usageData = await this.getUsageData(orgId, 'claude_free', myLockerId);
+
+			// Update timestamp and mark as authoritative
+			usageData.resetTimestamp = timestampInMs;
+			usageData.isTimestampAuthoritative = true;
+
+			// Save back to storage
+			await setStorageValue(
+				getOrgStorageKey(orgId, 'models'),
+				usageData.toModelData()
+			);
+
+			await Log(`Updated authoritative timestamp for org ${orgId} to ${new Date(timestampInMs).toISOString()}`);
+
+			return true;
+		} finally {
+			this.releaseLock(myLockerId);
+		}
+	}
 }
 
 const tokenCounter = new TokenCounter();

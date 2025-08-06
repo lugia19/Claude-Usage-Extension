@@ -423,6 +423,16 @@ messageRegistry.register('rateLimitExceeded', async (message, sender, orgId) => 
 			.catch(async err => await Log("error", 'Adding reset failed:', err));
 	}
 
+	// Update with authoritative timestamp if we have one
+	if (message?.detail?.resetsAt) {
+		try {
+			await Log(`Updating authoritative timestamp for org ${orgId}: ${message?.detail?.resetsAt}`);
+			await tokenStorageManager.updateAuthoritativeTimestamp(orgId, message?.detail?.resetsAt);
+		} catch (error) {
+			await Log("error", "Failed to update authoritative timestamp:", error);
+		}
+	}
+
 	// Schedule notification if we have a timestamp (for both exceeded and nearing)
 	if (message?.detail?.resetsAt) {
 		try {

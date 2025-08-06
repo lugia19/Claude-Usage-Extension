@@ -13,6 +13,7 @@ export class UsageData {
 		this.resetTimestamp = data.resetTimestamp || null;
 		this.usageCap = data.usageCap || 0;
 		this.subscriptionTier = data.subscriptionTier || 'claude_free';
+		this.isTimestampAuthoritative = data.isTimestampAuthoritative || false;
 	}
 
 	// Calculate weighted total on demand
@@ -66,6 +67,7 @@ export class UsageData {
 		return new UsageData({
 			modelData: storageData || {},
 			resetTimestamp: storageData?.resetTimestamp,
+			isTimestampAuthoritative: storageData?.isTimestampAuthoritative || false,
 			usageCap: usageCap,
 			subscriptionTier: subscriptionTier
 		});
@@ -75,7 +77,8 @@ export class UsageData {
 		// Convert to the format used in browser.storage (Model data only)
 		return {
 			...this.modelData,
-			resetTimestamp: this.resetTimestamp
+			resetTimestamp: this.resetTimestamp,
+			isTimestampAuthoritative: this.isTimestampAuthoritative 
 		};
 	}
 
@@ -84,7 +87,8 @@ export class UsageData {
 			modelData: this.modelData,
 			resetTimestamp: this.resetTimestamp,
 			usageCap: this.usageCap,
-			subscriptionTier: this.subscriptionTier
+			subscriptionTier: this.subscriptionTier,
+			isTimestampAuthoritative: this.isTimestampAuthoritative 
 		};
 	}
 
@@ -104,7 +108,8 @@ export class UsageData {
 		// Create a consistent object for hashing
 		const hashObject = {
 			modelData: this.modelData,
-			resetTimestamp: this.resetTimestamp
+			resetTimestamp: this.resetTimestamp,
+			isTimestampAuthoritative: this.isTimestampAuthoritative // Include in hash
 		};
 
 		const hash = await crypto.subtle.digest(
@@ -136,10 +141,27 @@ export class UsageData {
 		}
 
 		// Both are valid, merge them
-		const mergedResetTimestamp = Math.max(
-			localUsageData.resetTimestamp || 0,
-			remoteUsageData.resetTimestamp || 0
-		);
+		// Determine which timestamp to use based on authoritative flag
+		let mergedResetTimestamp;
+		let mergedIsAuthoritative;
+		
+		if (remoteUsageData.isTimestampAuthoritative && !localUsageData.isTimestampAuthoritative) {
+			// Remote is authoritative, local is not - use remote
+			mergedResetTimestamp = remoteUsageData.resetTimestamp;
+			mergedIsAuthoritative = true;
+		} else if (localUsageData.isTimestampAuthoritative && !remoteUsageData.isTimestampAuthoritative) {
+			// Local is authoritative, remote is not - use local
+			mergedResetTimestamp = localUsageData.resetTimestamp;
+			mergedIsAuthoritative = true;
+		} else {
+			// Both are authoritative (shouldn't happen) or neither is - use max as before
+			mergedResetTimestamp = Math.max(
+				localUsageData.resetTimestamp || 0,
+				remoteUsageData.resetTimestamp || 0
+			);
+			// Keep authoritative flag if either had it
+			mergedIsAuthoritative = localUsageData.isTimestampAuthoritative || remoteUsageData.isTimestampAuthoritative;
+		}
 
 		// Merge model data
 		const mergedModelData = {};
@@ -161,6 +183,7 @@ export class UsageData {
 		return new UsageData({
 			modelData: mergedModelData,
 			resetTimestamp: mergedResetTimestamp,
+			isTimestampAuthoritative: mergedIsAuthoritative,
 			usageCap: Math.max(localUsageData.usageCap, remoteUsageData.usageCap),
 			subscriptionTier: localUsageData.subscriptionTier || remoteUsageData.subscriptionTier
 		});
