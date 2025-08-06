@@ -3,7 +3,7 @@
 
 	window.fetch = async function (...args) {
 		const response = await originalFetch.apply(this, args);
-
+		
 		if (response.headers.get('content-type')?.includes('event-stream')) {
 			const clone = response.clone();
 			const reader = clone.body.getReader();
@@ -15,8 +15,7 @@
 					if (done) break;
 
 					const chunk = decoder.decode(value);
-					const lines = chunk.split('\\n');
-
+					const lines = chunk.split(/\r\n|\r|\n/);
 					for (const line of lines) {
 						if (line.startsWith('data:')) {
 							const data = line.substring(5).trim();
