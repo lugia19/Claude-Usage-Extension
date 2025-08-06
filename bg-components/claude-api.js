@@ -390,20 +390,20 @@ class ConversationAPI {
 		// Cache determination
 		const referenceMessage = isNewMessage ? secondLatestAssistant : latestAssistant;
 		let cacheEndId = null;
-		let cacheCanBeWarm = false;
+		let conversationIsCached = false;
 		const cache_lifetime = 60 * 60 * 1000;
 
 		if (!referenceMessage) {
-			cacheCanBeWarm = false;
+			conversationIsCached = false;
 			await Log("Not enough messages to determine cache status - cache is cold");
 		} else {
 			const messageAge = Date.now() - Date.parse(referenceMessage.created_at);
 			if (messageAge >= cache_lifetime) {
-				cacheCanBeWarm = false;
+				conversationIsCached = false;
 				await Log("Reference message too old - cache is cold");
 			} else {
 				if (currentTrunkIds.has(referenceMessage.uuid)) {
-					cacheCanBeWarm = true;
+					conversationIsCached = true;
 					cacheEndId = referenceMessage.uuid;
 					await Log("Reference message in current trunk - cache available up to:", cacheEndId);
 				} else {
@@ -411,7 +411,7 @@ class ConversationAPI {
 					let currentId = referenceMessage.uuid;
 					while (currentId && currentId !== rootId) {
 						if (currentTrunkIds.has(currentId)) {
-							cacheCanBeWarm = true;
+							conversationIsCached = true;
 							cacheEndId = currentId;
 							await Log(`Cache ends at common ancestor: ${cacheEndId}`);
 							break;
@@ -420,7 +420,7 @@ class ConversationAPI {
 						currentId = rawMessage?.parent_message_uuid;
 					}
 
-					if (!cacheCanBeWarm) {
+					if (!conversationIsCached) {
 						await Log("No common ancestor found - cache is cold");
 					}
 				}
@@ -438,7 +438,7 @@ class ConversationAPI {
 
 		return {
 			currentTrunk,
-			cacheCanBeWarm,
+			conversationIsCached,
 			cacheEndId,
 			conversationIsCachedUntil
 		};
@@ -450,10 +450,10 @@ class ConversationAPI {
 		const cachingInfo = await this.getCachingInfo(isNewMessage);
 		if (!cachingInfo) return undefined;
 
-		const { currentTrunk, cacheCanBeWarm, cacheEndId, conversationIsCachedUntil } = cachingInfo;
+		const { currentTrunk, conversationIsCached, cacheEndId, conversationIsCachedUntil } = cachingInfo;
 
 		// Initialize token counting
-		let cacheIsWarm = cacheCanBeWarm;
+		let cacheIsActive = conversationIsCached;
 		let lengthTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
 		let costTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER;
 
@@ -479,7 +479,7 @@ class ConversationAPI {
 
 		for (let i = 0; i < currentTrunk.length; i++) {
 			const rawMessageData = currentTrunk[i];
-			const message = new MessageAPI(rawMessageData, cacheIsWarm, this.api);
+			const message = new MessageAPI(rawMessageData, cacheIsActive, this.api);
 
 			// Run both in parallel
 			const [fileTokens, syncTokens] = await Promise.all([
@@ -510,7 +510,7 @@ class ConversationAPI {
 
 			// Update cache status
 			if (message.uuid === cacheEndId) {
-				cacheIsWarm = false;
+				cacheIsActive = false;
 				await Log("Hit cache boundary at message:", message.uuid);
 			}
 		}
@@ -567,7 +567,7 @@ class ConversationAPI {
 			cost: Math.round(costTokens),
 			futureCost: futureCost,
 			model: conversationModelType,
-			costUsedCache: cacheIsWarm,
+			costUsedCache: conversationIsCached,
 			conversationIsCachedUntil: conversationIsCachedUntil,
 			projectUuid: conversationData.project_uuid,
 			settings: conversationData.settings,
