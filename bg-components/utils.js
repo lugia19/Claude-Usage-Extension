@@ -363,7 +363,7 @@ class MessageHandlerRegistry {
 		return handler(message, sender, orgId);
 	}
 }
-
+const messageRegistry = new MessageHandlerRegistry();
 export {
 	CONFIG,
 	isElectron,
@@ -378,5 +378,5 @@ export {
 	setStorageValue,
 	removeStorageValue,
 	sendTabMessage,
-	MessageHandlerRegistry
+	messageRegistry
 };

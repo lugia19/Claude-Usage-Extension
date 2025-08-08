@@ -72,7 +72,7 @@ class UsageData {
 		return {
 			...this.modelData,
 			resetTimestamp: this.resetTimestamp,
-			isTimestampAuthoritative: this.isTimestampAuthoritative 
+			isTimestampAuthoritative: this.isTimestampAuthoritative
 		};
 	}
 
@@ -82,7 +82,7 @@ class UsageData {
 			resetTimestamp: this.resetTimestamp,
 			usageCap: this.usageCap,
 			subscriptionTier: this.subscriptionTier,
-			isTimestampAuthoritative: this.isTimestampAuthoritative 
+			isTimestampAuthoritative: this.isTimestampAuthoritative
 		};
 	}
 
@@ -139,7 +139,7 @@ class UsageData {
 		// Determine which timestamp to use based on authoritative flag
 		let mergedResetTimestamp;
 		let mergedIsAuthoritative;
-		
+
 		if (remoteUsageData.isTimestampAuthoritative && !localUsageData.isTimestampAuthoritative) {
 			// Remote is authoritative, local is not - use remote
 			mergedResetTimestamp = remoteUsageData.resetTimestamp;

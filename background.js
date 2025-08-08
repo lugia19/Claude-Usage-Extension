@@ -1,6 +1,6 @@
 import './lib/browser-polyfill.min.js';
 import './lib/o200k_base.js';
-import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addContainerFetchListener, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, MessageHandlerRegistry } from './bg-components/utils.js';
+import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addContainerFetchListener, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './bg-components/utils.js';
 import { tokenStorageManager, tokenCounter, getTextFromContent } from './bg-components/tokenManagement.js';
 import { firebaseSyncManager } from './bg-components/firebase.js';
 import { UsageData, ConversationData } from './bg-components/bg-dataclasses.js';
@@ -395,7 +395,6 @@ async function updateTabWithConversationData(tabId, conversationData) {
 }
 
 // Create the registry
-const messageRegistry = new MessageHandlerRegistry();
 
 // Simple handlers with inline functions
 messageRegistry.register('getConfig', () => CONFIG);
