@@ -1,5 +1,5 @@
 // bg-dataclasses.js - ES6 module version for background/service worker
-// IMPORTANT: Keep in sync with ui-dataclasses.js
+// IMPORTANT: Keep in sync with ui_dataclasses.js
 
 import { CONFIG, sleep, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey } from './utils.js';
 

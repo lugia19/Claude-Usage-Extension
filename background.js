@@ -5,6 +5,7 @@ import { tokenStorageManager, tokenCounter, getTextFromContent } from './bg-comp
 import { firebaseSyncManager } from './bg-components/firebase.js';
 import { UsageData, ConversationData } from './bg-components/bg-dataclasses.js';
 import { ClaudeAPI, ConversationAPI } from './bg-components/claude-api.js';
+import { scheduleAlarm, clearAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
 
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
@@ -55,48 +56,48 @@ const SUSPICIOUS_THRESHOLD = 10000;
 let alertSent = false;
 
 async function trackCall(functionName) {
-    const debugUntil = await getStorageValue('debug_mode_until');
-    const now = Date.now();
-    
-    if ((!debugUntil || debugUntil <= now) && !FORCE_DEBUG) {
-        return;
-    }
-    
-    const count = (functionCallCounts.get(functionName) || 0) + 1;
-    functionCallCounts.set(functionName, count);
-    
-    // Check total across all functions
-    let totalCalls = 0;
-    for (const [_, funcCount] of functionCallCounts) {
-        totalCalls += funcCount;
-    }
-    
-    if (totalCalls >= SUSPICIOUS_THRESHOLD && !alertSent) {
+	const debugUntil = await getStorageValue('debug_mode_until');
+	const now = Date.now();
+
+	if ((!debugUntil || debugUntil <= now) && !FORCE_DEBUG) {
+		return;
+	}
+
+	const count = (functionCallCounts.get(functionName) || 0) + 1;
+	functionCallCounts.set(functionName, count);
+
+	// Check total across all functions
+	let totalCalls = 0;
+	for (const [_, funcCount] of functionCallCounts) {
+		totalCalls += funcCount;
+	}
+
+	if (totalCalls >= SUSPICIOUS_THRESHOLD && !alertSent) {
 		console.error("Total count", totalCalls, "has reached the suspicious threshold of", SUSPICIOUS_THRESHOLD);
 		console.error(functionCallCounts)
-        alertSent = true;  // Only send once per service worker lifetime
-        await sendTelemetryAlert();
-    }
+		alertSent = true;  // Only send once per service worker lifetime
+		await sendTelemetryAlert();
+	}
 }
 
 
 // Send the entire map as one object
 async function sendTelemetryAlert() {
-    const alertId = crypto.randomUUID();
-    const url = `https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app/telemetry/${alertId}.json`;
-    
-    const report = {
-        counts: Object.fromEntries(functionCallCounts),  // The entire map
-        timestamp: Date.now(),
-        version: chrome.runtime.getManifest().version,
-        userAgent: navigator.userAgent,
-        trigger: 'threshold_exceeded'
-    };
-    
-    await fetch(url, {
-        method: 'PUT',
-        body: JSON.stringify(report)
-    });
+	const alertId = crypto.randomUUID();
+	const url = `https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app/telemetry/${alertId}.json`;
+
+	const report = {
+		counts: Object.fromEntries(functionCallCounts),  // The entire map
+		timestamp: Date.now(),
+		version: chrome.runtime.getManifest().version,
+		userAgent: navigator.userAgent,
+		trigger: 'threshold_exceeded'
+	};
+
+	await fetch(url, {
+		method: 'PUT',
+		body: JSON.stringify(report)
+	});
 }
 
 //#region Listener setup (I hate MV3 - listeners must be initialized here)
@@ -181,54 +182,51 @@ if (!isElectron) {
 }
 
 //Alarm listeners
-browser.alarms.onAlarm.addListener(async (alarm) => {
-	await Log("Alarm triggered:", alarm.name);
+async function handleAlarm(alarmName) {
+	await Log("Alarm triggered:", alarmName);
 	trackCall("AlarmWakeup");
 
 	await tokenStorageManager.ensureOrgIds();
 
-	if (alarm.name === 'firebaseSync') {
+	if (alarmName === 'firebaseSync') {
 		await firebaseSyncManager.syncWithFirebase();
 	}
 
-	if (alarm.name === 'capHitsSync') {
+	if (alarmName === 'capHitsSync') {
 		await firebaseSyncManager.syncCapHits();
 	}
 
-	if (alarm.name.startsWith('notifyReset_')) {
+	if (alarmName.startsWith('notifyReset_')) {
 		// Handle notification alarm
-		await Log(`Notification alarm triggered: ${alarm.name}`);
+		await Log(`Notification alarm triggered: ${alarmName}`);
 
-		// Create notification
-		if (browser.notifications) {
-			try {
-				await browser.notifications.create({
-					type: 'basic',
-					iconUrl: browser.runtime.getURL('icon128.png'),
-					title: 'Claude Usage Reset',
-					message: 'Your Claude usage limit has been reset!'
-				});
-			} catch (error) {
-				await Log("error", "Failed to create notification:", error);
-			}
-		} else if (isElectron) {
-			// Send notification request to active Claude tab
-			const tabs = await browser.tabs.query({ url: "*://claude.ai/*", active: true });
-			if (tabs.length > 0) {
-				await sendTabMessage(tabs[0].id, {
-					type: 'createElectronNotification',
-					options: {
-						title: 'Claude Usage Reset',
-						message: 'Your Claude usage limit has been reset!'
-					}
-				});
-			}
+		// Create notification - works for both Chrome and Electron
+		try {
+			await createNotification({
+				type: 'basic',
+				iconUrl: browser.runtime.getURL('icon128.png'),
+				title: 'Claude Usage Reset',
+				message: 'Your Claude usage limit has been reset!'
+			});
+		} catch (error) {
+			await Log("error", "Failed to create notification:", error);
 		}
-		const orgId = alarm.name.split('_')[1];
+
+		const orgId = alarmName.split('_')[1];
 		await Log(`Notification sent`);
-		await firebaseSyncManager.triggerReset(orgId)
+		await firebaseSyncManager.triggerReset(orgId);
 	}
-});
+}
+
+if (chrome.alarms) {
+	chrome.alarms.onAlarm.addListener(alarm => handleAlarm(alarm.name));
+} else {
+	messageRegistry.register('electron-alarm', (msg) => {
+		handleAlarm(msg.name);
+	});
+}
+
+
 //#endregion
 
 //#region Alarms
@@ -253,13 +251,13 @@ async function updateSyncAlarmIntervalAndFetchData(sourceTabId, fromRemovedEvent
 	}
 	await Log("Current state:", state, "Desired interval:", desiredInterval);
 
-	const currentAlarm = await browser.alarms.get('firebaseSync');
+	const currentAlarm = await getAlarm('firebaseSync');
 	const isStateChange = !currentAlarm || currentAlarm.periodInMinutes !== desiredInterval;
 	//const wasActive = currentAlarm && currentAlarm.periodInMinutes === CONFIG.SYNC_INTERVALS.active;
 
 	if (isStateChange) {
-		await browser.alarms.clear('firebaseSync');
-		browser.alarms.create('firebaseSync', { periodInMinutes: desiredInterval });
+		await clearAlarm('firebaseSync');
+		await scheduleAlarm('firebaseSync', { periodInMinutes: desiredInterval });
 		await Log(`Updated firebaseSync alarm to ${desiredInterval} minutes (state: ${state})`);
 
 		// Trigger sync if we're changing to or from active state
@@ -272,7 +270,7 @@ async function updateSyncAlarmIntervalAndFetchData(sourceTabId, fromRemovedEvent
 	}
 }
 
-browser.alarms.create('capHitsSync', { periodInMinutes: 10 });
+scheduleAlarm('capHitsSync', { periodInMinutes: 10 });
 Log("Firebase alarms created.");
 //#endregion
 
@@ -323,20 +321,22 @@ async function requestActiveOrgId(tab) {
 	if (typeof tab === "number") {
 		tab = await browser.tabs.get(tab);
 	}
+	if (chrome.cookies) {
+		try {
+			const cookie = await browser.cookies.get({
+				name: 'lastActiveOrg',
+				url: tab.url,
+				storeId: tab.cookieStoreId
+			});
 
-	try {
-		const cookie = await browser.cookies.get({
-			name: 'lastActiveOrg',
-			url: tab.url,
-			storeId: tab.cookieStoreId
-		});
-
-		if (cookie?.value) {
-			return cookie.value;
+			if (cookie?.value) {
+				return cookie.value;
+			}
+		} catch (error) {
+			await Log("error", "Error getting cookie directly:", error);
 		}
-	} catch (error) {
-		await Log("error", "Error getting cookie directly:", error);
 	}
+
 
 	try {
 		const response = await sendTabMessage(tab.id, {
@@ -445,7 +445,7 @@ messageRegistry.register('rateLimitExceeded', async (message, sender, orgId) => 
 				const alarmName = `notifyReset_${orgId}_${timestampKey}`;
 
 				// Schedule the alarm for when the reset occurs
-				await browser.alarms.create(alarmName, {
+				await scheduleAlarm(alarmName, {
 					when: resetTime.getTime()
 				});
 
@@ -511,18 +511,18 @@ async function openDebugPage() {
 messageRegistry.register(openDebugPage);
 
 messageRegistry.register('electronTabActivated', (message, sender) => {
-    updateSyncAlarmIntervalAndFetchData(sender.tab.id);
-    return true;
+	updateSyncAlarmIntervalAndFetchData(sender.tab.id);
+	return true;
 });
 
 messageRegistry.register('electronTabDeactivated', (message, sender) => {
-    updateSyncAlarmIntervalAndFetchData(sender.tab.id);
-    return true;
+	updateSyncAlarmIntervalAndFetchData(sender.tab.id);
+	return true;
 });
 
 messageRegistry.register('electronTabRemoved', (message, sender) => {
-    updateSyncAlarmIntervalAndFetchData(sender.tab.id, true);
-    return true;
+	updateSyncAlarmIntervalAndFetchData(sender.tab.id, true);
+	return true;
 });
 
 
@@ -833,59 +833,59 @@ async function onBeforeRequestHandler(details) {
 
 async function onCompletedHandler(details) {
 	trackCall("onCompletedHandler");
-    if (details.method === "GET" &&
-        details.url.includes("/chat_conversations/") &&
-        details.url.includes("tree=True") &&
-        details.url.includes("render_all_tools=true")) {
-        
-        pendingTasks.push(async () => {
-            const urlParts = details.url.split('/');
-            const orgId = urlParts[urlParts.indexOf('organizations') + 1];
-            await tokenStorageManager.addOrgId(orgId);
-            const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
-            
-            const key = `${orgId}:${conversationId}`;
-            const result = await processResponse(orgId, conversationId, key, details);
-            
-            if (result && await pendingRequests.has(key)) {
-                await pendingRequests.delete(key);
-            }
-        });
-        
-        processNextTask();
-    }
+	if (details.method === "GET" &&
+		details.url.includes("/chat_conversations/") &&
+		details.url.includes("tree=True") &&
+		details.url.includes("render_all_tools=true")) {
+
+		pendingTasks.push(async () => {
+			const urlParts = details.url.split('/');
+			const orgId = urlParts[urlParts.indexOf('organizations') + 1];
+			await tokenStorageManager.addOrgId(orgId);
+			const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
+
+			const key = `${orgId}:${conversationId}`;
+			const result = await processResponse(orgId, conversationId, key, details);
+
+			if (result && await pendingRequests.has(key)) {
+				await pendingRequests.delete(key);
+			}
+		});
+
+		processNextTask();
+	}
 }
 
 async function processNextTask() {
 	trackCall("processNextTask");
-    // Check if already processing
-    if (processingLock) {
-        const lockAge = Date.now() - processingLock;
-        if (lockAge < LOCK_TIMEOUT) {
-            return;  // Still legitimately processing
-        }
-        // Lock is stale, force clear it
-        await Log("warn", `Stale processing lock detected (${lockAge}ms old), clearing`);
-    }
-    
-    if (pendingTasks.length === 0) return;
-    
-    processingLock = Date.now();
-    const task = pendingTasks.shift();
-    
-    try {
-        await task();
-    } catch (error) {
-        await Log("error", "Task processing failed:", error);
-    } finally {
-        // ALWAYS clear the lock, no matter what
-        processingLock = null;
-        
-        // Process next task if any
-        if (pendingTasks.length > 0) {
-            processNextTask();  // Not awaited
-        }
-    }
+	// Check if already processing
+	if (processingLock) {
+		const lockAge = Date.now() - processingLock;
+		if (lockAge < LOCK_TIMEOUT) {
+			return;  // Still legitimately processing
+		}
+		// Lock is stale, force clear it
+		await Log("warn", `Stale processing lock detected (${lockAge}ms old), clearing`);
+	}
+
+	if (pendingTasks.length === 0) return;
+
+	processingLock = Date.now();
+	const task = pendingTasks.shift();
+
+	try {
+		await task();
+	} catch (error) {
+		await Log("error", "Task processing failed:", error);
+	} finally {
+		// ALWAYS clear the lock, no matter what
+		processingLock = null;
+
+		// Process next task if any
+		if (pendingTasks.length > 0) {
+			processNextTask();  // Not awaited
+		}
+	}
 }
 //#endregion
 

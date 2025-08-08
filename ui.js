@@ -1,4 +1,4 @@
-/* global UsageData, ConversationData, SidebarUI, ChatUI, NotificationCard, sendBackgroundMessage, config:writable, getConversationId, getCurrentModel, findSidebarContainers, Log, ui:writable, waitForElement, sleep, initializeInjections */
+/* global UsageData, ConversationData, SidebarUI, ChatUI, NotificationCard, sendBackgroundMessage, config:writable, getConversationId, getCurrentModel, findSidebarContainers, Log, ui:writable, waitForElement, sleep, setupRateLimitMonitoring */
 'use strict';
 
 // Main UI Manager
@@ -68,7 +68,7 @@ class UIManager {
 				await this.chatUI.updateConversationDisplay(this.conversationData, this.usageData, this.currentlyDisplayedModel);
 			}
 		}
-		
+
 		const cacheExpired = this.chatUI.updateCachedTime();
 		if (cacheExpired && currConversation) {
 			// Cache expired - request fresh data to update costs
@@ -214,12 +214,6 @@ browser.runtime.onMessage.addListener(async (message) => {
 
 		return Promise.resolve({ styleId });
 	}
-
-	if (message.type === 'createElectronNotification') {
-		const CUT_NOTIFICATION_PREFIX = 'CUT_NOTIFICATION:';
-		console.log(CUT_NOTIFICATION_PREFIX + JSON.stringify(message.options));
-		return Promise.resolve(true);
-	}
 });
 
 // Style injection
@@ -285,7 +279,7 @@ async function initExtension() {
 	await Log('We\'re unique, initializing Chat Token Counter...');
 
 	await Log("Initializing fetch...")
-	await initializeInjections();
+	await setupRateLimitMonitoring();
 
 	ui = new UIManager(await getCurrentModel());
 	await ui.initialize();

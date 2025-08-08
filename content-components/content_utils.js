@@ -185,24 +185,6 @@ function isMobileView() {
 	return window.innerHeight > window.innerWidth;
 }
 
-// Fetch interception functions
-async function initializeInjections() {
-	// Always inject rate limit monitoring
-	await setupRateLimitMonitoring();
-	const isElectron = await browser.runtime.sendMessage({ type: 'isElectron' });
-	if (isElectron) {
-		const patterns = await browser.runtime.sendMessage({
-			type: 'getMonkeypatchPatterns'
-		});
-		// Conditionally inject request/response interception
-		if (patterns) {
-			await setupRequestInterception(patterns);
-			await setupElectronEventListeners();
-		}
-	}
-
-}
-
 async function setupRateLimitMonitoring() {
 	// Set up rate limit event listener
 	window.addEventListener('rateLimitExceeded', async (event) => {
@@ -250,32 +232,6 @@ async function setupRequestInterception(patterns) {
 	(document.head || document.documentElement).appendChild(script);
 }
 
-async function setupElectronEventListeners() {
-	// Electron tab activity listeners
-	window.addEventListener('electronTabActivated', async (event) => {
-		await Log("Electron tab activated", event.detail);
-		browser.runtime.sendMessage({
-			type: 'electronTabActivated',
-			details: event.detail
-		});
-	});
-
-	window.addEventListener('electronTabDeactivated', async (event) => {
-		await Log("Electron tab deactivated", event.detail);
-		browser.runtime.sendMessage({
-			type: 'electronTabDeactivated',
-			details: event.detail
-		});
-	});
-
-	window.addEventListener('electronTabRemoved', async (event) => {
-		await Log("Electron tab removed", event.detail);
-		browser.runtime.sendMessage({
-			type: 'electronTabRemoved',
-			details: event.detail
-		});
-	});
-}
 
 function getResetTimeHTML(timeInfo) {
 	const prefix = 'Reset in: ';

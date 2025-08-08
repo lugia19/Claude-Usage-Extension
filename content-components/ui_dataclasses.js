@@ -1,5 +1,5 @@
 /* global config */
-// ui-dataclasses.js - Global version for content scripts
+// ui_dataclasses.js - Global version for content scripts
 
 class UsageData {
 	constructor(data = {}) {
