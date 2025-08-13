@@ -11,7 +11,8 @@ async function findSidebarContainers() {
 	}
 
 	// Look for the main container that holds all sections
-	const mainContainer = sidebarNav.querySelector('.transition-all.duration-200.flex.flex-grow.flex-col.overflow-y-auto');
+	const containerWrapper = sidebarNav.querySelector('.flex.flex-grow.flex-col.overflow-y-auto')
+	const mainContainer = containerWrapper.querySelector('.transition-all.duration-200');
 	if (!mainContainer) {
 		await Log("error", 'Could not find main container in sidebar');
 		return null;
