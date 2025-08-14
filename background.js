@@ -293,25 +293,6 @@ async function logError(error) {
 	await Log("error", JSON.stringify(error.stack));
 }
 
-//Error logging
-if (!FORCE_DEBUG) {
-	if (typeof window != "undefined") {
-		window.addEventListener('error', async function (event) {
-			await logError(event.error);
-		});
-
-		window.addEventListener('unhandledrejection', async function (event) {
-			await logError(event.reason);
-		});
-	}
-
-
-	self.onerror = async function (message, source, lineno, colno, error) {
-		await logError(error);
-		return false;
-	};
-}
-
 
 //#endregion
 
