@@ -14,6 +14,10 @@ This extension helps you monitor how much of your Claude usage quota remains. It
 ### Firefox
 [![Mozilla Add-on](https://img.shields.io/amo/v/claude-usage-tracker.svg)](https://addons.mozilla.org/firefox/addon/claude-usage-tracker)
 
+### Desktop Client
+
+[MacOS/Windows installer](https://github.com/lugia19/Claude-WebExtension-Launcher/releases/latest)
+
 ## Features
 
 The extension tracks token usage from:
