@@ -111,7 +111,7 @@ class ClaudeAPI {
 		} else if (identifier === "claude_max") {
 			const orgData = await this.getRequest(`/organizations/${this.orgId}`);
 			await Log("Org data for tier check:", orgData);
-			if (orgData?.settings?.rate_limit_tier === "default_claude_max_20x") {
+			if (orgData?.rate_limit_tier === "default_claude_max_20x") {
 				subscriptionTier = "claude_max_20x";
 			} else {
 				subscriptionTier = "claude_max_5x";
