@@ -36,7 +36,7 @@ const CONFIG = {
 	"SELECTORS": {
 		"MODEL_PICKER": "[data-testid=\"model-selector-dropdown\"]",
 		"USER_MENU_BUTTON": "button[data-testid=\"user-menu-button\"]",
-		"SIDEBAR_NAV": "nav.h-screen.flex",
+		"SIDEBAR_NAV": "nav.flex",
 		"SIDEBAR_CONTAINER": ".overflow-y-auto.overflow-x-hidden.flex.flex-col.gap-4",
 		"CHAT_MENU": "[data-testid=\"chat-menu-trigger\"]",
 		"MODEL_SELECTOR": "[data-testid=\"model-selector-dropdown\"]",
