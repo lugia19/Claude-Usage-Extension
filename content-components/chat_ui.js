@@ -87,7 +87,7 @@ class ChatUI {
 
 	createTooltip(text) {
 		const tooltip = document.createElement('div');
-		tooltip.className = 'bg-bg-500 text-text-000 ut-tooltip';
+		tooltip.className = 'bg-bg-500 text-text-000 ut-tooltip font-normal font-ui';
 		tooltip.textContent = text;
 		tooltip.style.maxWidth = '400px';
 		tooltip.style.textAlign = 'left';

@@ -2,6 +2,8 @@
 
 Track your Claude.ai token usage across conversations with this browser extension.
 
+Also check out my other extension, [[Claude QoL](https://github.com/lugia19/Claude-QoL)] (includes summarizing, TTS, STT and way more).
+
 ## Overview
 
 This extension helps you monitor how much of your Claude usage quota remains. It calculates token consumption from various sources including uploaded files, project knowledge, chat history, and AI responses.

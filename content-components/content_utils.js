@@ -5,8 +5,7 @@ const BLUE_HIGHLIGHT = "#2c84db";
 const RED_WARNING = "#de2929";
 const SUCCESS_GREEN = "#22c55e";
 // Dynamic debug setting - will be loaded from storage
-let FORCE_DEBUG;
-
+let FORCE_DEBUG = true;
 // Load FORCE_DEBUG from storage and set up error handlers
 browser.storage.local.get('force_debug').then(result => {
 	FORCE_DEBUG = result.force_debug || false;

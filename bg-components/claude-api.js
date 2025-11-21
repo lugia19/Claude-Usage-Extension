@@ -52,7 +52,8 @@ class ClaudeAPI {
 
 		// Update cache if this is a new message
 		if (isNewMessage) {
-			await tokenStorageManager.projectCache.set(projectId, projectSize, 60 * 60 * 1000);
+
+			await tokenStorageManager.projectCache.set(projectId, projectSize, CONFIG.TOKEN_CACHING_DURATION_MS);
 		}
 
 		return {
@@ -391,7 +392,7 @@ class ConversationAPI {
 		const referenceMessage = isNewMessage ? secondLatestAssistant : latestAssistant;
 		let cacheEndId = null;
 		let conversationIsCached = false;
-		const cache_lifetime = 60 * 60 * 1000;
+		const cache_lifetime = CONFIG.TOKEN_CACHING_DURATION_MS;
 
 		if (!referenceMessage) {
 			conversationIsCached = false;

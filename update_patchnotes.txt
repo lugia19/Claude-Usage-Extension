@@ -1,4 +1,4 @@
 Changed caching time to 5m (Actually correct)
-I made a new extension! Check it out in the footer
+I made a new extension! Check it out!
 Features include: Summarizing, TTS, STT, text search, and more!
 Next major update (v5) is in the works, and will use the official metrics
