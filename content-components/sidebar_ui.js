@@ -275,6 +275,11 @@ class SidebarUI {
 		if (!isElectron) {
 			const footer = this.buildDesktopFooter();
 			content.appendChild(footer);
+
+			const qolFooter = this.buildQoLFooter();
+			if (qolFooter) {
+				content.appendChild(qolFooter);
+			}
 		}
 
 		return content;
@@ -290,6 +295,28 @@ class SidebarUI {
 		link.className = 'ut-link hover:text-text-200';
 		link.style.color = BLUE_HIGHLIGHT;
 		link.textContent = '💻 Desktop version available';
+
+		footer.appendChild(link);
+		return footer;
+	}
+
+	buildQoLFooter() {
+		// Check if Claude QoL extension is installed
+		const hasQoL = document.documentElement.hasAttribute('data-claude-qol-installed');
+		if (hasQoL) return null;
+
+		const footer = document.createElement('div');
+		footer.className = 'ut-desktop-footer ut-sidebar-footer mt-1';
+
+		const isChrome = !!window.chrome && (!!window.chrome.webstore || !!window.chrome.runtime);
+		const link = document.createElement('a');
+		link.href = isChrome
+			? 'https://chromewebstore.google.com/detail/claude-qol/dkdnancajokhfclpjpplkhlkbhaeejob'
+			: 'https://addons.mozilla.org/en-US/firefox/addon/claude-qol/';
+		link.target = '_blank';
+		link.className = 'ut-link hover:text-text-200';
+		link.style.color = BLUE_HIGHLIGHT;
+		link.textContent = '⚡ Check out the Claude QoL extension';
 
 		footer.appendChild(link);
 		return footer;

@@ -1,7 +1,7 @@
 {
 	"manifest_version": 3,
 	"name": "Claude Usage Tracker",
-	"version": "4.1.0",
+	"version": "4.1.1",
 	"description": "Helps you track your claude.ai usage caps based on tokens sent, and syncs across devices using firebase.",
 	"author": "lugia19",
 	"browser_specific_settings": {
@@ -54,7 +54,8 @@
 				"update_patchnotes.txt",
 				"tracker-styles.css",
 				"injections/rate-limit-watcher.js",
-				"injections/webrequest-polyfill.js"
+				"injections/webrequest-polyfill.js",
+				"qol-badge.png"
 			],
 			"matches": [
 				"<all_urls>"

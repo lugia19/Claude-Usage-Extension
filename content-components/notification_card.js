@@ -189,27 +189,62 @@ class VersionNotificationCard extends FloatingCard {
 		patchNotesLink.style.color = BLUE_HIGHLIGHT;
 		patchNotesLink.textContent = 'View full release notes';
 
-		const kofiButton = document.createElement('a');
-		kofiButton.href = 'https://ko-fi.com/R6R14IUBY';
-		kofiButton.target = '_blank';
-		kofiButton.className = 'ut-block ut-text-center';
-		kofiButton.style.marginTop = '10px';
+		// Check if this is the v4.1.1 update
+		const isV411Update = this.donationInfo.versionMessage.includes("to v4.1.1");
 
-		const kofiImg = document.createElement('img');
-		kofiImg.src = browser.runtime.getURL('kofi-button.png');
-		kofiImg.height = 36;
-		kofiImg.style.border = '0';
-		kofiImg.alt = 'Buy Me a Coffee at ko-fi.com';
-		kofiButton.appendChild(kofiImg);
-
-		// Assemble
+		// Assemble common parts
 		this.element.appendChild(dragHandle);
 		this.element.appendChild(message);
 		if (patchContainer) this.element.appendChild(patchContainer);
 		this.element.appendChild(patchNotesLink);
-		this.element.appendChild(kofiButton);
+
+		const hasQoL = document.documentElement.hasAttribute('data-claude-qol-installed');
+
+		// Add either GitHub button (for v4.1.1) or Ko-fi button
+		if (isV411Update && !hasQoL) {
+			const isChrome = !!window.chrome && (!!window.chrome.webstore || !!window.chrome.runtime);
+
+			const storeLink = document.createElement('a');
+			storeLink.href = isChrome
+				? 'https://chromewebstore.google.com/detail/claude-qol/dkdnancajokhfclpjpplkhlkbhaeejob'
+				: 'https://addons.mozilla.org/en-US/firefox/addon/claude-qol/';
+			storeLink.target = '_blank';
+			storeLink.className = 'ut-block ut-text-center';
+			storeLink.style.marginTop = '10px';
+
+			const storeImg = document.createElement('img');
+			storeImg.src = browser.runtime.getURL('qol-badge.png');
+			storeImg.height = 36; // Match Ko-fi button size
+			storeImg.style.border = '0';
+			storeImg.style.borderRadius = '4px'; // Rounded corners
+			storeImg.style.display = 'inline-block'; // Ensure proper centering
+			storeImg.alt = 'Get Claude QoL Extension';
+			storeLink.appendChild(storeImg);
+
+			this.element.appendChild(storeLink);
+		} else {
+			const kofiButton = document.createElement('a');
+			kofiButton.href = 'https://ko-fi.com/R6R14IUBY';
+			kofiButton.target = '_blank';
+			kofiButton.className = 'ut-block ut-text-center';
+			kofiButton.style.marginTop = '10px';
+
+			const kofiImg = document.createElement('img');
+			kofiImg.src = browser.runtime.getURL('kofi-button.png');
+			kofiImg.height = 36;
+			kofiImg.style.border = '0';
+			kofiImg.alt = 'Buy Me a Coffee at ko-fi.com';
+			kofiButton.appendChild(kofiImg);
+
+			this.element.appendChild(kofiButton);
+		}
 
 		this.addDesktopFooter();
+
+		// Only add QoL footer if NOT showing the big button
+		if (!isV411Update) {
+			this.addQoLFooter();
+		}
 
 		this.addCloseButton();
 		this.makeCardDraggable(dragHandle);
@@ -228,6 +263,28 @@ class VersionNotificationCard extends FloatingCard {
 		link.className = 'ut-link';
 		link.style.color = BLUE_HIGHLIGHT;
 		link.textContent = 'Get the desktop version →';
+
+		footer.appendChild(link);
+		this.element.appendChild(footer);
+	}
+
+	addQoLFooter() {
+		// Check if Claude QoL extension is installed
+		const hasQoL = document.documentElement.hasAttribute('data-claude-qol-installed');
+		if (hasQoL) return;
+
+		const footer = document.createElement('div');
+		footer.className = 'ut-desktop-footer';
+
+		const isChrome = !!window.chrome && (!!window.chrome.webstore || !!window.chrome.runtime);
+		const link = document.createElement('a');
+		link.href = isChrome
+			? 'https://chromewebstore.google.com/detail/claude-qol/dkdnancajokhfclpjpplkhlkbhaeejob'
+			: 'https://addons.mozilla.org/en-US/firefox/addon/claude-qol/';
+		link.target = '_blank';
+		link.className = 'ut-link';
+		link.style.color = BLUE_HIGHLIGHT;
+		link.textContent = 'Get Claude QoL extension →';
 
 		footer.appendChild(link);
 		this.element.appendChild(footer);

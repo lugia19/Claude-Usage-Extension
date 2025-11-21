@@ -1,3 +1,4 @@
-Caching/reset time bugfixes
-Performance improvements (Should you have issues with very high memory usage or crashes, PLEASE reach out on github!)
-Added support for Claude Desktop! (Check footer)
+Changed caching time to 5m (Actually correct)
+I made a new extension! Check it out in the footer
+Features include: Summarizing, TTS, STT, text search, and more!
+Next major update (v5) is in the works, and will use the official metrics
