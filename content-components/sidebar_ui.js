@@ -12,14 +12,15 @@ async function findSidebarContainers() {
 
 	// Look for the main container that holds all sections
 	const containerWrapper = sidebarNav.querySelector('.flex.flex-grow.flex-col.overflow-y-auto')
-	const mainContainer = containerWrapper.querySelector('.transition-all.duration-200');
+	const containers = containerWrapper.querySelectorAll('.transition-all.duration-200');
+	const mainContainer = containers[containers.length - 1].querySelector('.px-2.mt-4');
 	if (!mainContainer) {
 		await Log("error", 'Could not find main container in sidebar');
 		return null;
 	}
 
 	// Look for the Starred section
-	const starredSection = await waitForElement(mainContainer, 'div.flex.flex-col.mb-6', 5000);
+	const starredSection = await waitForElement(mainContainer, 'div.flex.flex-col.mb-4', 5000);
 	if (!starredSection) {
 		await Log("error", 'Could not find Starred section.');
 	}
@@ -216,13 +217,11 @@ class SidebarUI {
 
 	async buildHeader() {
 		const header = document.createElement('div');
-		header.className = 'ut-row ut-justify-between ut-sticky bg-gradient-to-b from-bg-200 from-50% to-bg-200/40 px-1.5';
-		header.style.paddingBottom = "0.5rem"
-		header.style.zIndex = 9999;
+		header.className = 'ut-row ut-justify-between';
 
 		const title = document.createElement('h3');
 		title.textContent = 'Usage';
-		title.className = 'text-text-300 flex items-center gap-1.5 text-xs select-none z-10';
+		title.className = 'text-text-500 pb-2 mt-1 text-xs select-none pl-2 pr-2';
 
 		const settingsButton = document.createElement('button');
 		settingsButton.className = 'ut-button ut-button-icon hover:bg-bg-400 hover:text-text-100';
