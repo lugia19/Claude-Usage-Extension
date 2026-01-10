@@ -1,6 +1,6 @@
 /* global config, Log, ProgressBar, findSidebarContainers, sendBackgroundMessage,
-   setupTooltip, getResetTimeHTML, waitForElement, sleep, isMobileView, UsageData,
-   RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, VersionNotificationCard, SettingsCard */
+   setupTooltip, getResetTimeHTML, sleep, isMobileView, UsageData,
+   RED_WARNING, BLUE_HIGHLIGHT */
 'use strict';
 
 // Usage section component for sidebar
@@ -122,8 +122,8 @@ class UsageUI {
 		// Build the chat area UI
 		this.buildChatUI();
 
-		// Check for version notification (temporary - will move to FloatingCards in Phase 3)
-		await this.checkVersionNotification();
+		// Dispatch version notification check event
+		this.checkVersionNotification();
 
 		this.uiReady = true;
 		await Log('UsageUI: Ready');
@@ -231,19 +231,12 @@ class UsageUI {
 			</svg>
 		`;
 
-		// Settings button click handler (will become event dispatch in Phase 3)
-		settingsButton.addEventListener('click', async () => {
-			if (SettingsCard.currentInstance) {
-				SettingsCard.currentInstance.remove();
-			} else {
-				const buttonRect = settingsButton.getBoundingClientRect();
-				const settingsCard = new SettingsCard();
-				await settingsCard.build();
-				settingsCard.show({
-					top: buttonRect.top - 5,
-					left: buttonRect.right + 5
-				});
-			}
+		// Settings button click - dispatch event to FloatingCardsUI
+		settingsButton.addEventListener('click', () => {
+			const buttonRect = settingsButton.getBoundingClientRect();
+			document.dispatchEvent(new CustomEvent('ut:toggleSettings', {
+				detail: { position: { top: buttonRect.top - 5, left: buttonRect.right + 5 } }
+			}));
 		});
 
 		header.appendChild(title);
@@ -317,17 +310,9 @@ class UsageUI {
 		return footer;
 	}
 
-	async checkVersionNotification() {
-		// Temporary - will move to FloatingCards actor in Phase 3
-		const donationInfo = await sendBackgroundMessage({
-			type: 'shouldShowDonationNotification',
-			currentVersion: browser.runtime.getManifest().version
-		});
-
-		if (donationInfo && donationInfo.shouldShow) {
-			const notificationCard = new VersionNotificationCard(donationInfo);
-			notificationCard.show();
-		}
+	checkVersionNotification() {
+		// Dispatch event to FloatingCardsUI
+		document.dispatchEvent(new CustomEvent('ut:checkVersionNotification'));
 	}
 
 	handleUsageUpdate(usageDataJSON) {
@@ -376,10 +361,27 @@ class UsageUI {
 				this.lastUpdateTime = timestamp;
 				this.updateResetTimeDisplays();
 				await this.checkAndReinject();
+				await this.checkDataExpiry();
 			}
 			requestAnimationFrame(update);
 		};
 		requestAnimationFrame(update);
+	}
+
+	async checkDataExpiry() {
+		if (this.usageData && this.usageData.isExpired()) {
+			await Log("UsageUI: Usage data expired, triggering reset");
+			const orgId = document.cookie
+				.split('; ')
+				.find(row => row.startsWith('lastActiveOrg='))
+				?.split('=')[1];
+			if (orgId) {
+				await sendBackgroundMessage({
+					type: 'checkAndResetExpired',
+					orgId: orgId
+				});
+			}
+		}
 	}
 
 	updateResetTimeDisplays() {

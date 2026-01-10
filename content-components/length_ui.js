@@ -1,4 +1,4 @@
-/* global config, Log, setupTooltip, getResetTimeHTML, sleep,
+/* global config, Log, setupTooltip, getResetTimeHTML, sleep, sendBackgroundMessage,
    isMobileView, UsageData, ConversationData, getConversationId, getCurrentModel,
    RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN */
 'use strict';
@@ -400,6 +400,23 @@ class LengthUI {
 			// High frequency: cache countdown + reinject check + model change detection
 			if (timestamp - this.lastHighUpdate >= this.highUpdateFrequency) {
 				this.lastHighUpdate = timestamp;
+
+				// Check for conversation changes
+				const newConversation = getConversationId();
+				const isHomePage = newConversation === null;
+				if (this.conversationData?.conversationId !== newConversation && !isHomePage) {
+					await Log("LengthUI: Conversation changed, requesting data");
+					sendBackgroundMessage({
+						type: 'requestData',
+						conversationId: newConversation
+					});
+				}
+				// Reset conversation data on home page
+				if (isHomePage && this.conversationData !== null) {
+					this.conversationData = null;
+					this.updateCostAndLength();
+					this.updateEstimate();
+				}
 
 				// Check for model changes
 				const newModel = await getCurrentModel(200);
