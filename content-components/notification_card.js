@@ -323,25 +323,6 @@ class SettingsCard extends FloatingCard {
 		saveButton.style.background = BLUE_HIGHLIGHT;
 		saveButton.style.color = 'white';
 
-		// Modifier section
-		const modifierContainer = document.createElement('div');
-		modifierContainer.className = 'ut-row ut-mb-3';
-
-		const modifierLabel = document.createElement('label');
-		modifierLabel.textContent = 'Cap Modifier:';
-		modifierLabel.className = 'text-text-000 text-sm';
-
-		const modifierInput = document.createElement('input');
-		modifierInput.type = 'text';
-		modifierInput.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input ut-mb-0 text-sm';
-		modifierInput.style.width = '60px';
-
-		const result = await sendBackgroundMessage({ type: 'getCapModifier' });
-		modifierInput.value = `${((result || 1) * 100)}%`;
-
-		modifierContainer.appendChild(modifierLabel);
-		modifierContainer.appendChild(modifierInput);
-
 		// Button container
 		const buttonContainer = document.createElement('div');
 		buttonContainer.className = 'ut-row';
@@ -418,13 +399,6 @@ class SettingsCard extends FloatingCard {
 		});
 
 		saveButton.addEventListener('click', async () => {
-			const modifierValue = modifierInput.value.replace('%', '');
-			let modifier = 1;
-			if (!isNaN(modifierValue)) {
-				modifier = parseFloat(modifierValue) / 100;
-			}
-
-			await sendBackgroundMessage({ type: 'setCapModifier', modifier });
 			let result = await sendBackgroundMessage({ type: 'setAPIKey', newKey: input.value });
 
 			if (!result) {
@@ -444,7 +418,6 @@ class SettingsCard extends FloatingCard {
 		// Assemble
 		this.element.appendChild(label);
 		this.element.appendChild(input);
-		this.element.appendChild(modifierContainer);
 		buttonContainer.appendChild(saveButton);
 		buttonContainer.appendChild(debugButton);
 		buttonContainer.appendChild(resetButton);

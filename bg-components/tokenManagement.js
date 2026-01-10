@@ -359,11 +359,10 @@ class TokenStorageManager {
 		const allModelData = await getStorageValue(getOrgStorageKey(orgId, 'models')) || {};
 
 
-		// Get usage cap with modifiers
+		// Get usage cap
 		const baseline = CONFIG.USAGE_CAP.BASELINE;
 		const tierMultiplier = CONFIG.USAGE_CAP.MULTIPLIERS[subscriptionTier];
-		const capModifier = await getStorageValue('capModifier_global') || 1;
-		const usageCap = baseline * tierMultiplier * capModifier;
+		const usageCap = baseline * tierMultiplier;
 
 		return UsageData.fromModelData(allModelData, usageCap, subscriptionTier);
 	}

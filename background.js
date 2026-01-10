@@ -35,7 +35,6 @@ let processingLock = null;  // Unix timestamp or null
 const pendingTasks = [];
 const LOCK_TIMEOUT = 30000;  // 30 seconds - if a task takes longer, something's wrong
 let pendingRequests;
-let capModifiers;
 let scheduledNotifications;
 
 let isInitialized = false;
@@ -412,14 +411,6 @@ messageRegistry.register('setAPIKey', async (message) => {
 	}
 });
 
-messageRegistry.register('getCapModifier', async () => {
-	return await capModifiers.get('global') || 1;
-});
-messageRegistry.register('setCapModifier', async (message) => {
-	await capModifiers.set('global', message.modifier);
-	return true;
-});
-
 messageRegistry.register('isElectron', () => isElectron);
 messageRegistry.register('getMonkeypatchPatterns', () => isElectron ? INTERCEPT_PATTERNS : false);
 
@@ -752,7 +743,6 @@ async function processNextTask() {
 
 //#region Variable fill in and initialization
 pendingRequests = new StoredMap("pendingRequests"); // conversationId -> {userId, tabId}
-capModifiers = new StoredMap('capModifiers');
 scheduledNotifications = new StoredMap('scheduledNotifications');
 firebaseSyncManager.setUpdateAllTabsCallback(updateAllTabsWithUsage);
 
