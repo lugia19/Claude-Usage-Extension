@@ -28,8 +28,7 @@
 				"content-components/ui_dataclasses.js",
 				"content-components/notification_card.js",
 				"content-components/usage_ui.js",
-				"content-components/length_ui.js",
-				"ui.js"
+				"content-components/length_ui.js"
 			]
 		}
 	],

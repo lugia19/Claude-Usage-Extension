@@ -31,7 +31,6 @@ browser.storage.local.get('force_debug').then(result => {
 
 // Global variables that will be shared across all content scripts
 let config;
-let ui;
 
 // Logging function
 async function Log(...args) {
@@ -423,3 +422,99 @@ class ProgressBar {
 		this.tooltip.textContent = `${total.toLocaleString()} / ${maxTokens.toLocaleString()} credits (${percentage.toFixed(1)}%)`;
 	}
 }
+
+// Message handlers for background script requests
+browser.runtime.onMessage.addListener(async (message) => {
+	if (message.type === 'getActiveModel') {
+		const currModel = await getCurrentModel();
+		return currModel || "Sonnet";
+	}
+	if (message.action === "getOrgID") {
+		const orgId = document.cookie
+			.split('; ')
+			.find(row => row.startsWith('lastActiveOrg='))
+			?.split('=')[1];
+		return Promise.resolve({ orgId });
+	}
+	if (message.action === "getStyleId") {
+		const storedStyle = localStorage.getItem('LSS-claude_personalized_style');
+		let styleId;
+		if (storedStyle) {
+			try {
+				const styleData = JSON.parse(storedStyle);
+				if (styleData) styleId = styleData.styleKey;
+			} catch (e) {
+				await Log("error", 'Failed to parse stored style:', e);
+			}
+		}
+		return Promise.resolve({ styleId });
+	}
+});
+
+// Style injection
+async function injectStyles() {
+	if (document.getElementById('ut-styles')) return;
+	try {
+		const cssContent = await fetch(browser.runtime.getURL('tracker-styles.css')).then(r => r.text());
+		const style = document.createElement('link');
+		style.rel = 'stylesheet';
+		style.id = 'ut-styles';
+		style.href = `data:text/css;charset=utf-8,${encodeURIComponent(cssContent)}`;
+		document.head.appendChild(style);
+	} catch (error) {
+		await Log("error", 'Failed to load tracker styles:', error);
+	}
+}
+
+// Main initialization
+async function initExtension() {
+	if (window.claudeTrackerInstance) {
+		Log('Instance already running, stopping');
+		return;
+	}
+	window.claudeTrackerInstance = true;
+
+	await injectStyles();
+	config = await sendBackgroundMessage({ type: 'getConfig' });
+	await Log("Config received...");
+
+	// Wait for login
+	const LOGIN_CHECK_DELAY = 10000;
+	while (true) {
+		const userMenuButton = await waitForElement(document, config.SELECTORS.USER_MENU_BUTTON, 6000);
+		if (userMenuButton) {
+			if (userMenuButton.getAttribute('data-script-loaded')) {
+				await Log('Script already running, stopping duplicate');
+				return;
+			}
+			userMenuButton.setAttribute('data-script-loaded', true);
+			break;
+		}
+
+		const initialLoginScreen = document.querySelector(config.SELECTORS.INIT_LOGIN_SCREEN);
+		const verificationLoginScreen = document.querySelector(config.SELECTORS.VERIF_LOGIN_SCREEN);
+		if (!initialLoginScreen && !verificationLoginScreen) {
+			await Log("error", 'Neither user menu button nor any login screen found');
+			return;
+		}
+		await Log('Login screen detected, waiting before retry...');
+		await sleep(LOGIN_CHECK_DELAY);
+	}
+
+	await setupRateLimitMonitoring();
+
+	// Request initial data
+	sendBackgroundMessage({ type: 'requestData' });
+	sendBackgroundMessage({ type: 'initOrg' });
+
+	await Log('Initialization complete. Ready to track tokens.');
+}
+
+// Self-initialize
+(async () => {
+	try {
+		await initExtension();
+	} catch (error) {
+		await Log("error", 'Failed to initialize Chat Token Counter:', error);
+	}
+})();

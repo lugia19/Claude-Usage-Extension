@@ -530,7 +530,7 @@ class FloatingCardsUI {
 		const donationInfo = { shouldShow: false, versionMessage: '', patchHighlights: [] };
 
 		// Version change - show update notification
-		if (previousVersion !== currentVersion || true) {
+		if (previousVersion !== currentVersion) {
 			donationInfo.shouldShow = true;
 			donationInfo.versionMessage = `Updated from v${previousVersion} to v${currentVersion}!`;
 
