@@ -1,4 +1,4 @@
-Changed caching time to 5m (Actually correct)
-I made a new extension! Check it out!
-Features include: Summarizing, TTS, STT, text search, and more!
-Next major update (v5) is in the works, and will use the official metrics
+Fix UI not showing
+Refactor Chat and Length UI
+V5 is still being worked on! I've mostly finished the UI refactor.
+Sorry for the slow updates, I've got exams for my masters to focus on.

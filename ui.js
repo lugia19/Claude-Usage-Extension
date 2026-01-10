@@ -1,31 +1,24 @@
-/* global UsageData, ConversationData, SidebarUI, ChatUI, NotificationCard, sendBackgroundMessage, config:writable, getConversationId, getCurrentModel, findSidebarContainers, Log, ui:writable, waitForElement, sleep, setupRateLimitMonitoring */
+/* global UsageData, ConversationData, sendBackgroundMessage, config:writable, getConversationId, getCurrentModel, Log, ui:writable, waitForElement, sleep, setupRateLimitMonitoring */
 'use strict';
 
-// Main UI Manager
+// Main UI Manager - now minimal after Phase 2 refactor
+// Handles: conversation change detection, data expiry checks, background message requests
+// Display logic moved to UsageUI (Phase 1) and LengthUI (Phase 2)
 class UIManager {
 	constructor(currModel) {
 		this.currentlyDisplayedModel = currModel;
-		this.sidebarUI = new SidebarUI(this);
-		this.chatUI = new ChatUI();
-		this.usageData = null;          // Changed from rawModelData
+		this.usageData = null;
 		this.conversationData = null;
 	}
 
 	async initialize() {
-		await this.sidebarUI.initialize();
-		this.chatUI.initialize();
-
 		// Initial update - just request, don't await response
 		await sendBackgroundMessage({ type: 'requestData' });
 		await sendBackgroundMessage({ type: 'initOrg' });
 
 		// Start animation frame loop
-		this.lastFullUpdate = 0;
 		this.lastMediumUpdate = 0;
-		this.lastHighUpdate = 0;
-		this.highUpdateFrequency = Math.round(config.UI_UPDATE_INTERVAL_MS / 4);	//750
 		this.mediumUpdateFrequency = Math.round(config.UI_UPDATE_INTERVAL_MS / 2);	//1500
-		this.fullUpdateFrequency = config.UI_UPDATE_INTERVAL_MS;	//3000
 		this.scheduleNextFrame();
 	}
 
@@ -34,55 +27,12 @@ class UIManager {
 	}
 
 	async frameUpdate(timestamp) {
-		if (!this.lastHighUpdate || timestamp - this.lastHighUpdate >= this.highUpdateFrequency) {
-			await this.highFrequencyUpdates();
-			this.lastHighUpdate = timestamp;
-		}
-
 		if (!this.lastMediumUpdate || timestamp - this.lastMediumUpdate >= this.mediumUpdateFrequency) {
 			await this.mediumFrequencyUpdates();
 			this.lastMediumUpdate = timestamp;
 		}
 
-		if (!this.lastFullUpdate || timestamp - this.lastFullUpdate >= this.fullUpdateFrequency) {
-			await this.lowFrequencyUpdates();
-			this.lastFullUpdate = timestamp;
-		}
-
 		this.scheduleNextFrame();
-	}
-
-	async highFrequencyUpdates() {
-		const currConversation = getConversationId();
-		const newModel = await getCurrentModel(200);
-		if (newModel && newModel !== this.currentlyDisplayedModel) {
-			await Log("Model changed, updating UI locally");
-			this.currentlyDisplayedModel = newModel;
-
-			// Update the UI displays with the new model without requesting data
-			if (this.usageData) {
-				await this.chatUI.updateUsageDisplay(this.usageData, this.currentlyDisplayedModel);
-			}
-
-			if (this.conversationData && this.usageData) {
-				await this.chatUI.updateConversationDisplay(this.conversationData, this.usageData, this.currentlyDisplayedModel);
-			}
-		}
-
-		const cacheExpired = this.chatUI.updateCachedTime();
-		if (cacheExpired && currConversation) {
-			// Cache expired - request fresh data to update costs
-			await Log("Cache expired, requesting data");
-			sendBackgroundMessage({
-				type: 'requestData',
-				conversationId: currConversation
-			});
-		}
-
-		//UI presence checks
-		const sidebarContainers = await findSidebarContainers();
-		await this.sidebarUI.checkAndReinject(sidebarContainers);
-		await this.chatUI.checkAndReinject();
 	}
 
 	async mediumFrequencyUpdates() {
@@ -104,12 +54,9 @@ class UIManager {
 			}
 		}
 
-		// Update home page state if needed
+		// Reset conversation data on home page
 		if (isHomePage && this.conversationData !== null) {
 			this.conversationData = null;
-			this.chatUI.updateEstimate();
-			this.chatUI.updateCostAndLength();
-			this.conversationData = null; // Reset conversation data
 		}
 
 		// Check if the current usage data is expired
@@ -131,44 +78,16 @@ class UIManager {
 		}
 	}
 
-	async lowFrequencyUpdates() {
-		this.chatUI.updateResetTime();
-	}
-
-	// In UIManager
-	async updateUsage(usageData) {
-		await Log("Updating usage data", usageData);
+	// Cache usage data for expiry checks
+	updateUsageCache(usageData) {
 		if (!usageData) return;
-
 		this.usageData = UsageData.fromJSON(usageData);
-		this.usageData.usageCap = this.usageData.usageCap * (await sendBackgroundMessage({ type: 'getCapModifier' }) || 1);
-		// Update sidebar
-		if (this.usageData) {
-			await this.sidebarUI.updateProgressBars(this.usageData);
-		}
-
-		// Update chat UI - progress bar, reset time, and estimate if we have cost data
-		if (this.chatUI && this.usageData) {
-			await this.chatUI.updateUsageDisplay(this.usageData, this.currentlyDisplayedModel);
-		}
 	}
 
-	async updateConversation(conversationData) {
-		await Log("Updating conversation data", conversationData);
+	// Cache conversation data for change detection
+	updateConversationCache(conversationData) {
 		if (!conversationData) return;
-
 		this.conversationData = ConversationData.fromJSON(conversationData);
-
-		// Update current model from conversation if available - disabled as it can cause bugs
-		/*if (this.conversationData?.model) {
-			this.currentlyDisplayedModel = this.conversationData.model;
-		}*/
-
-		// Update chat UI - cost/length AND estimate (since we have new cost data)
-		if (this.chatUI && this.conversationData) {
-			await Log("Updating conversation data:", this.conversationData);
-			await this.chatUI.updateConversationDisplay(this.conversationData, this.usageData, this.currentlyDisplayedModel);
-		}
 	}
 }
 
@@ -176,12 +95,14 @@ class UIManager {
 // Listen for messages from background
 browser.runtime.onMessage.addListener(async (message) => {
 	await Log("Content received message:", message.type);
+
+	// Cache data for UIManager's expiry/change detection
 	if (message.type === 'updateUsage') {
-		if (ui) await ui.updateUsage(message.data.usageData);
+		if (ui) ui.updateUsageCache(message.data.usageData);
 	}
 
 	if (message.type === 'updateConversationData') {
-		if (ui) await ui.updateConversation(message.data.conversationData);
+		if (ui) ui.updateConversationCache(message.data.conversationData);
 	}
 
 	if (message.type === 'getActiveModel') {

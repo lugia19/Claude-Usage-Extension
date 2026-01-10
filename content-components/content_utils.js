@@ -345,3 +345,81 @@ function setupTooltip(element, tooltip, options = {}) {
 		});
 	}
 }
+
+// Helper function to find sidebar containers
+async function findSidebarContainers() {
+	// First find the nav element
+	const sidebarNav = document.querySelector(config.SELECTORS.SIDEBAR_NAV);
+	if (!sidebarNav) {
+		await Log("error", 'Could not find sidebar nav');
+		return null;
+	}
+
+	// Look for the main container that holds all sections
+	const containerWrapper = sidebarNav.querySelector('.flex.flex-grow.flex-col.overflow-y-auto')
+	const containers = containerWrapper?.querySelectorAll('.flex-1.relative');
+	const mainContainer = containers[containers.length - 1].querySelector('.px-2.mt-4');
+	if (!mainContainer) {
+		await Log("error", 'Could not find main container in sidebar');
+		return null;
+	}
+
+	// Look for the Starred section
+	const starredSection = await waitForElement(mainContainer, 'div.flex.flex-col.mb-4', 5000);
+	if (!starredSection) {
+		await Log("error", 'Could not find Starred section.');
+	}
+
+	// Check if the Recents section exists as the next sibling
+	let recentsSection = null;
+	if (starredSection) {
+		recentsSection = starredSection.nextElementSibling;
+	} else {
+		recentsSection = mainContainer.firstChild;
+	}
+
+	if (!recentsSection) {
+		await Log("error", 'Could not find any injection site');
+		return null;
+	}
+
+	// Return the parent container so we can insert our UI between Starred and Recents
+	return {
+		container: mainContainer,
+		starredSection: starredSection,
+		recentsSection: recentsSection
+	};
+}
+
+// Progress bar component
+class ProgressBar {
+	constructor(options = {}) {
+		const {
+			width = '100%',
+			height = '6px'
+		} = options;
+
+		this.container = document.createElement('div');
+		this.container.className = 'bg-bg-500 ut-progress';
+		if (width !== '100%') this.container.style.width = width;
+		if (height !== '6px') this.container.style.height = height;
+
+		this.bar = document.createElement('div');
+		this.bar.className = 'ut-progress-bar';
+		this.bar.style.background = BLUE_HIGHLIGHT;
+
+		this.tooltip = document.createElement('div');
+		this.tooltip.className = 'bg-bg-500 text-text-000 ut-tooltip';
+
+		this.container.appendChild(this.bar);
+		document.body.appendChild(this.tooltip);
+		setupTooltip(this.container, this.tooltip, { topOffset: 10 });
+	}
+
+	updateProgress(total, maxTokens) {
+		const percentage = (total / maxTokens) * 100;
+		this.bar.style.width = `${Math.min(percentage, 100)}%`;
+		this.bar.style.background = total >= maxTokens * config.WARNING.PERCENT_THRESHOLD ? RED_WARNING : BLUE_HIGHLIGHT;
+		this.tooltip.textContent = `${total.toLocaleString()} / ${maxTokens.toLocaleString()} credits (${percentage.toFixed(1)}%)`;
+	}
+}
