@@ -1,4 +1,4 @@
-/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, originalText */
+/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN */
 'use strict';
 
 // Draggable functionality for cards
@@ -378,9 +378,9 @@ class SettingsCard extends FloatingCard {
 			);
 
 			if (confirmation) {
+				const originalText = resetButton.textContent;
 				try {
 					// Show loading state
-					const originalText = resetButton.textContent;
 					resetButton.textContent = 'Resetting...';
 					resetButton.disabled = true;
 
@@ -485,3 +485,95 @@ class SettingsCard extends FloatingCard {
 		}
 	}
 }
+
+// Floating cards actor - owns all card lifecycle
+class FloatingCardsUI {
+	constructor() {
+		this.setupEventListeners();
+		Log('FloatingCardsUI: Initialized');
+	}
+
+	setupEventListeners() {
+		document.addEventListener('ut:toggleSettings', async (event) => {
+			await this.handleToggleSettings(event.detail);
+		});
+
+		document.addEventListener('ut:checkVersionNotification', async () => {
+			await this.handleCheckVersionNotification();
+		});
+	}
+
+	async handleToggleSettings(detail) {
+		const position = detail?.position || null;
+
+		if (SettingsCard.currentInstance) {
+			SettingsCard.currentInstance.remove();
+		} else {
+			const settingsCard = new SettingsCard();
+			await settingsCard.build();
+			settingsCard.show(position);
+		}
+	}
+
+	async handleCheckVersionNotification() {
+		const currentVersion = browser.runtime.getManifest().version;
+		const storage = await browser.storage.local.get(['previousVersion', 'shownDonationThresholds']);
+		const previousVersion = storage.previousVersion;
+		const shownDonationThresholds = storage.shownDonationThresholds || [];
+
+		// First install - don't show notification
+		if (!previousVersion) {
+			await browser.storage.local.set({ previousVersion: currentVersion });
+			return;
+		}
+
+		const donationInfo = { shouldShow: false, versionMessage: '', patchHighlights: [] };
+
+		// Version change - show update notification
+		if (previousVersion !== currentVersion || true) {
+			donationInfo.shouldShow = true;
+			donationInfo.versionMessage = `Updated from v${previousVersion} to v${currentVersion}!`;
+
+			try {
+				const patchNotesFile = await fetch(browser.runtime.getURL('update_patchnotes.txt'));
+				if (patchNotesFile.ok) {
+					const patchNotesText = await patchNotesFile.text();
+					donationInfo.patchHighlights = patchNotesText
+						.split('\n')
+						.filter(line => line.trim().length > 0);
+				}
+			} catch (error) {
+				await Log("error", "Failed to load patch notes:", error);
+			}
+
+			await browser.storage.local.set({ previousVersion: currentVersion });
+		} else {
+			// Check token thresholds (requires background)
+			const totalTokens = await sendBackgroundMessage({ type: 'getTotalTokensTracked' });
+			const tokenThresholds = [1000000, 5000000, 10000000, 50000000];
+
+			const exceededThreshold = tokenThresholds.find(threshold =>
+				totalTokens >= threshold && !shownDonationThresholds.includes(threshold)
+			);
+
+			if (exceededThreshold) {
+				const tokenMillions = Math.floor(exceededThreshold / 1000000);
+				donationInfo.shouldShow = true;
+				donationInfo.versionMessage = `You've tracked over ${tokenMillions}M tokens!`;
+				donationInfo.patchHighlights = ["Please consider supporting continued development with a donation!"];
+
+				await browser.storage.local.set({
+					shownDonationThresholds: [...shownDonationThresholds, exceededThreshold]
+				});
+			}
+		}
+
+		if (donationInfo.shouldShow) {
+			const notificationCard = new VersionNotificationCard(donationInfo);
+			notificationCard.show();
+		}
+	}
+}
+
+// Self-initialize
+const floatingCardsUI = new FloatingCardsUI();
