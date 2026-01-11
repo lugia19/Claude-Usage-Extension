@@ -463,16 +463,12 @@ class SettingsCard extends FloatingCard {
 class FloatingCardsUI {
 	constructor() {
 		this.setupEventListeners();
-		Log('FloatingCardsUI: Initialized');
+		this.checkVersionNotification();
 	}
 
 	setupEventListeners() {
 		document.addEventListener('ut:toggleSettings', async (event) => {
 			await this.handleToggleSettings(event.detail);
-		});
-
-		document.addEventListener('ut:checkVersionNotification', async () => {
-			await this.handleCheckVersionNotification();
 		});
 	}
 
@@ -488,7 +484,7 @@ class FloatingCardsUI {
 		}
 	}
 
-	async handleCheckVersionNotification() {
+	async checkVersionNotification() {
 		const currentVersion = browser.runtime.getManifest().version;
 		const storage = await browser.storage.local.get(['previousVersion', 'shownDonationThresholds']);
 		const previousVersion = storage.previousVersion;

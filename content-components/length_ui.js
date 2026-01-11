@@ -4,52 +4,36 @@
 'use strict';
 
 // Length UI actor - handles all conversation-related displays
-// Replaces ChatUI from Phase 1
 class LengthUI {
 	constructor() {
-		// Cached data
-		this.usageData = null;
-		this.conversationData = null;
-		this.currentModel = null;
-		this.nextMessageCost = null;
-
-		// Title area elements (length, cost, cache)
-		this.lengthDisplay = null;
-		this.costDisplay = null;
-		this.cachedDisplay = null;
-		this.costAndLengthContainer = null;
-
-		// Stat line elements (estimate, reset time) - injected into ut-stat-right
-		this.estimateDisplay = null;
-		this.resetDisplay = null;
-		this.statRightContainer = null;
-
-		// Tooltips
-		this.tooltips = {
-			length: null,
-			cost: null,
-			cached: null,
-			estimate: null,
-			timer: null
+		// State
+		this.state = {
+			usageData: null,
+			conversationData: null,
+			currentModel: null,
+			nextMessageCost: null,
+			cachedUntilTimestamp: null,
 		};
 
-		// State for countdowns
-		this.lastCachedUntilTimestamp = null;
-		this.lastResetTimestamp = null;
+		// Element references
+		this.elements = {
+			titleArea: null,
+			statLine: null,
+			tooltips: null,
+		};
 
 		// Update loop timing
 		this.lastHighUpdate = 0;
-		this.lastLowUpdate = 0;
-		this.highUpdateFrequency = 750;  // Cache countdown
-		this.lowUpdateFrequency = 1000;  // Reset time countdown
+		this.highUpdateFrequency = 750;
 
 		this.uiReady = false;
-		this.pendingUsageUpdates = [];
-		this.pendingConversationUpdates = [];
+		this.pendingUpdates = { usage: null, conversation: null };
 
 		this.setupMessageListeners();
 		this.init();
 	}
+
+	// ========== SETUP ==========
 
 	setupMessageListeners() {
 		browser.runtime.onMessage.addListener((message) => {
@@ -65,387 +49,342 @@ class LengthUI {
 	async init() {
 		await Log('LengthUI: Initializing...');
 
-		// Wait for config to be available
 		while (!config) {
 			await sleep(100);
 		}
 
-		// Build UI elements
-		this.buildTitleAreaElements();
-		this.buildStatLineElements();
-		this.createTooltips();
+		this.elements.titleArea = this.createTitleAreaElements();
+		this.elements.statLine = this.createStatLineElements();
+		this.elements.tooltips = this.createTooltips();
+		this.attachTooltips();
 
 		this.uiReady = true;
 		await Log('LengthUI: Ready');
 
-		// Process any updates that arrived before we were ready
-		while (this.pendingUsageUpdates.length > 0) {
-			const usageDataJSON = this.pendingUsageUpdates.shift();
-			this.usageData = UsageData.fromJSON(usageDataJSON);
-			if (this.usageData?.resetTimestamp) {
-				this.lastResetTimestamp = this.usageData.resetTimestamp;
-			}
-			this.updateResetTime();
+		// Process pending updates (only most recent matters)
+		if (this.pendingUpdates.usage) {
+			this.state.usageData = UsageData.fromJSON(this.pendingUpdates.usage);
+			this.pendingUpdates.usage = null;
+		}
+		if (this.pendingUpdates.conversation) {
+			this.state.conversationData = ConversationData.fromJSON(this.pendingUpdates.conversation);
+			this.pendingUpdates.conversation = null;
+			await this.renderAll();
 		}
 
-		while (this.pendingConversationUpdates.length > 0) {
-			const conversationDataJSON = this.pendingConversationUpdates.shift();
-			this.conversationData = ConversationData.fromJSON(conversationDataJSON);
-			await this.updateAllDisplays();
-		}
-
-		// Start the update loop
 		this.startUpdateLoop();
 	}
 
-	buildTitleAreaElements() {
-		// Create container for title area displays (length, cost, cache)
-		this.costAndLengthContainer = document.createElement('div');
-		this.costAndLengthContainer.className = `text-text-500 text-xs !px-1 ut-select-none`;
-		this.costAndLengthContainer.style.marginTop = '2px';
+	// ========== CREATE (pure DOM construction) ==========
 
-		// Create individual display elements for title area
-		this.lengthDisplay = document.createElement('span');
-		this.costDisplay = document.createElement('span');
-		this.cachedDisplay = document.createElement('span');
+	createTitleAreaElements() {
+		const container = document.createElement('div');
+		container.className = 'text-text-500 text-xs !px-1 ut-select-none';
+		container.style.marginTop = '2px';
+
+		const length = document.createElement('span');
+		const cost = document.createElement('span');
+		const cached = document.createElement('span');
+
+		return { container, length, cost, cached };
 	}
 
-	buildStatLineElements() {
-		// Create stat line elements (estimate, reset time)
-		// These will be injected into ut-stat-right (created by UsageUI)
-		this.estimateDisplay = document.createElement('div');
-		this.estimateDisplay.className = 'text-text-400 text-xs';
-		this.estimateDisplay.style.cursor = 'help';
-		if (!isMobileView()) this.estimateDisplay.style.marginRight = '8px';
+	createStatLineElements() {
+		const estimate = document.createElement('div');
+		estimate.className = 'text-text-400 text-xs';
+		estimate.style.cursor = 'help';
+		if (!isMobileView()) estimate.style.marginRight = '8px';
 
-		this.resetDisplay = document.createElement('div');
-		this.resetDisplay.className = 'text-text-400 text-xs';
-		if (!isMobileView()) this.resetDisplay.style.marginRight = '8px';
+		return { estimate };
 	}
 
 	createTooltips() {
-		this.tooltips.length = this.createTooltip('Length of the conversation, in tokens. The longer it is, the faster your limits run out.');
-		this.tooltips.cost = this.createTooltip('Estimated cost of sending another message\nIncludes ephemeral items like thinking.\nCost = length*model mult / caching factor');
-		this.tooltips.cached = this.createTooltip('Follow up messages in this conversation will have a reduced cost');
-		this.tooltips.estimate = this.createTooltip('Number of messages left based on the current cost');
-		this.tooltips.timer = this.createTooltip('When your usage will reset to full');
+		const create = (text) => {
+			const tooltip = document.createElement('div');
+			tooltip.className = 'bg-bg-500 text-text-000 ut-tooltip font-normal font-ui';
+			tooltip.textContent = text;
+			tooltip.style.maxWidth = '400px';
+			tooltip.style.textAlign = 'left';
+			tooltip.style.whiteSpace = 'pre-line';
+			document.body.appendChild(tooltip);
+			return tooltip;
+		};
+
+		return {
+			length: create('Length of the conversation, in tokens. The longer it is, the faster your limits run out.'),
+			cost: create('Estimated cost of sending another message\nIncludes ephemeral items like thinking.\nCost = length*model mult / caching factor'),
+			cached: create('Follow up messages in this conversation will have a reduced cost'),
+			estimate: create('Number of messages left based on the current cost'),
+		};
 	}
 
-	createTooltip(text) {
-		const tooltip = document.createElement('div');
-		tooltip.className = 'bg-bg-500 text-text-000 ut-tooltip font-normal font-ui';
-		tooltip.textContent = text;
-		tooltip.style.maxWidth = '400px';
-		tooltip.style.textAlign = 'left';
-		tooltip.style.whiteSpace = 'pre-line';  // Override the nowrap from ut-tooltip
-		document.body.appendChild(tooltip);
-		return tooltip;
+	attachTooltips() {
+		setupTooltip(this.elements.titleArea.length, this.elements.tooltips.length);
+		setupTooltip(this.elements.titleArea.cost, this.elements.tooltips.cost);
+		setupTooltip(this.elements.titleArea.cached, this.elements.tooltips.cached);
+		setupTooltip(this.elements.statLine.estimate, this.elements.tooltips.estimate);
 	}
 
-	handleUsageUpdate(usageDataJSON) {
-		if (!this.uiReady) {
-			Log('LengthUI: Not ready, queueing usage update');
-			this.pendingUsageUpdates.push(usageDataJSON);
-			return;
-		}
+	// ========== MOUNT (attach to page) ==========
 
-		// Cache UsageData but don't re-render estimate
-		// (estimate calculation needs fresh conversation cost)
-		this.usageData = UsageData.fromJSON(usageDataJSON);
-		if (this.usageData?.resetTimestamp) {
-			this.lastResetTimestamp = this.usageData.resetTimestamp;
-		}
-		// Update reset time display only
-		this.updateResetTime();
-	}
-
-	handleConversationUpdate(conversationDataJSON) {
-		if (!this.uiReady) {
-			Log('LengthUI: Not ready, queueing conversation update');
-			this.pendingConversationUpdates.push(conversationDataJSON);
-			return;
-		}
-
-		// Full render: uses cached UsageData + fresh ConversationData
-		this.conversationData = ConversationData.fromJSON(conversationDataJSON);
-		this.updateAllDisplays();
-	}
-
-	async updateAllDisplays() {
-		this.currentModel = await getCurrentModel(200);
-		this.updateCostAndLength();
-		this.updateEstimate();
-		this.updateResetTime();
-	}
-
-	async checkAndReinject() {
-		// Handle title area (length/cost/cache) injection
+	mountTitleArea() {
 		const chatMenu = document.querySelector(config.SELECTORS.CHAT_MENU);
-		if (chatMenu) {
-			const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
-			if (titleLine) {
-				// Find the header element and adjust its height
-				let header = titleLine;
-				while (header && !header.tagName.toLowerCase().includes('header')) {
-					header = header.parentElement;
-				}
+		if (!chatMenu) return false;
 
-				if (header && header.classList.contains('h-12') && isMobileView()) {
-					header.classList.remove('h-12'); // Let it size naturally based on content
-				}
+		const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
+		if (!titleLine) return false;
 
-				// Check if there's a project link
-				const projectLink = titleLine.querySelector('a[href^="/project/"]');
+		// Prepare layout if needed
+		this.prepareLayoutForTitleArea(titleLine, chatMenu);
 
-				if (projectLink) {
-					// If there's a project link, we need to create a wrapper for project and chat menu
-					if (!titleLine.querySelector('.chat-project-wrapper')) {
-						const wrapper = document.createElement('div');
-						wrapper.className = 'chat-project-wrapper flex min-w-0 flex-row items-center md:items-center 2xl:justify-center';
-
-						// Move elements to wrapper
-						projectLink.remove();
-						wrapper.appendChild(projectLink);
-
-						const chatMenuContainer = chatMenu.closest('.flex.min-w-0.items-center');
-						if (chatMenuContainer) {
-							chatMenuContainer.remove();
-							wrapper.appendChild(chatMenuContainer);
-						}
-
-						titleLine.insertBefore(wrapper, titleLine.firstChild);
-					}
-				}
-
-				titleLine.classList.remove('md:items-center');
-				titleLine.classList.add('md:items-start');
-				titleLine.classList.remove('md:flex-row');
-				titleLine.classList.add('md:flex-col');
-
-				// Add our container after the wrapper or chat menu
-				const chatMenuParent = chatMenu.closest('.chat-project-wrapper') || chatMenu.parentElement;
-				if (chatMenuParent.nextElementSibling !== this.costAndLengthContainer) {
-					chatMenuParent.after(this.costAndLengthContainer);
-				}
-			}
+		// Mount container
+		const chatMenuParent = chatMenu.closest('.chat-project-wrapper') || chatMenu.parentElement;
+		if (chatMenuParent && chatMenuParent.nextElementSibling !== this.elements.titleArea.container) {
+			chatMenuParent.after(this.elements.titleArea.container);
 		}
 
-		// Handle stat line right container injection (estimate, reset time)
-		// The stat line is created by UsageUI, we just inject into ut-stat-right
-		this.statRightContainer = document.getElementById('ut-stat-right');
-		if (this.statRightContainer) {
-			if (!this.statRightContainer.contains(this.estimateDisplay)) {
-				this.statRightContainer.appendChild(this.estimateDisplay);
-			}
-			if (!this.statRightContainer.contains(this.resetDisplay)) {
-				this.statRightContainer.appendChild(this.resetDisplay);
-			}
-		}
+		return true;
 	}
 
-	updateCostAndLength() {
-		if (!this.conversationData) {
-			this.lengthDisplay.innerHTML = `Length: <span>N/A</span> tokens`;
-			this.costDisplay.innerHTML = '';
-			this.cachedDisplay.innerHTML = '';
-			this.updateContainer();
+	prepareLayoutForTitleArea(titleLine, chatMenu) {
+		// Adjust header height on mobile
+		let header = titleLine;
+		while (header && !header.tagName.toLowerCase().includes('header')) {
+			header = header.parentElement;
+		}
+		if (header && header.classList.contains('h-12') && isMobileView()) {
+			header.classList.remove('h-12');
+		}
+
+		// Handle project link wrapping
+		const projectLink = titleLine.querySelector('a[href^="/project/"]');
+		if (projectLink && !titleLine.querySelector('.chat-project-wrapper')) {
+			const wrapper = document.createElement('div');
+			wrapper.className = 'chat-project-wrapper flex min-w-0 flex-row items-center md:items-center 2xl:justify-center';
+
+			projectLink.remove();
+			wrapper.appendChild(projectLink);
+
+			const chatMenuContainer = chatMenu.closest('.flex.min-w-0.items-center');
+			if (chatMenuContainer) {
+				chatMenuContainer.remove();
+				wrapper.appendChild(chatMenuContainer);
+			}
+
+			titleLine.insertBefore(wrapper, titleLine.firstChild);
+		}
+
+		// Adjust title line layout
+		titleLine.classList.remove('md:items-center');
+		titleLine.classList.add('md:items-start');
+		titleLine.classList.remove('md:flex-row');
+		titleLine.classList.add('md:flex-col');
+	}
+
+	mountStatLine() {
+		const statRightContainer = document.getElementById('ut-stat-right');
+		if (!statRightContainer) return false;
+
+		if (!statRightContainer.contains(this.elements.statLine.estimate)) {
+			statRightContainer.appendChild(this.elements.statLine.estimate);
+		}
+
+		return true;
+	}
+
+	// ========== RENDER (state → DOM) ==========
+
+	async renderAll() {
+		this.state.currentModel = await getCurrentModel(200);
+		this.renderCostAndLength();
+		this.renderEstimate();
+	}
+
+	renderCostAndLength() {
+		const { conversationData, currentModel } = this.state;
+		const { length, cost, cached, container } = this.elements.titleArea;
+
+		if (!conversationData) {
+			length.innerHTML = 'Length: <span>N/A</span> tokens';
+			cost.innerHTML = '';
+			cached.innerHTML = '';
+			this.renderTitleContainer();
 			return;
 		}
 
-		const lengthColor = this.conversationData.isLong() ? RED_WARNING : BLUE_HIGHLIGHT;
+		// Length
+		const lengthColor = conversationData.isLong() ? RED_WARNING : BLUE_HIGHLIGHT;
+		length.innerHTML = `Length: <span style="color: ${lengthColor}">${conversationData.length.toLocaleString()}</span> tokens`;
 
-		// Use green if cost was calculated with caching, otherwise use normal logic
+		// Cost
+		const weightedCost = conversationData.getWeightedFutureCost(currentModel);
+		this.state.nextMessageCost = weightedCost;
+
 		let costColor;
-		if (this.conversationData.isCurrentlyCached()) {
+		if (conversationData.isCurrentlyCached()) {
 			costColor = SUCCESS_GREEN;
 		} else {
-			costColor = this.conversationData.isExpensive() ? RED_WARNING : BLUE_HIGHLIGHT;
+			costColor = conversationData.isExpensive() ? RED_WARNING : BLUE_HIGHLIGHT;
 		}
+		cost.innerHTML = `Cost: <span style="color: ${costColor}">${weightedCost.toLocaleString()}</span> credits`;
 
-		const weightedCost = this.conversationData.getWeightedFutureCost(this.currentModel);
-		this.nextMessageCost = weightedCost;
-
-		// Update individual displays
-		this.lengthDisplay.innerHTML = `Length: <span style="color: ${lengthColor}">${this.conversationData.length.toLocaleString()}</span> tokens`;
-		this.costDisplay.innerHTML = `Cost: <span style="color: ${costColor}">${weightedCost.toLocaleString()}</span> credits`;
-
-		// Add cached indicator if conversation is currently cached
-		if (this.conversationData.isCurrentlyCached()) {
-			this.lastCachedUntilTimestamp = this.conversationData.conversationIsCachedUntil;
-			const timeInfo = this.conversationData.getTimeUntilCacheExpires();
-			this.cachedDisplay.innerHTML = `Cached for: <span class="ut-cached-time" style="color: ${SUCCESS_GREEN}">${timeInfo.minutes}m</span>`;
+		// Cached
+		if (conversationData.isCurrentlyCached()) {
+			this.state.cachedUntilTimestamp = conversationData.conversationIsCachedUntil;
+			const timeInfo = conversationData.getTimeUntilCacheExpires();
+			cached.innerHTML = `Cached for: <span class="ut-cached-time" style="color: ${SUCCESS_GREEN}">${timeInfo.minutes}m</span>`;
 		} else {
-			this.lastCachedUntilTimestamp = null;
-			this.cachedDisplay.innerHTML = '';
+			this.state.cachedUntilTimestamp = null;
+			cached.innerHTML = '';
 		}
 
-		// Update container
-		this.updateContainer();
-
-		// Set up tooltip events
-		setupTooltip(this.lengthDisplay, this.tooltips.length);
-		setupTooltip(this.costDisplay, this.tooltips.cost);
-		setupTooltip(this.resetDisplay, this.tooltips.timer);
-		// Set up cached tooltip if we have cached content
-		if (this.conversationData.isCurrentlyCached()) {
-			setupTooltip(this.cachedDisplay, this.tooltips.cached);
-		}
+		this.renderTitleContainer();
 	}
 
-	updateContainer() {
-		// Clear container
-		this.costAndLengthContainer.innerHTML = '';
+	renderTitleContainer() {
+		const { length, cost, cached, container } = this.elements.titleArea;
+		container.innerHTML = '';
 
-		// Filter elements - on mobile, exclude cost display
 		let elements;
 		if (isMobileView()) {
-			elements = [this.lengthDisplay, this.cachedDisplay].filter(el => el.innerHTML);
+			elements = [length, cached].filter(el => el.innerHTML);
 		} else {
-			elements = [this.lengthDisplay, this.costDisplay, this.cachedDisplay].filter(el => el.innerHTML);
+			elements = [length, cost, cached].filter(el => el.innerHTML);
 		}
 
 		const separator = isMobileView() ? '<br>' : ' | ';
 
 		elements.forEach((element, index) => {
-			this.costAndLengthContainer.appendChild(element);
+			container.appendChild(element);
 			if (index < elements.length - 1) {
 				const sep = document.createElement('span');
 				sep.innerHTML = separator;
-				this.costAndLengthContainer.appendChild(sep);
+				container.appendChild(sep);
 			}
 		});
 	}
 
-	// Simplified update method that just changes the time
-	updateCachedTime() {
-		if (!this.lastCachedUntilTimestamp || !this.cachedDisplay) return false;
+	renderCachedTime() {
+		const { cachedUntilTimestamp } = this.state;
+		if (!cachedUntilTimestamp) return false;
 
 		const now = Date.now();
-		const diff = this.lastCachedUntilTimestamp - now;
+		const diff = cachedUntilTimestamp - now;
 
 		if (diff <= 0) {
-			// Cache expired - clear the display
-			this.lastCachedUntilTimestamp = null;
-			this.cachedDisplay.innerHTML = '';
-			this.updateContainer(); // Rebuild the container to remove the cached element
-			return true; // Return true to indicate cache expired
+			this.state.cachedUntilTimestamp = null;
+			this.elements.titleArea.cached.innerHTML = '';
+			this.renderTitleContainer();
+			return true; // Cache expired
 		}
 
-		// Just update the time span text
-		const timeSpan = this.cachedDisplay.querySelector('.ut-cached-time');
+		const timeSpan = this.elements.titleArea.cached.querySelector('.ut-cached-time');
 		if (timeSpan) {
 			const minutes = Math.ceil(diff / (1000 * 60));
 			timeSpan.textContent = `${minutes}m`;
 		}
 
-		return false; // Return false - still cached
+		return false;
 	}
 
-	updateEstimate() {
-		if (!this.estimateDisplay) return;
+	renderEstimate() {
+		const { estimate } = this.elements.statLine;
+		const { usageData, nextMessageCost, currentModel } = this.state;
 
-		const msgPrefix = isMobileView() ? "Msgs Left: " : "Messages left: ";
+		const msgPrefix = isMobileView() ? 'Msgs Left: ' : 'Messages left: ';
 
-		if (!getConversationId()) {
-			this.estimateDisplay.innerHTML = `${msgPrefix}<span>N/A</span>`;
+		if (!getConversationId() || !usageData) {
+			estimate.innerHTML = `${msgPrefix}<span>N/A</span>`;
 			return;
 		}
 
-		if (!this.usageData) {
-			this.estimateDisplay.innerHTML = `${msgPrefix}<span>N/A</span>`;
-			return;
-		}
+		const remainingTokens = usageData.usageCap - usageData.getWeightedTotal();
 
-		const remainingTokens = this.usageData.usageCap - this.usageData.getWeightedTotal();
-
-		let estimate;
-		if (this.nextMessageCost > 0 && this.currentModel) {
-			estimate = Math.max(0, remainingTokens / this.nextMessageCost);
-			estimate = estimate.toFixed(1);
+		let estimateValue;
+		if (nextMessageCost > 0 && currentModel) {
+			estimateValue = Math.max(0, remainingTokens / nextMessageCost);
+			estimateValue = estimateValue.toFixed(1);
 		} else {
-			estimate = "N/A";
+			estimateValue = 'N/A';
 		}
 
-		const color = estimate !== "N/A" && parseFloat(estimate) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
-		this.estimateDisplay.innerHTML = `${msgPrefix}<span style="color: ${color}">${estimate}</span>`;
-
-		// Set up tooltip for estimate
-		setupTooltip(this.estimateDisplay, this.tooltips.estimate);
+		const color = estimateValue !== 'N/A' && parseFloat(estimateValue) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
+		estimate.innerHTML = `${msgPrefix}<span style="color: ${color}">${estimateValue}</span>`;
 	}
 
-	updateResetTime() {
-		if (!this.resetDisplay) return;
+	// ========== MESSAGE HANDLERS ==========
 
-		let timeInfo;
-
-		if (!this.usageData && this.lastResetTimestamp) {
-			// Convert timestamp to timeInfo format inline
-			const now = Date.now();
-			timeInfo = {
-				timestamp: this.lastResetTimestamp,
-				expired: this.lastResetTimestamp <= now
-			};
-		} else if (this.usageData) {
-			if (this.usageData.resetTimestamp) {
-				this.lastResetTimestamp = this.usageData.resetTimestamp;
-			}
-			timeInfo = this.usageData.getResetTimeInfo();
+	handleUsageUpdate(usageDataJSON) {
+		if (!this.uiReady) {
+			Log('LengthUI: Not ready, queueing usage update');
+			this.pendingUpdates.usage = usageDataJSON;
+			return;
 		}
 
-		this.resetDisplay.innerHTML = getResetTimeHTML(timeInfo);
+		// Cache UsageData but don't re-render estimate
+		// (estimate calculation needs fresh conversation cost)
+		this.state.usageData = UsageData.fromJSON(usageDataJSON);
 	}
+
+	handleConversationUpdate(conversationDataJSON) {
+		if (!this.uiReady) {
+			Log('LengthUI: Not ready, queueing conversation update');
+			this.pendingUpdates.conversation = conversationDataJSON;
+			return;
+		}
+
+		this.state.conversationData = ConversationData.fromJSON(conversationDataJSON);
+		this.renderAll();
+	}
+
+	// ========== UPDATE LOOP ==========
 
 	startUpdateLoop() {
 		const update = async (timestamp) => {
-			// High frequency: cache countdown + reinject check + model change detection
 			if (timestamp - this.lastHighUpdate >= this.highUpdateFrequency) {
 				this.lastHighUpdate = timestamp;
 
-				// Check for conversation changes
-				const newConversation = getConversationId();
-				const isHomePage = newConversation === null;
-				if (this.conversationData?.conversationId !== newConversation && !isHomePage) {
-					await Log("LengthUI: Conversation changed, requesting data");
-					sendBackgroundMessage({
-						type: 'requestData',
-						conversationId: newConversation
-					});
-				}
-				// Reset conversation data on home page
-				if (isHomePage && this.conversationData !== null) {
-					this.conversationData = null;
-					this.updateCostAndLength();
-					this.updateEstimate();
-				}
-
-				// Check for model changes
-				const newModel = await getCurrentModel(200);
-				if (newModel && newModel !== this.currentModel) {
-					await Log("LengthUI: Model changed, recalculating displays");
-					this.currentModel = newModel;
-					// Recalculate cost and estimate with new model
-					if (this.conversationData) {
-						this.updateCostAndLength();
-						this.updateEstimate();
-					}
-				}
-
-				// Cache countdown
-				this.updateCachedTime();
-
-				// Reinject check
-				this.checkAndReinject();
-			}
-
-			// Low frequency: reset time countdown
-			if (timestamp - this.lastLowUpdate >= this.lowUpdateFrequency) {
-				this.lastLowUpdate = timestamp;
-				this.updateResetTime();
+				await this.checkConversationChange();
+				await this.checkModelChange();
+				this.renderCachedTime();
+				this.mountTitleArea();
+				this.mountStatLine();
 			}
 
 			requestAnimationFrame(update);
 		};
 		requestAnimationFrame(update);
+	}
+
+	async checkConversationChange() {
+		const newConversation = getConversationId();
+		const isHomePage = newConversation === null;
+
+		if (this.state.conversationData?.conversationId !== newConversation && !isHomePage) {
+			await Log('LengthUI: Conversation changed, requesting data');
+			sendBackgroundMessage({
+				type: 'requestData',
+				conversationId: newConversation
+			});
+		}
+
+		if (isHomePage && this.state.conversationData !== null) {
+			this.state.conversationData = null;
+			this.renderCostAndLength();
+			this.renderEstimate();
+		}
+	}
+
+	async checkModelChange() {
+		const newModel = await getCurrentModel(200);
+		if (newModel && newModel !== this.state.currentModel) {
+			await Log('LengthUI: Model changed, recalculating displays');
+			this.state.currentModel = newModel;
+			if (this.state.conversationData) {
+				this.renderCostAndLength();
+				this.renderEstimate();
+			}
+		}
 	}
 }
 

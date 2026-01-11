@@ -3,16 +3,15 @@
    RED_WARNING, BLUE_HIGHLIGHT */
 'use strict';
 
-// Usage section component for sidebar
+// Progress bar component for usage section
 class UsageSection {
 	constructor() {
-		this.isEnabled = true;
-		this.buildSection();
+		this.elements = this.createElement();
 	}
 
-	buildSection() {
-		this.container = document.createElement('div');
-		this.container.className = 'ut-container';
+	createElement() {
+		const container = document.createElement('div');
+		container.className = 'ut-container';
 
 		const topLine = document.createElement('div');
 		topLine.className = 'text-text-000 ut-row text-sm ut-mb-1 ut-select-none';
@@ -25,80 +24,91 @@ class UsageSection {
 		title.className = 'text-xs';
 		title.textContent = 'All:';
 
-		this.percentageDisplay = document.createElement('span');
-		this.percentageDisplay.className = 'text-xs';
-		this.percentageDisplay.style.marginLeft = '6px';
-		this.percentageDisplay.style.whiteSpace = 'nowrap';
+		const percentage = document.createElement('span');
+		percentage.className = 'text-xs';
+		percentage.style.marginLeft = '6px';
+		percentage.style.whiteSpace = 'nowrap';
 
 		nameContainer.appendChild(title);
-		nameContainer.appendChild(this.percentageDisplay);
+		nameContainer.appendChild(percentage);
 
 		const statsContainer = document.createElement('div');
 		statsContainer.className = 'text-text-400 ut-row ut-flex-grow text-xs';
 
-		this.resetTimeDisplay = document.createElement('div');
-		this.resetTimeDisplay.className = 'ut-w-full ut-text-right';
-		this.resetTimeDisplay.style.whiteSpace = 'nowrap';
-		this.resetTimeDisplay.textContent = 'Reset in: Not set';
+		const resetTime = document.createElement('div');
+		resetTime.className = 'ut-w-full ut-text-right';
+		resetTime.style.whiteSpace = 'nowrap';
+		resetTime.textContent = 'Reset in: Not set';
 
-		statsContainer.appendChild(this.resetTimeDisplay);
+		statsContainer.appendChild(resetTime);
 		topLine.appendChild(nameContainer);
 		topLine.appendChild(statsContainer);
 
-		this.progressBar = new ProgressBar();
+		const progressBar = new ProgressBar();
 
-		this.container.appendChild(topLine);
-		this.container.appendChild(this.progressBar.container);
+		container.appendChild(topLine);
+		container.appendChild(progressBar.container);
+
+		return { container, percentage, resetTime, progressBar };
 	}
 
-	async updateFromUsageData(usageData) {
+	render(usageData) {
 		if (!usageData) return;
-		await this.updateProgress(usageData);
-		this.updateResetTime(usageData);
-	}
 
-	async updateProgress(usageData) {
+		const { percentage, resetTime, progressBar } = this.elements;
+
+		// Progress bar
 		const weightedTotal = usageData.getWeightedTotal();
 		const usageCap = usageData.usageCap;
-		const percentage = usageData.getUsagePercentage();
+		progressBar.updateProgress(weightedTotal, usageCap);
 
-		this.progressBar.updateProgress(weightedTotal, usageCap);
-
+		// Percentage
+		const pct = usageData.getUsagePercentage();
 		const color = usageData.isNearLimit() ? RED_WARNING : BLUE_HIGHLIGHT;
-		this.percentageDisplay.textContent = `${percentage.toFixed(1)}%`;
-		this.percentageDisplay.style.color = color;
+		percentage.textContent = `${pct.toFixed(1)}%`;
+		percentage.style.color = color;
+
+		// Reset time
+		const timeInfo = usageData.getResetTimeInfo();
+		resetTime.innerHTML = getResetTimeHTML(timeInfo);
 	}
 
-	updateResetTime(usageData) {
+	renderResetTime(usageData) {
+		if (!usageData) return;
 		const timeInfo = usageData.getResetTimeInfo();
-		this.resetTimeDisplay.innerHTML = getResetTimeHTML(timeInfo);
+		this.elements.resetTime.innerHTML = getResetTimeHTML(timeInfo);
 	}
 }
 
 // Usage UI actor - owns sidebar and chat area usage displays
 class UsageUI {
 	constructor() {
-		this.usageData = null;
+		// State
+		this.state = {
+			usageData: null,
+		};
 
-		// Sidebar elements
-		this.sidebarContainer = null;
+		// Element references
+		this.elements = {
+			sidebar: null,
+			chat: null,
+			tooltips: null,
+		};
+
+		// Sub-component
 		this.usageSection = null;
 
-		// Chat area elements
-		this.chatStatLine = null;
-		this.chatUsageDisplay = null;
-		this.chatProgressBar = null;
-		this.chatUsageTooltip = null;
-
 		this.uiReady = false;
-		this.pendingUpdates = [];
+		this.pendingUpdate = null;
 
 		this.lastUpdateTime = 0;
-		this.updateInterval = 1000; // Sidebar reset time countdown frequency
+		this.updateInterval = 1000;
 
 		this.setupMessageListener();
 		this.init();
 	}
+
+	// ========== SETUP ==========
 
 	setupMessageListener() {
 		browser.runtime.onMessage.addListener((message) => {
@@ -111,107 +121,66 @@ class UsageUI {
 	async init() {
 		await Log('UsageUI: Initializing...');
 
-		// Wait for config to be available
 		while (!config) {
 			await sleep(100);
 		}
 
-		// Build the sidebar UI
-		await this.buildSidebarUI();
+		this.usageSection = new UsageSection();
+		this.elements.sidebar = await this.createSidebarElements();
+		this.elements.chat = this.createChatElements();
+		this.elements.tooltips = this.createTooltips();
+		this.attachTooltips();
 
-		// Build the chat area UI
-		this.buildChatUI();
-
-		// Dispatch version notification check event
-		this.checkVersionNotification();
+		await this.mountSidebar();
 
 		this.uiReady = true;
 		await Log('UsageUI: Ready');
 
-		// Process any updates that arrived before we were ready
-		while (this.pendingUpdates.length > 0) {
-			const usageDataJSON = this.pendingUpdates.shift();
-			this.usageData = UsageData.fromJSON(usageDataJSON);
-			this.updateAllDisplays();
+		// Process pending update (only most recent matters)
+		if (this.pendingUpdate) {
+			this.state.usageData = UsageData.fromJSON(this.pendingUpdate);
+			this.pendingUpdate = null;
+			this.renderAll();
 		}
 
-		// Start the update loop for reset time countdown
 		this.startUpdateLoop();
 	}
 
-	async buildSidebarUI() {
-		// Create main container
-		this.sidebarContainer = document.createElement('div');
-		this.sidebarContainer.className = 'flex flex-col mb-6';
+	// ========== CREATE (pure DOM construction) ==========
 
-		// Build header with settings button
-		const header = this.buildHeader();
-		this.sidebarContainer.appendChild(header);
+	async createSidebarElements() {
+		const container = document.createElement('div');
+		container.className = 'flex flex-col mb-6';
 
-		// Build content area
-		const content = await this.buildContent();
-		this.sidebarContainer.appendChild(content);
+		const header = this.createHeader();
+		const content = document.createElement('div');
+		content.className = 'flex min-h-0 flex-col pl-2';
+		content.style.paddingRight = '0.25rem';
 
-		// Find sidebar and inject
-		const sidebarContainers = await findSidebarContainers();
-		if (sidebarContainers) {
-			const { container, starredSection } = sidebarContainers;
-			container.insertBefore(this.sidebarContainer, starredSection);
-		}
-	}
+		const sectionsContainer = document.createElement('ul');
+		sectionsContainer.className = '-mx-1.5 flex flex-1 flex-col px-1.5 gap-px';
+		sectionsContainer.appendChild(this.usageSection.elements.container);
+		content.appendChild(sectionsContainer);
 
-	buildChatUI() {
-		// Create the shared stat line container
-		this.chatStatLine = document.createElement('div');
-		this.chatStatLine.id = 'ut-chat-stat-line';
-		this.chatStatLine.className = 'ut-row';
+		// Add footers
+		const isElectron = await sendBackgroundMessage({ type: 'isElectron' });
+		if (!isElectron) {
+			const desktopFooter = this.createDesktopFooter();
+			content.appendChild(desktopFooter);
 
-		// Left container for usage elements (owned by UsageUI)
-		const leftContainer = document.createElement('div');
-		leftContainer.id = 'ut-stat-left';
-		leftContainer.className = 'ut-row ut-flex-1';
-
-		// Usage display
-		this.chatUsageDisplay = document.createElement('div');
-		this.chatUsageDisplay.className = 'text-text-400 text-xs';
-		this.chatUsageDisplay.style.whiteSpace = 'nowrap';
-		if (!isMobileView()) this.chatUsageDisplay.style.marginRight = '8px';
-		this.chatUsageDisplay.textContent = 'Quota:';
-
-		leftContainer.appendChild(this.chatUsageDisplay);
-
-		// Progress bar (desktop only)
-		if (!isMobileView()) {
-			this.chatProgressBar = new ProgressBar({ width: "100%" });
-			this.chatProgressBar.container.classList.remove('bg-bg-500');
-			this.chatProgressBar.container.classList.add('bg-bg-200');
-			leftContainer.appendChild(this.chatProgressBar.container);
+			const qolFooter = this.createQoLFooter();
+			if (qolFooter) {
+				content.appendChild(qolFooter);
+			}
 		}
 
-		// Spacer
-		const spacer = document.createElement('div');
-		spacer.className = 'ut-flex-1';
+		container.appendChild(header);
+		container.appendChild(content);
 
-		// Right container for LengthUI elements (will be populated in Phase 2)
-		const rightContainer = document.createElement('div');
-		rightContainer.id = 'ut-stat-right';
-		rightContainer.className = 'ut-row';
-
-		this.chatStatLine.appendChild(leftContainer);
-		this.chatStatLine.appendChild(spacer);
-		this.chatStatLine.appendChild(rightContainer);
-
-		// Create tooltip for usage display
-		this.chatUsageTooltip = document.createElement('div');
-		this.chatUsageTooltip.className = 'bg-bg-500 text-text-000 ut-tooltip font-normal font-ui';
-		this.chatUsageTooltip.textContent = "How much of your quota you've used";
-		this.chatUsageTooltip.style.maxWidth = '400px';
-		this.chatUsageTooltip.style.textAlign = 'left';
-		document.body.appendChild(this.chatUsageTooltip);
-		setupTooltip(this.chatUsageDisplay, this.chatUsageTooltip);
+		return { container };
 	}
 
-	buildHeader() {
+	createHeader() {
 		const header = document.createElement('div');
 		header.className = 'ut-row ut-justify-between';
 
@@ -231,7 +200,6 @@ class UsageUI {
 			</svg>
 		`;
 
-		// Settings button click - dispatch event to FloatingCardsUI
 		settingsButton.addEventListener('click', () => {
 			const buttonRect = settingsButton.getBoundingClientRect();
 			document.dispatchEvent(new CustomEvent('ut:toggleSettings', {
@@ -244,37 +212,7 @@ class UsageUI {
 		return header;
 	}
 
-	async buildContent() {
-		const content = document.createElement('div');
-		content.className = 'flex min-h-0 flex-col pl-2';
-		content.style.paddingRight = '0.25rem';
-
-		// Container for usage section
-		const sectionsContainer = document.createElement('ul');
-		sectionsContainer.className = '-mx-1.5 flex flex-1 flex-col px-1.5 gap-px';
-
-		// Create usage section
-		this.usageSection = new UsageSection();
-		sectionsContainer.appendChild(this.usageSection.container);
-
-		content.appendChild(sectionsContainer);
-
-		// Add footer links if not in Electron
-		const isElectron = await sendBackgroundMessage({ type: 'isElectron' });
-		if (!isElectron) {
-			const desktopFooter = this.buildDesktopFooter();
-			content.appendChild(desktopFooter);
-
-			const qolFooter = this.buildQoLFooter();
-			if (qolFooter) {
-				content.appendChild(qolFooter);
-			}
-		}
-
-		return content;
-	}
-
-	buildDesktopFooter() {
+	createDesktopFooter() {
 		const footer = document.createElement('div');
 		footer.className = 'ut-desktop-footer ut-sidebar-footer mt-1';
 
@@ -289,7 +227,7 @@ class UsageUI {
 		return footer;
 	}
 
-	buildQoLFooter() {
+	createQoLFooter() {
 		const hasQoL = document.documentElement.hasAttribute('data-claude-qol-installed');
 		if (hasQoL) return null;
 
@@ -310,67 +248,171 @@ class UsageUI {
 		return footer;
 	}
 
-	checkVersionNotification() {
-		// Dispatch event to FloatingCardsUI
-		document.dispatchEvent(new CustomEvent('ut:checkVersionNotification'));
+	createChatElements() {
+		// Stat line container
+		const statLine = document.createElement('div');
+		statLine.id = 'ut-chat-stat-line';
+		statLine.className = 'ut-row';
+
+		// Left container (usage)
+		const leftContainer = document.createElement('div');
+		leftContainer.id = 'ut-stat-left';
+		leftContainer.className = 'ut-row ut-flex-1';
+
+		const usageDisplay = document.createElement('div');
+		usageDisplay.className = 'text-text-400 text-xs';
+		usageDisplay.style.whiteSpace = 'nowrap';
+		if (!isMobileView()) usageDisplay.style.marginRight = '8px';
+		usageDisplay.textContent = 'Quota:';
+
+		leftContainer.appendChild(usageDisplay);
+
+		// Progress bar (desktop only)
+		let progressBar = null;
+		if (!isMobileView()) {
+			progressBar = new ProgressBar({ width: '100%' });
+			progressBar.container.classList.remove('bg-bg-500');
+			progressBar.container.classList.add('bg-bg-200');
+			leftContainer.appendChild(progressBar.container);
+		}
+
+		// Spacer
+		const spacer = document.createElement('div');
+		spacer.className = 'ut-flex-1';
+
+		// Right container (for LengthUI)
+		const rightContainer = document.createElement('div');
+		rightContainer.id = 'ut-stat-right';
+		rightContainer.className = 'ut-row';
+
+		// Reset time display
+		const resetDisplay = document.createElement('div');
+		resetDisplay.className = 'text-text-400 text-xs';
+		if (!isMobileView()) resetDisplay.style.marginRight = '8px';
+
+		rightContainer.appendChild(resetDisplay);
+
+		statLine.appendChild(leftContainer);
+		statLine.appendChild(spacer);
+		statLine.appendChild(rightContainer);
+
+		return { statLine, usageDisplay, progressBar, resetDisplay };
 	}
+
+	createTooltips() {
+		const create = (text) => {
+			const tooltip = document.createElement('div');
+			tooltip.className = 'bg-bg-500 text-text-000 ut-tooltip font-normal font-ui';
+			tooltip.textContent = text;
+			tooltip.style.maxWidth = '400px';
+			tooltip.style.textAlign = 'left';
+			document.body.appendChild(tooltip);
+			return tooltip;
+		};
+
+		return {
+			usage: create("How much of your quota you've used"),
+			timer: create('When your usage will reset to full'),
+		};
+	}
+
+	attachTooltips() {
+		setupTooltip(this.elements.chat.usageDisplay, this.elements.tooltips.usage);
+		setupTooltip(this.elements.chat.resetDisplay, this.elements.tooltips.timer);
+	}
+
+	// ========== MOUNT (attach to page) ==========
+
+	async mountSidebar() {
+		const sidebarContainers = await findSidebarContainers();
+		if (!sidebarContainers) return false;
+
+		const { container, starredSection } = sidebarContainers;
+		if (!container.contains(this.elements.sidebar.container)) {
+			container.insertBefore(this.elements.sidebar.container, starredSection);
+		}
+		return true;
+	}
+
+	mountChatArea() {
+		const modelSelector = document.querySelector(config.SELECTORS.MODEL_SELECTOR);
+		if (!modelSelector) return false;
+
+		const selectorLine = modelSelector?.parentElement?.parentElement;
+		if (!selectorLine) return false;
+
+		if (selectorLine.nextElementSibling !== this.elements.chat.statLine) {
+			selectorLine.after(this.elements.chat.statLine);
+		}
+		return true;
+	}
+
+	// ========== RENDER (state → DOM) ==========
+
+	renderAll() {
+		this.renderSidebar();
+		this.renderChatArea();
+	}
+
+	renderSidebar() {
+		const { usageData } = this.state;
+		if (!usageData) return;
+		this.usageSection.render(usageData);
+	}
+
+	renderChatArea() {
+		const { usageData } = this.state;
+		const { usageDisplay, progressBar, resetDisplay } = this.elements.chat;
+
+		if (!usageData) return;
+
+		// Usage percentage
+		const percentage = usageData.getUsagePercentage();
+		const color = usageData.isNearLimit() ? RED_WARNING : BLUE_HIGHLIGHT;
+		usageDisplay.innerHTML = `Quota: <span style="color: ${color}">${percentage.toFixed(1)}%</span>`;
+
+		// Progress bar (desktop only)
+		if (!isMobileView() && progressBar) {
+			const weightedTotal = usageData.getWeightedTotal();
+			const usageCap = usageData.usageCap;
+			progressBar.updateProgress(weightedTotal, usageCap);
+		}
+
+		// Reset time
+		const timeInfo = usageData.getResetTimeInfo();
+		resetDisplay.innerHTML = getResetTimeHTML(timeInfo);
+	}
+
+	renderResetTimes() {
+		const { usageData } = this.state;
+		if (!usageData) return;
+
+		// Sidebar
+		this.usageSection.renderResetTime(usageData);
+
+		// Chat area
+		const timeInfo = usageData.getResetTimeInfo();
+		this.elements.chat.resetDisplay.innerHTML = getResetTimeHTML(timeInfo);
+	}
+
+	// ========== MESSAGE HANDLERS ==========
 
 	handleUsageUpdate(usageDataJSON) {
 		if (!this.uiReady) {
 			Log('UsageUI: Not ready, queueing update');
-			this.pendingUpdates.push(usageDataJSON);
+			this.pendingUpdate = usageDataJSON;
 			return;
 		}
 
-		this.usageData = UsageData.fromJSON(usageDataJSON);
-		this.updateAllDisplays();
+		this.state.usageData = UsageData.fromJSON(usageDataJSON);
+		this.renderAll();
 	}
 
-	updateAllDisplays() {
-		this.updateSidebarSection();
-		this.updateChatUsageDisplay();
-	}
-
-	async updateSidebarSection() {
-		if (!this.usageData || !this.usageSection) return;
-		await this.usageSection.updateFromUsageData(this.usageData);
-	}
-
-	updateChatUsageDisplay() {
-		if (!this.usageData) return;
-
-		const percentage = this.usageData.getUsagePercentage();
-		const color = this.usageData.isNearLimit() ? RED_WARNING : BLUE_HIGHLIGHT;
-
-		// Update usage label with percentage
-		if (this.chatUsageDisplay) {
-			this.chatUsageDisplay.innerHTML = `Quota: <span style="color: ${color}">${percentage.toFixed(1)}%</span>`;
-		}
-
-		// Update progress bar (desktop only)
-		if (!isMobileView() && this.chatProgressBar) {
-			const weightedTotal = this.usageData.getWeightedTotal();
-			const usageCap = this.usageData.usageCap;
-			this.chatProgressBar.updateProgress(weightedTotal, usageCap);
-		}
-	}
-
-	startUpdateLoop() {
-		const update = async (timestamp) => {
-			if (timestamp - this.lastUpdateTime >= this.updateInterval) {
-				this.lastUpdateTime = timestamp;
-				this.updateResetTimeDisplays();
-				await this.checkAndReinject();
-				await this.checkDataExpiry();
-			}
-			requestAnimationFrame(update);
-		};
-		requestAnimationFrame(update);
-	}
-
+	// ========== MISC ==========
 	async checkDataExpiry() {
-		if (this.usageData && this.usageData.isExpired()) {
-			await Log("UsageUI: Usage data expired, triggering reset");
+		const { usageData } = this.state;
+		if (usageData && usageData.isExpired()) {
+			await Log('UsageUI: Usage data expired, triggering reset');
 			const orgId = document.cookie
 				.split('; ')
 				.find(row => row.startsWith('lastActiveOrg='))
@@ -384,36 +426,20 @@ class UsageUI {
 		}
 	}
 
-	updateResetTimeDisplays() {
-		// Update sidebar reset time only
-		// Chat area reset time is handled by LengthUI (Phase 2)
-		if (this.usageData && this.usageSection) {
-			this.usageSection.updateResetTime(this.usageData);
-		}
-	}
+	// ========== UPDATE LOOP ==========
 
-	async checkAndReinject() {
-		// Check sidebar
-		const sidebarContainers = await findSidebarContainers();
-		if (sidebarContainers && !sidebarContainers.container.contains(this.sidebarContainer)) {
-			await Log('UsageUI: Re-injecting sidebar...');
-			sidebarContainers.container.insertBefore(this.sidebarContainer, sidebarContainers.starredSection);
-		}
-
-		// Check chat area stat line
-		await this.checkAndReinjectChatUI();
-	}
-
-	async checkAndReinjectChatUI() {
-		const modelSelector = document.querySelector(config.SELECTORS.MODEL_SELECTOR);
-		if (!modelSelector) return;
-
-		const selectorLine = modelSelector?.parentElement?.parentElement;
-		if (!selectorLine) return;
-
-		if (selectorLine.nextElementSibling !== this.chatStatLine) {
-			selectorLine.after(this.chatStatLine);
-		}
+	startUpdateLoop() {
+		const update = async (timestamp) => {
+			if (timestamp - this.lastUpdateTime >= this.updateInterval) {
+				this.lastUpdateTime = timestamp;
+				this.renderResetTimes();
+				await this.mountSidebar();
+				this.mountChatArea();
+				await this.checkDataExpiry();
+			}
+			requestAnimationFrame(update);
+		};
+		requestAnimationFrame(update);
 	}
 }
 
