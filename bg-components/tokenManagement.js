@@ -1,6 +1,6 @@
 /* global GPTTokenizer_o200k_base */
 import { CONFIG, sleep, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey as getOrgStorageKey } from './utils.js';
-import { UsageData, ConversationData } from './bg-dataclasses.js';
+import { UsageData, ConversationData } from '../shared/dataclasses.js';
 
 // Create component-specific logger
 async function Log(...args) {

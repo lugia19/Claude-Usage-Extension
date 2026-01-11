@@ -1,6 +1,6 @@
 import { CONFIG, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey, sendTabMessage, containerFetch } from './utils.js';
 import { tokenCounter, tokenStorageManager, getTextFromContent } from './tokenManagement.js';
-import { UsageData, ConversationData } from './bg-dataclasses.js';
+import { UsageData, ConversationData } from '../shared/dataclasses.js';
 
 async function Log(...args) {
 	await RawLog("claude-api", ...args);

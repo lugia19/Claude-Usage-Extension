@@ -1,4 +1,4 @@
-/* global config, Log, ProgressBar, findSidebarContainers, sendBackgroundMessage,
+/* global CONFIG, Log, ProgressBar, findSidebarContainers, sendBackgroundMessage,
    setupTooltip, getResetTimeHTML, sleep, isMobileView, UsageData,
    RED_WARNING, BLUE_HIGHLIGHT */
 'use strict';
@@ -121,7 +121,7 @@ class UsageUI {
 	async init() {
 		await Log('UsageUI: Initializing...');
 
-		while (!config) {
+		while (!CONFIG) {
 			await sleep(100);
 		}
 
@@ -335,7 +335,7 @@ class UsageUI {
 	}
 
 	mountChatArea() {
-		const modelSelector = document.querySelector(config.SELECTORS.MODEL_SELECTOR);
+		const modelSelector = document.querySelector(CONFIG.SELECTORS.MODEL_SELECTOR);
 		if (!modelSelector) return false;
 
 		const selectorLine = modelSelector?.parentElement?.parentElement;

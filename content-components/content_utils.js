@@ -30,7 +30,7 @@ browser.storage.local.get('force_debug').then(result => {
 });
 
 // Global variables that will be shared across all content scripts
-let config;
+let CONFIG;
 
 // Logging function
 async function Log(...args) {
@@ -160,14 +160,14 @@ async function waitForElement(target, selector, maxTime = 1000) {
 }
 
 async function getCurrentModel(maxWait = 3000) {
-	const modelSelector = await waitForElement(document, config.SELECTORS.MODEL_PICKER, maxWait);
+	const modelSelector = await waitForElement(document, CONFIG.SELECTORS.MODEL_PICKER, maxWait);
 	if (!modelSelector) return undefined;
 
 	let fullModelName = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim() || 'default';
 	if (!fullModelName || fullModelName === 'default') return undefined;
 
 	fullModelName = fullModelName.toLowerCase();
-	const modelTypes = config.MODELS
+	const modelTypes = CONFIG.MODELS
 
 	for (const modelType of modelTypes) {
 		if (fullModelName.includes(modelType.toLowerCase())) {
@@ -348,7 +348,7 @@ function setupTooltip(element, tooltip, options = {}) {
 // Helper function to find sidebar containers
 async function findSidebarContainers() {
 	// First find the nav element
-	const sidebarNav = document.querySelector(config.SELECTORS.SIDEBAR_NAV);
+	const sidebarNav = document.querySelector(CONFIG.SELECTORS.SIDEBAR_NAV);
 	if (!sidebarNav) {
 		await Log("error", 'Could not find sidebar nav');
 		return null;
@@ -418,7 +418,7 @@ class ProgressBar {
 	updateProgress(total, maxTokens) {
 		const percentage = (total / maxTokens) * 100;
 		this.bar.style.width = `${Math.min(percentage, 100)}%`;
-		this.bar.style.background = total >= maxTokens * config.WARNING.PERCENT_THRESHOLD ? RED_WARNING : BLUE_HIGHLIGHT;
+		this.bar.style.background = total >= maxTokens * CONFIG.WARNING.PERCENT_THRESHOLD ? RED_WARNING : BLUE_HIGHLIGHT;
 		this.tooltip.textContent = `${total.toLocaleString()} / ${maxTokens.toLocaleString()} credits (${percentage.toFixed(1)}%)`;
 	}
 }
@@ -475,13 +475,13 @@ async function initExtension() {
 	window.claudeTrackerInstance = true;
 
 	await injectStyles();
-	config = await sendBackgroundMessage({ type: 'getConfig' });
+	CONFIG = await sendBackgroundMessage({ type: 'getConfig' });
 	await Log("Config received...");
 
 	// Wait for login
 	const LOGIN_CHECK_DELAY = 10000;
 	while (true) {
-		const userMenuButton = await waitForElement(document, config.SELECTORS.USER_MENU_BUTTON, 6000);
+		const userMenuButton = await waitForElement(document, CONFIG.SELECTORS.USER_MENU_BUTTON, 6000);
 		if (userMenuButton) {
 			if (userMenuButton.getAttribute('data-script-loaded')) {
 				await Log('Script already running, stopping duplicate');
@@ -491,8 +491,8 @@ async function initExtension() {
 			break;
 		}
 
-		const initialLoginScreen = document.querySelector(config.SELECTORS.INIT_LOGIN_SCREEN);
-		const verificationLoginScreen = document.querySelector(config.SELECTORS.VERIF_LOGIN_SCREEN);
+		const initialLoginScreen = document.querySelector(CONFIG.SELECTORS.INIT_LOGIN_SCREEN);
+		const verificationLoginScreen = document.querySelector(CONFIG.SELECTORS.VERIF_LOGIN_SCREEN);
 		if (!initialLoginScreen && !verificationLoginScreen) {
 			await Log("error", 'Neither user menu button nor any login screen found');
 			return;

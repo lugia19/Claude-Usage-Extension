@@ -1,5 +1,9 @@
 @echo off
 
+REM Build dataclasses
+echo Building dataclasses...
+node scripts/build-dataclasses.js
+
 REM Chrome build
 echo Starting Chrome build...
 if exist manifest_chrome.json (

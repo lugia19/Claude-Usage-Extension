@@ -1,5 +1,5 @@
 import { CONFIG, sleep, RawLog, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey } from './utils.js';
-import { UsageData, ConversationData } from './bg-dataclasses.js';
+import { UsageData, ConversationData } from '../shared/dataclasses.js';
 import { tokenStorageManager } from './tokenManagement.js';
 // Create component-specific logger
 async function Log(...args) {

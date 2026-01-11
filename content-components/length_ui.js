@@ -1,4 +1,4 @@
-/* global config, Log, setupTooltip, getResetTimeHTML, sleep, sendBackgroundMessage,
+/* global CONFIG, Log, setupTooltip, getResetTimeHTML, sleep, sendBackgroundMessage,
    isMobileView, UsageData, ConversationData, getConversationId, getCurrentModel,
    RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN */
 'use strict';
@@ -49,7 +49,7 @@ class LengthUI {
 	async init() {
 		await Log('LengthUI: Initializing...');
 
-		while (!config) {
+		while (!CONFIG) {
 			await sleep(100);
 		}
 
@@ -128,7 +128,7 @@ class LengthUI {
 	// ========== MOUNT (attach to page) ==========
 
 	mountTitleArea() {
-		const chatMenu = document.querySelector(config.SELECTORS.CHAT_MENU);
+		const chatMenu = document.querySelector(CONFIG.SELECTORS.CHAT_MENU);
 		if (!chatMenu) return false;
 
 		const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
