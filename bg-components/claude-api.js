@@ -1,5 +1,5 @@
 import { CONFIG, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey, sendTabMessage, containerFetch } from './utils.js';
-import { tokenCounter, tokenStorageManager, getTextFromContent } from './tokenManagement.js';
+import { tokenCounter, getTextFromContent } from './tokenManagement.js';
 import { UsageData, ConversationData } from '../shared/dataclasses.js';
 
 async function Log(...args) {
@@ -7,6 +7,7 @@ async function Log(...args) {
 }
 const subscriptionTiersCache = new StoredMap("subscriptionTiers");
 const syncTokenCache = new StoredMap("syncTokens");
+const projectCache = new StoredMap("projectCache");
 
 // Pure HTTP/API layer
 class ClaudeAPI {
@@ -36,6 +37,11 @@ class ClaudeAPI {
 		return new ConversationAPI(conversationId, this);
 	}
 
+	// Fetch usage limits from the /usage endpoint
+	async getUsageLimits() {
+		return this.getRequest(`/organizations/${this.orgId}/usage`);
+	}
+
 	// Platform operations
 	async getGoogleDriveDocument(uri) {
 		return this.getRequest(`/organizations/${this.orgId}/sync/mcp/drive/document/${uri}`);
@@ -47,13 +53,12 @@ class ClaudeAPI {
 		const projectSize = projectStats.use_project_knowledge_search ? 0 : projectStats.knowledge_size;
 
 		// Check cache
-		const cachedAmount = await tokenStorageManager.projectCache.get(projectId) || -1;
+		const cachedAmount = await projectCache.get(projectId) || -1;
 		const isCached = cachedAmount == projectSize;
 
 		// Update cache if this is a new message
 		if (isNewMessage) {
-
-			await tokenStorageManager.projectCache.set(projectId, projectSize, CONFIG.TOKEN_CACHING_DURATION_MS);
+			await projectCache.set(projectId, projectSize, CONFIG.TOKEN_CACHING_DURATION_MS);
 		}
 
 		return {

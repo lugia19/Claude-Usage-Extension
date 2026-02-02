@@ -1,82 +1,147 @@
 /* global CONFIG, Log, ProgressBar, findSidebarContainers, sendBackgroundMessage,
    setupTooltip, getResetTimeHTML, sleep, isMobileView, UsageData,
-   RED_WARNING, BLUE_HIGHLIGHT */
+   RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN */
 'use strict';
 
-// Progress bar component for usage section
+// Usage section with multiple limit bars
 class UsageSection {
 	constructor() {
 		this.elements = this.createElement();
+		this.limitBars = new Map(); // limitKey -> { row, percentage, resetTime, progressBar }
 	}
 
 	createElement() {
 		const container = document.createElement('div');
 		container.className = 'ut-container';
 
-		const topLine = document.createElement('div');
-		topLine.className = 'text-text-000 ut-row text-sm ut-mb-1 ut-select-none';
+		const barsContainer = document.createElement('div');
+		barsContainer.className = 'ut-bars-container';
 
-		const nameContainer = document.createElement('div');
-		nameContainer.className = 'ut-row';
-		nameContainer.style.width = '35%';
+		container.appendChild(barsContainer);
+		return { container, barsContainer };
+	}
+
+	createLimitBar(limitKey) {
+		const row = document.createElement('div');
+		row.className = 'ut-limit-row ut-mb-2';
+
+		const topLine = document.createElement('div');
+		topLine.className = 'text-text-000 ut-row ut-justify-between ut-mb-1 ut-select-none';
+		topLine.style.whiteSpace = 'nowrap';
+
+		const leftSide = document.createElement('div');
+		leftSide.className = 'ut-row';
 
 		const title = document.createElement('span');
 		title.className = 'text-xs';
-		title.textContent = 'All:';
+		title.textContent = this.getLimitLabel(limitKey);
+		title.style.minWidth = '95px';
+		title.style.display = 'inline-block';
 
 		const percentage = document.createElement('span');
 		percentage.className = 'text-xs';
-		percentage.style.marginLeft = '6px';
-		percentage.style.whiteSpace = 'nowrap';
+		percentage.style.minWidth = '30px';
 
-		nameContainer.appendChild(title);
-		nameContainer.appendChild(percentage);
-
-		const statsContainer = document.createElement('div');
-		statsContainer.className = 'text-text-400 ut-row ut-flex-grow text-xs';
+		leftSide.appendChild(title);
+		leftSide.appendChild(percentage);
 
 		const resetTime = document.createElement('div');
-		resetTime.className = 'ut-w-full ut-text-right';
-		resetTime.style.whiteSpace = 'nowrap';
-		resetTime.textContent = 'Reset in: Not set';
+		resetTime.className = 'text-text-400 text-xs';
 
-		statsContainer.appendChild(resetTime);
-		topLine.appendChild(nameContainer);
-		topLine.appendChild(statsContainer);
+		topLine.appendChild(leftSide);
+		topLine.appendChild(resetTime);
 
 		const progressBar = new ProgressBar();
 
-		container.appendChild(topLine);
-		container.appendChild(progressBar.container);
+		row.appendChild(topLine);
+		row.appendChild(progressBar.container);
 
-		return { container, percentage, resetTime, progressBar };
+		return { row, percentage, resetTime, progressBar };
+	}
+
+	getLimitLabel(limitKey) {
+		const labels = {
+			session: 'Session (5h):',
+			weekly: 'Weekly:',
+			sonnetWeekly: 'Sonnet Weekly:',
+			opusWeekly: 'Opus Weekly:'
+		};
+		return labels[limitKey] || limitKey;
 	}
 
 	render(usageData) {
 		if (!usageData) return;
 
-		const { percentage, resetTime, progressBar } = this.elements;
+		const activeLimits = usageData.getActiveLimits();
+		const { barsContainer } = this.elements;
 
-		// Progress bar
-		const weightedTotal = usageData.getWeightedTotal();
-		const usageCap = usageData.usageCap;
-		progressBar.updateProgress(weightedTotal, usageCap);
+		// Track which limits we've seen this render
+		const seenKeys = new Set();
 
-		// Percentage
-		const pct = usageData.getUsagePercentage();
-		const color = usageData.isNearLimit() ? RED_WARNING : BLUE_HIGHLIGHT;
-		percentage.textContent = `${pct.toFixed(1)}%`;
-		percentage.style.color = color;
+		for (const limit of activeLimits) {
+			seenKeys.add(limit.key);
+			let barElements = this.limitBars.get(limit.key);
 
-		// Reset time
-		const timeInfo = usageData.getResetTimeInfo();
-		resetTime.innerHTML = getResetTimeHTML(timeInfo);
+			if (!barElements) {
+				barElements = this.createLimitBar(limit.key);
+				this.limitBars.set(limit.key, barElements);
+				barsContainer.appendChild(barElements.row);
+			}
+
+			const { percentage, resetTime, progressBar } = barElements;
+
+			progressBar.updateProgress(limit.percentage, 100);
+
+			// Override tooltip with estimated token values
+			const cap = CONFIG.ESTIMATED_CAPS?.[usageData.subscriptionTier]?.[limit.key];
+			if (cap) {
+				const used = Math.round((limit.percentage / 100) * cap);
+				progressBar.tooltip.textContent = `${used.toLocaleString()} / ${cap.toLocaleString()} tokens (${limit.percentage.toFixed(0)}%)`;
+			} else {
+				progressBar.tooltip.textContent = `${limit.percentage.toFixed(0)}% used`;
+			}
+
+			const color = limit.percentage >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
+			percentage.textContent = `${limit.percentage.toFixed(0)}%`;
+			percentage.style.color = color;
+
+			resetTime.innerHTML = this.formatResetTime(limit.resetsAt);
+		}
+
+		// Remove bars for limits no longer active
+		for (const [key, barElements] of this.limitBars) {
+			if (!seenKeys.has(key)) {
+				barElements.row.remove();
+				this.limitBars.delete(key);
+			}
+		}
 	}
 
-	renderResetTime(usageData) {
+	formatResetTime(timestamp) {
+		if (!timestamp) return '';
+		const diff = timestamp - Date.now();
+		if (diff <= 0) return `<span style="color: ${SUCCESS_GREEN}">Resetting...</span>`;
+
+		const hours = Math.floor(diff / (1000 * 60 * 60));
+		const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+		if (hours >= 24) {
+			const days = Math.floor(hours / 24);
+			const remainingHours = hours % 24;
+			return `⏱ ${days}d ${remainingHours}h`;
+		}
+		return `⏱ ${hours}h ${minutes}m`;
+	}
+
+	renderResetTimes(usageData) {
 		if (!usageData) return;
-		const timeInfo = usageData.getResetTimeInfo();
-		this.elements.resetTime.innerHTML = getResetTimeHTML(timeInfo);
+
+		for (const limit of usageData.getActiveLimits()) {
+			const barElements = this.limitBars.get(limit.key);
+			if (barElements) {
+				barElements.resetTime.innerHTML = this.formatResetTime(limit.resetsAt);
+			}
+		}
 	}
 }
 
@@ -86,6 +151,8 @@ class UsageUI {
 		// State
 		this.state = {
 			usageData: null,
+			currentModel: null,
+			refreshedExpiredLimits: new Set(), // track which expired limits we've already requested a refresh for
 		};
 
 		// Element references
@@ -263,7 +330,7 @@ class UsageUI {
 		usageDisplay.className = 'text-text-400 text-xs';
 		usageDisplay.style.whiteSpace = 'nowrap';
 		if (!isMobileView()) usageDisplay.style.marginRight = '8px';
-		usageDisplay.textContent = 'Quota:';
+		usageDisplay.textContent = 'Session:';
 
 		leftContainer.appendChild(usageDisplay);
 
@@ -271,8 +338,8 @@ class UsageUI {
 		let progressBar = null;
 		if (!isMobileView()) {
 			progressBar = new ProgressBar({ width: '100%' });
-			progressBar.container.classList.remove('bg-bg-500');
-			progressBar.container.classList.add('bg-bg-200');
+			progressBar.track.classList.remove('bg-bg-500');
+			progressBar.track.classList.add('bg-bg-200');
 			leftContainer.appendChild(progressBar.container);
 		}
 
@@ -339,10 +406,11 @@ class UsageUI {
 		if (!modelSelector) return false;
 
 		const selectorLine = modelSelector?.parentElement?.parentElement;
-		if (!selectorLine) return false;
+		if (!selectorLine?.parentElement) return false;
 
-		if (selectorLine.nextElementSibling !== this.elements.chat.statLine) {
-			selectorLine.after(this.elements.chat.statLine);
+		const parentContainer = selectorLine.parentElement;
+		if (parentContainer.nextElementSibling !== this.elements.chat.statLine) {
+			parentContainer.after(this.elements.chat.statLine);
 		}
 		return true;
 	}
@@ -366,21 +434,41 @@ class UsageUI {
 
 		if (!usageData) return;
 
-		// Usage percentage
-		const percentage = usageData.getUsagePercentage();
-		const color = usageData.isNearLimit() ? RED_WARNING : BLUE_HIGHLIGHT;
-		usageDisplay.innerHTML = `Quota: <span style="color: ${color}">${percentage.toFixed(1)}%</span>`;
+		const session = usageData.limits.session;
+		if (!session) return;
+
+		// Session percentage
+		const color = session.percentage >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
+		usageDisplay.innerHTML = `Session: <span style="color: ${color}">${session.percentage.toFixed(0)}%</span>`;
 
 		// Progress bar (desktop only)
 		if (!isMobileView() && progressBar) {
-			const weightedTotal = usageData.getWeightedTotal();
-			const usageCap = usageData.usageCap;
-			progressBar.updateProgress(weightedTotal, usageCap);
+			progressBar.updateProgress(session.percentage, 100);
+
+			// Override tooltip with estimated token values
+			const cap = CONFIG.ESTIMATED_CAPS?.[usageData.subscriptionTier]?.session;
+			if (cap) {
+				const used = Math.round((session.percentage / 100) * cap);
+				progressBar.tooltip.textContent = `${used.toLocaleString()} / ${cap.toLocaleString()} tokens (${session.percentage.toFixed(0)}%)`;
+			} else {
+				progressBar.tooltip.textContent = `${session.percentage.toFixed(0)}% used`;
+			}
+
+			// Add weekly marker (filter by current model)
+			const modelSelector = document.querySelector(CONFIG.SELECTORS.MODEL_SELECTOR);
+			const modelName = modelSelector?.textContent?.trim() || null;
+			const weeklyLimit = usageData.getBindingWeeklyLimit(modelName);
+			if (weeklyLimit) {
+				const markerLabels = { weekly: 'All Models (Weekly)', sonnetWeekly: 'Sonnet (Weekly)', opusWeekly: 'Opus (Weekly)' };
+				progressBar.setMarker(weeklyLimit.percentage, markerLabels[weeklyLimit.key] || 'All Models (Weekly)');
+			} else {
+				progressBar.clearMarker();
+			}
 		}
 
-		// Reset time
-		const timeInfo = usageData.getResetTimeInfo();
-		resetDisplay.innerHTML = getResetTimeHTML(timeInfo);
+		// Reset time (session)
+		const resetInfo = usageData.getSessionResetInfo();
+		resetDisplay.innerHTML = getResetTimeHTML(resetInfo);
 	}
 
 	renderResetTimes() {
@@ -388,11 +476,11 @@ class UsageUI {
 		if (!usageData) return;
 
 		// Sidebar
-		this.usageSection.renderResetTime(usageData);
+		this.usageSection.renderResetTimes(usageData);
 
 		// Chat area
-		const timeInfo = usageData.getResetTimeInfo();
-		this.elements.chat.resetDisplay.innerHTML = getResetTimeHTML(timeInfo);
+		const resetInfo = usageData.getSessionResetInfo();
+		this.elements.chat.resetDisplay.innerHTML = getResetTimeHTML(resetInfo);
 	}
 
 	// ========== MESSAGE HANDLERS ==========
@@ -405,24 +493,33 @@ class UsageUI {
 		}
 
 		this.state.usageData = UsageData.fromJSON(usageDataJSON);
+		this.state.refreshedExpiredLimits.clear();
 		this.renderAll();
 	}
 
-	// ========== MISC ==========
-	async checkDataExpiry() {
+	// ========== CHECKS ==========
+
+	checkExpiredLimits() {
 		const { usageData } = this.state;
-		if (usageData && usageData.isExpired()) {
-			await Log('UsageUI: Usage data expired, triggering reset');
-			const orgId = document.cookie
-				.split('; ')
-				.find(row => row.startsWith('lastActiveOrg='))
-				?.split('=')[1];
-			if (orgId) {
-				await sendBackgroundMessage({
-					type: 'checkAndResetExpired',
-					orgId: orgId
-				});
+		if (!usageData) return;
+
+		for (const limit of usageData.getActiveLimits()) {
+			if (limit.resetsAt && limit.resetsAt <= Date.now() && !this.state.refreshedExpiredLimits.has(limit.key)) {
+				this.state.refreshedExpiredLimits.add(limit.key);
+				Log(`UsageUI: Limit "${limit.key}" expired, requesting fresh data`);
+				sendBackgroundMessage({ type: 'requestData' });
+				return; // one request is enough, it fetches all limits
 			}
+		}
+	}
+
+	checkModelChange() {
+		const modelSelector = document.querySelector(CONFIG.SELECTORS.MODEL_SELECTOR);
+		const modelName = modelSelector?.textContent?.trim() || null;
+
+		if (modelName && modelName !== this.state.currentModel) {
+			this.state.currentModel = modelName;
+			this.renderChatArea();
 		}
 	}
 
@@ -433,9 +530,10 @@ class UsageUI {
 			if (timestamp - this.lastUpdateTime >= this.updateInterval) {
 				this.lastUpdateTime = timestamp;
 				this.renderResetTimes();
+				this.checkExpiredLimits();
+				this.checkModelChange();
 				await this.mountSidebar();
 				this.mountChatArea();
-				await this.checkDataExpiry();
 			}
 			requestAnimationFrame(update);
 		};

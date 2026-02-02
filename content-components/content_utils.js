@@ -183,25 +183,6 @@ function isMobileView() {
 	return window.innerHeight > window.innerWidth;
 }
 
-async function setupRateLimitMonitoring() {
-	// Set up rate limit event listener
-	window.addEventListener('rateLimitExceeded', async (event) => {
-		await Log("Rate limit exceeded", event.detail);
-		await sendBackgroundMessage({
-			type: 'rateLimitExceeded',
-			detail: event.detail
-		})
-	});
-
-	// Inject external rate limit monitoring script
-	const script = document.createElement('script');
-	script.src = browser.runtime.getURL('injections/rate-limit-watcher.js');
-	script.onload = function () {
-		this.remove();
-	};
-	(document.head || document.documentElement).appendChild(script);
-}
-
 async function setupRequestInterception(patterns) {
 	// Set up event listeners in content script context
 	window.addEventListener('interceptedRequest', async (event) => {
@@ -399,9 +380,12 @@ class ProgressBar {
 		} = options;
 
 		this.container = document.createElement('div');
-		this.container.className = 'bg-bg-500 ut-progress';
+		this.container.className = 'ut-progress';
 		if (width !== '100%') this.container.style.width = width;
-		if (height !== '6px') this.container.style.height = height;
+
+		this.track = document.createElement('div');
+		this.track.className = 'bg-bg-500 ut-progress-track';
+		if (height !== '6px') this.track.style.height = height;
 
 		this.bar = document.createElement('div');
 		this.bar.className = 'ut-progress-bar';
@@ -410,7 +394,8 @@ class ProgressBar {
 		this.tooltip = document.createElement('div');
 		this.tooltip.className = 'bg-bg-500 text-text-000 ut-tooltip';
 
-		this.container.appendChild(this.bar);
+		this.track.appendChild(this.bar);
+		this.container.appendChild(this.track);
 		document.body.appendChild(this.tooltip);
 		setupTooltip(this.container, this.tooltip, { topOffset: 10 });
 	}
@@ -420,6 +405,33 @@ class ProgressBar {
 		this.bar.style.width = `${Math.min(percentage, 100)}%`;
 		this.bar.style.background = total >= maxTokens * CONFIG.WARNING.PERCENT_THRESHOLD ? RED_WARNING : BLUE_HIGHLIGHT;
 		this.tooltip.textContent = `${total.toLocaleString()} / ${maxTokens.toLocaleString()} credits (${percentage.toFixed(1)}%)`;
+	}
+
+	setMarker(percentage, label) {
+		if (!this.marker) {
+			this.marker = document.createElement('div');
+			this.marker.className = 'ut-weekly-marker';
+			this.marker.style.setProperty('--marker-color', RED_WARNING);
+			this.container.style.paddingTop = '10px';
+			this.container.style.marginTop = '-10px';
+			this.container.appendChild(this.marker);
+
+			this.markerTooltip = document.createElement('div');
+			this.markerTooltip.className = 'bg-bg-500 text-text-000 ut-tooltip';
+			document.body.appendChild(this.markerTooltip);
+			setupTooltip(this.marker, this.markerTooltip);
+		}
+		this.marker.style.left = `${Math.min(percentage, 100)}%`;
+		this.marker.style.display = 'block';
+		if (label) this.markerTooltip.textContent = label;
+	}
+
+	clearMarker() {
+		if (this.marker) {
+			this.marker.style.display = 'none';
+			this.container.style.paddingTop = '';
+			this.container.style.marginTop = '';
+		}
 	}
 }
 
@@ -500,8 +512,6 @@ async function initExtension() {
 		await Log('Login screen detected, waiting before retry...');
 		await sleep(LOGIN_CHECK_DELAY);
 	}
-
-	await setupRateLimitMonitoring();
 
 	// Request initial data
 	sendBackgroundMessage({ type: 'requestData' });

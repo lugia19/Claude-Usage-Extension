@@ -6,120 +6,125 @@
 
 class UsageData {
 	constructor(data = {}) {
-		// Raw model data (e.g., { Sonnet: { total: 1000, messageCount: 5 }, Opus: {...} })
-		this.modelData = data.modelData || {};
-		this.resetTimestamp = data.resetTimestamp || null;
-		this.usageCap = data.usageCap || 0;
-		this.subscriptionTier = data.subscriptionTier || 'claude_free';
-		this.isTimestampAuthoritative = data.isTimestampAuthoritative || false;
-	}
-
-	// Calculate weighted total on demand
-	getWeightedTotal() {
-		let weightedTotal = 0;
-		for (const [modelName, data] of Object.entries(this.modelData)) {
-			if (data?.total) {
-				const weight = CONFIG.MODEL_WEIGHTS[modelName] || 1;
-				weightedTotal += data.total * weight;
-			}
-		}
-		return Math.round(weightedTotal);
-	}
-
-	// Get percentage used
-	getUsagePercentage() {
-		if (!this.usageCap) return 0;
-		return (this.getWeightedTotal() / this.usageCap) * 100;
-	}
-
-	// Check if approaching or exceeding limit
-	isNearLimit() {
-		return this.getUsagePercentage() >= (CONFIG.WARNING_THRESHOLD * 100);
-	}
-
-	// Get time until reset
-	getResetTimeInfo() {
-		return {
-			timestamp: this.resetTimestamp,
-			expired: this.resetTimestamp ? this.resetTimestamp <= Date.now() : false
+		// Each limit: { percentage, resetsAt } or null
+		this.limits = {
+			session: data.limits?.session || null,      // five_hour
+			weekly: data.limits?.weekly || null,         // seven_day
+			sonnetWeekly: data.limits?.sonnetWeekly || null,  // seven_day_sonnet (Max only)
+			opusWeekly: data.limits?.opusWeekly || null       // seven_day_opus (Max only)
 		};
+		this.subscriptionTier = data.subscriptionTier || 'claude_free';
 	}
 
-	// Check if data is expired
-	isExpired() {
-		return this.resetTimestamp && Date.now() >= this.resetTimestamp;
-	}
+	static fromAPIResponse(apiResponse, subscriptionTier) {
+		const parseLimit = (obj) => obj ? {
+			percentage: obj.utilization,
+			resetsAt: new Date(obj.resets_at).getTime()
+		} : null;
 
-	// Get model-specific data
-	getModelData(modelName) {
-		return this.modelData[modelName] || { total: 0, messageCount: 0 };
-	}
-
-	// Get total for a specific model (raw, not weighted)
-	getModelTotal(modelName) {
-		return this.getModelData(modelName).total;
-	}
-
-	// Create from storage format (Model data + reset timestamp)
-	static fromModelData(storageData, usageCap, subscriptionTier) {
 		return new UsageData({
-			modelData: storageData || {},
-			resetTimestamp: storageData?.resetTimestamp,
-			isTimestampAuthoritative: storageData?.isTimestampAuthoritative || false,
-			usageCap: usageCap,
-			subscriptionTier: subscriptionTier
+			limits: {
+				session: parseLimit(apiResponse.five_hour),
+				weekly: parseLimit(apiResponse.seven_day),
+				sonnetWeekly: parseLimit(apiResponse.seven_day_sonnet),
+				opusWeekly: parseLimit(apiResponse.seven_day_opus)
+			},
+			subscriptionTier
 		});
 	}
 
-	toModelData() {
-		// Convert to the format used in browser.storage (Model data only)
+	// Convert % to estimated tokens remaining for a limit
+	getEstimatedTokensRemaining(limitKey) {
+		const limit = this.limits[limitKey];
+		if (!limit) return null;
+
+		const cap = CONFIG.ESTIMATED_CAPS?.[this.subscriptionTier]?.[limitKey];
+		if (!cap) return null;
+
+		return ((100 - limit.percentage) / 100) * cap;
+	}
+
+	// Find which limit will run out first given a message cost
+	getLimitingFactor(messageCost) {
+		if (!messageCost || messageCost <= 0) return null;
+
+		let minMessages = Infinity;
+		let limitingKey = null;
+
+		for (const [key, limit] of Object.entries(this.limits)) {
+			if (!limit) continue;
+
+			const tokensRemaining = this.getEstimatedTokensRemaining(key);
+			if (tokensRemaining === null) continue;
+
+			const messagesLeft = tokensRemaining / messageCost;
+			if (messagesLeft < minMessages) {
+				minMessages = messagesLeft;
+				limitingKey = key;
+			}
+		}
+
+		return limitingKey ? { key: limitingKey, messagesLeft: minMessages } : null;
+	}
+
+	// Get all active limits for sidebar display
+	getActiveLimits() {
+		return Object.entries(this.limits)
+			.filter(([_, limit]) => limit !== null)
+			.map(([key, limit]) => ({ key, ...limit }));
+	}
+
+	// Get limits that are at 100% (for notification scheduling)
+	getMaxedLimits() {
+		return this.getActiveLimits().filter(limit => limit.percentage >= 100);
+	}
+
+	// For chat area: most constraining weekly-type limit (for marker)
+	// model: optional model name string (e.g. "Sonnet", "Opus") to filter relevant limits
+	getBindingWeeklyLimit(model) {
+		const keys = ['weekly'];
+		if (model) {
+			const m = model.toLowerCase();
+			if (m.includes('sonnet')) keys.push('sonnetWeekly');
+			if (m.includes('opus')) keys.push('opusWeekly');
+		} else {
+			keys.push('sonnetWeekly', 'opusWeekly');
+		}
+
+
+		let candidates = keys
+			.map(key => this.limits[key] ? { key, ...this.limits[key] } : null)
+			.filter(Boolean);
+
+		// If model is sonnet, remove the weekly limit if sonnetWeekly exists
+		if (model && model.toLowerCase().includes('sonnet')) {
+			candidates.shift(); // remove 'weekly'
+		}
+
+		if (candidates.length === 0) return null;
+		return candidates.reduce((a, b) => a.percentage > b.percentage ? a : b);
+	}
+
+	// Session reset info for countdown display
+	getSessionResetInfo() {
+		const session = this.limits.session;
+		if (!session) return null;
 		return {
-			...this.modelData,
-			resetTimestamp: this.resetTimestamp,
-			isTimestampAuthoritative: this.isTimestampAuthoritative
+			timestamp: session.resetsAt,
+			expired: session.resetsAt <= Date.now()
 		};
 	}
 
 	toJSON() {
 		return {
-			modelData: this.modelData,
-			resetTimestamp: this.resetTimestamp,
-			usageCap: this.usageCap,
-			subscriptionTier: this.subscriptionTier,
-			isTimestampAuthoritative: this.isTimestampAuthoritative
+			limits: this.limits,
+			subscriptionTier: this.subscriptionTier
 		};
 	}
 
 	static fromJSON(json) {
 		return new UsageData(json);
 	}
-
-	addTokensToModel(model, newTokens) {
-		const currentData = this.getModelData(model);
-		this.modelData[model] = {
-			total: currentData.total + newTokens,
-			messageCount: currentData.messageCount + 1
-		};
-	}
-
-	async getHash() {
-		// Create a consistent object for hashing
-		const hashObject = {
-			modelData: this.modelData,
-			resetTimestamp: this.resetTimestamp,
-			isTimestampAuthoritative: this.isTimestampAuthoritative // Include in hash
-		};
-
-		const hash = await crypto.subtle.digest(
-			'SHA-256',
-			new TextEncoder().encode(JSON.stringify(hashObject))
-		);
-
-		return Array.from(new Uint8Array(hash))
-			.map(b => b.toString(16).padStart(2, '0'))
-			.join('');
-	}
-
 }
 
 class ConversationData {

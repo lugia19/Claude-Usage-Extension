@@ -289,26 +289,25 @@ class LengthUI {
 
 	renderEstimate() {
 		const { estimate } = this.elements.statLine;
-		const { usageData, nextMessageCost, currentModel } = this.state;
+		const { usageData, conversationData, currentModel } = this.state;
 
 		const msgPrefix = isMobileView() ? 'Msgs Left: ' : 'Messages left: ';
 
-		if (!getConversationId() || !usageData) {
+		if (!getConversationId() || !usageData || !conversationData) {
 			estimate.innerHTML = `${msgPrefix}<span>N/A</span>`;
 			return;
 		}
 
-		const remainingTokens = usageData.usageCap - usageData.getWeightedTotal();
+		const messageCost = conversationData.getWeightedFutureCost(currentModel);
+		const limiting = usageData.getLimitingFactor(messageCost);
 
-		let estimateValue;
-		if (nextMessageCost > 0 && currentModel) {
-			estimateValue = Math.max(0, remainingTokens / nextMessageCost);
-			estimateValue = estimateValue.toFixed(1);
-		} else {
-			estimateValue = 'N/A';
+		if (!limiting) {
+			estimate.innerHTML = `${msgPrefix}<span>N/A</span>`;
+			return;
 		}
 
-		const color = estimateValue !== 'N/A' && parseFloat(estimateValue) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
+		const estimateValue = limiting.messagesLeft.toFixed(1);
+		const color = parseFloat(estimateValue) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
 		estimate.innerHTML = `${msgPrefix}<span style="color: ${color}">${estimateValue}</span>`;
 	}
 

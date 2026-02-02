@@ -19,8 +19,8 @@ const CONFIG = {
 	],
 	"MODEL_WEIGHTS": {
 		"Sonnet": 1,
-		"Opus": 5,
-		"Haiku": 0.25
+		"Opus": 1.67,
+		"Haiku": 0.33
 	},
 	"WARNING_THRESHOLD": 0.9,
 	"WARNING": {
@@ -60,7 +60,28 @@ const CONFIG = {
 		1000000000
 	],
 	"CACHING_MULTIPLIER": 0.1,
-	"TOKEN_CACHING_DURATION_MS": 5 * 60 * 1000 // 5 minutes
+	"TOKEN_CACHING_DURATION_MS": 5 * 60 * 1000, // 5 minutes
+	// Placeholder values - to be calibrated via testing
+	"ESTIMATED_CAPS": {
+		"claude_free": {
+			"session": 50000,
+			"weekly": 150000
+		},
+		"claude_pro": {
+			"session": 150000,
+			"weekly": 500000
+		},
+		"claude_max_5x": {
+			"session": 750000,
+			"weekly": 2500000,
+			"sonnetWeekly": 2500000
+		},
+		"claude_max_20x": {
+			"session": 3000000,
+			"weekly": 10000000,
+			"sonnetWeekly": 10000000
+		}
+	}
 };
 
 const isElectron = chrome.action === undefined;

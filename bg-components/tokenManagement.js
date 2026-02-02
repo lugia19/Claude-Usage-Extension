@@ -1,6 +1,5 @@
 /* global GPTTokenizer_o200k_base */
-import { CONFIG, sleep, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey as getOrgStorageKey } from './utils.js';
-import { UsageData, ConversationData } from '../shared/dataclasses.js';
+import { CONFIG, sleep, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, removeStorageValue } from './utils.js';
 
 // Create component-specific logger
 async function Log(...args) {
@@ -257,55 +256,10 @@ class TokenCounter {
 	}
 }
 
-// Token storage manager
+// Token storage manager (simplified - only org ID tracking and total tokens)
 class TokenStorageManager {
 	constructor() {
-		this.firebase_base_url = "https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app";
 		this.orgIds = undefined;
-		this.capHits = new StoredMap("capHits");
-		this.projectCache = new StoredMap("projectCache");
-
-		// Lock system
-		this.currentLock = null;
-		this.lockCounter = 0;
-		this.lockAcquiredAt = null;
-		this.LOCK_TIMEOUT = 30000;
-	}
-
-	async acquireLock(lockerId = null) {
-		if (!lockerId) {
-			lockerId = `lock_${++this.lockCounter}_${Date.now()}`;
-		}
-
-		const startTime = Date.now();
-
-		while (this.currentLock && this.currentLock !== lockerId) {
-			// Check for timeout
-			const elapsedTime = Date.now() - startTime;
-			if (elapsedTime > this.LOCK_TIMEOUT) {
-				await Log("error", `Lock timeout. Force releasing stale lock: ${this.currentLock}`);
-
-				// Force release if stale
-				if (this.lockAcquiredAt && Date.now() - this.lockAcquiredAt > this.LOCK_TIMEOUT) {
-					this.currentLock = null;
-					this.lockAcquiredAt = null;
-				}
-			}
-
-			await sleep(50);
-		}
-
-		// Acquire lock
-		this.currentLock = lockerId;
-		this.lockAcquiredAt = Date.now();
-		return lockerId;
-	}
-
-	releaseLock(lockerId) {
-		if (this.currentLock === lockerId) {
-			this.currentLock = null;
-			this.lockAcquiredAt = null;
-		}
 	}
 
 	async ensureOrgIds() {
@@ -314,140 +268,15 @@ class TokenStorageManager {
 			const orgIds = await getStorageValue('orgIds', []);
 			this.orgIds = new Set(orgIds);
 		} catch (error) {
-			this.orgIds = new Set(); // Return empty Set if there's an error
+			this.orgIds = new Set();
 		}
-		return;
 	}
 
 	async addOrgId(orgId) {
 		await this.ensureOrgIds();
-		this.orgIds.add(orgId);
-		await setStorageValue('orgIds', Array.from(this.orgIds));
-	}
-
-	async checkAndCleanExpiredData(orgId = null, lockerId = null) {
-		// If no orgId provided, check all orgs
-		if (!orgId) {
-			await this.ensureOrgIds();
-			let wasOrgDataCleared = false;
-			for (const org of this.orgIds) {
-				const result = await this.checkAndCleanExpiredData(org, lockerId);  // Recursive call with specific orgId
-				if (result) wasOrgDataCleared = true;
-			}
-			return wasOrgDataCleared;
-		}
-
-		// Single org - USE THE SAME LOCK as addTokensToModel
-		const myLockerId = await this.acquireLock(lockerId);
-
-		try {
-			const allModelData = await getStorageValue(getOrgStorageKey(orgId, 'models'));
-			if (!allModelData || !allModelData.resetTimestamp) return false;
-
-			if (Date.now() >= allModelData.resetTimestamp) {
-				await setStorageValue(getOrgStorageKey(orgId, 'models'), {});
-				return true;
-			}
-			return false;
-		} finally {
-			this.releaseLock(myLockerId);
-		}
-	}
-
-	async getUsageData(orgId, subscriptionTier, lockerId = null) {
-		await this.checkAndCleanExpiredData(orgId, lockerId);
-		const allModelData = await getStorageValue(getOrgStorageKey(orgId, 'models')) || {};
-
-
-		// Get usage cap
-		const baseline = CONFIG.USAGE_CAP.BASELINE;
-		const tierMultiplier = CONFIG.USAGE_CAP.MULTIPLIERS[subscriptionTier];
-		const usageCap = baseline * tierMultiplier;
-
-		return UsageData.fromModelData(allModelData, usageCap, subscriptionTier);
-	}
-
-	async addTokensToModel(orgId, model, newTokens, subscriptionTier, lockerId = null) {
-		const myLockerId = await this.acquireLock(lockerId);
-
-		try {
-			this.storageLock = true;
-
-			// Get current usage data
-			const usageData = await this.getUsageData(orgId, subscriptionTier, myLockerId);
-
-			// Check if expired and reset if needed
-			if (usageData.isExpired()) {
-				await Log("Usage data expired, resetting all models");
-				// Create fresh usage data with just a reset timestamp
-				const freshUsageData = new UsageData({
-					resetTimestamp: this.#getResetFromNow().getTime(),
-					usageCap: usageData.usageCap,
-					subscriptionTier: usageData.subscriptionTier
-				});
-				await setStorageValue(getOrgStorageKey(orgId, 'models'), freshUsageData.toModelData());
-
-				// Use the fresh data
-				usageData.modelData = {};
-				usageData.resetTimestamp = freshUsageData.resetTimestamp;
-			}
-
-			// Initialize reset timestamp if it doesn't exist
-			if (!usageData.resetTimestamp) {
-				usageData.resetTimestamp = this.#getResetFromNow().getTime();
-			}
-
-			// Add the tokens to the model
-			usageData.addTokensToModel(model, newTokens);
-
-			// Save back to storage
-			await setStorageValue(getOrgStorageKey(orgId, 'models'), usageData.toModelData());
-			await setStorageValue('totalTokensTracked', await this.getTotalTokens() + newTokens);
-
-			return usageData.getModelData(model);
-		} finally {
-			this.releaseLock(myLockerId);
-		}
-	}
-
-	#getResetFromNow() {
-		const hourStart = new Date();
-		hourStart.setMinutes(0, 0, 0);
-		const resetTime = new Date(hourStart);
-		resetTime.setHours(hourStart.getHours() + 5);
-		return resetTime;
-	}
-
-	async addCapHit(orgId, model, subscriptionTier) {
-		await sleep(15000);
-		const usageData = await this.getUsageData(orgId, subscriptionTier);
-
-		if (!usageData.resetTimestamp) return;
-
-		const key = `${orgId}:${usageData.resetTimestamp}`;
-		const hasApiKey = !!(await getStorageValue('apiKey'));
-
-		// Get weighted total and model breakdown
-		const weightedTotal = usageData.getWeightedTotal();
-		const modelBreakdown = {};
-
-		for (const [modelName, modelData] of Object.entries(usageData.modelData)) {
-			if (modelData?.total) {
-				modelBreakdown[modelName] = modelData.total;
-			}
-		}
-
-		// Only add if not already present
-		if (!(await this.capHits.has(key))) {
-			await this.capHits.set(key, {
-				total: `${weightedTotal}/${usageData.usageCap}`,
-				weightedTotal: weightedTotal,
-				models: modelBreakdown,
-				reset_time: usageData.resetTimestamp,
-				warning_time: new Date().toISOString(),
-				tier: subscriptionTier || "unknown",
-				accurateCount: hasApiKey
-			});
+		if (!this.orgIds.has(orgId)) {
+			this.orgIds.add(orgId);
+			await setStorageValue('orgIds', Array.from(this.orgIds));
 		}
 	}
 
@@ -455,55 +284,9 @@ class TokenStorageManager {
 		return await getStorageValue('totalTokensTracked', 0);
 	}
 
-	// Helpers for firebase
-	async clearModelData(orgId, lockerId = null) {
-		const myLockerId = await this.acquireLock(lockerId);
-		try {
-			await setStorageValue(getOrgStorageKey(orgId, 'models'), {});
-		} finally {
-			this.releaseLock(myLockerId);
-		}
-	}
-
-	async setUsageData(orgId, usageData, lockerId = null) {
-		const myLockerId = await this.acquireLock(lockerId);
-		try {
-			await setStorageValue(
-				getOrgStorageKey(orgId, 'models'),
-				usageData.toModelData()
-			);
-		} finally {
-			this.releaseLock(myLockerId);
-		}
-	}
-
-	async updateAuthoritativeTimestamp(orgId, timestampInSeconds) {
-		const lockerId = `auth_timestamp_${Date.now()}`;
-		const myLockerId = await this.acquireLock(lockerId);
-
-		try {
-			// Convert seconds to milliseconds
-			const timestampInMs = timestampInSeconds * 1000;
-
-			// Get current usage data - let tier default to claude_free, doesn't matter
-			const usageData = await this.getUsageData(orgId, 'claude_free', myLockerId);
-
-			// Update timestamp and mark as authoritative
-			usageData.resetTimestamp = timestampInMs;
-			usageData.isTimestampAuthoritative = true;
-
-			// Save back to storage
-			await setStorageValue(
-				getOrgStorageKey(orgId, 'models'),
-				usageData.toModelData()
-			);
-
-			await Log(`Updated authoritative timestamp for org ${orgId} to ${new Date(timestampInMs).toISOString()}`);
-
-			return true;
-		} finally {
-			this.releaseLock(myLockerId);
-		}
+	async addToTotalTokens(tokens) {
+		const current = await this.getTotalTokens();
+		await setStorageValue('totalTokensTracked', current + tokens);
 	}
 }
 
