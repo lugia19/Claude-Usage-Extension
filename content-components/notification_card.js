@@ -331,12 +331,6 @@ class SettingsCard extends FloatingCard {
 		debugButton.textContent = 'Debug Logs';
 		debugButton.className = 'bg-bg-300 border border-border-400 text-text-400 ut-button text-sm';
 
-		const resetButton = document.createElement('button');
-		resetButton.textContent = 'Reset Quota';
-		resetButton.className = 'ut-button text-sm';
-		resetButton.style.background = RED_WARNING;
-		resetButton.style.color = 'white';
-
 		// Event listeners
 		debugButton.addEventListener('click', async () => {
 			const result = await sendBackgroundMessage({
@@ -347,54 +341,6 @@ class SettingsCard extends FloatingCard {
 				window.location.href = browser.runtime.getURL('debug.html');
 			} else {
 				this.remove();
-			}
-		});
-
-		resetButton.addEventListener('click', async () => {
-			// Show confirmation dialog
-			const confirmation = confirm(
-				'Are you sure you want to reset usage data for this organization?\n\n' +
-				'This will reset ALL models\' usage counters to zero and sync this reset across all your devices. ' +
-				'This action cannot be undone.'
-			);
-
-			if (confirmation) {
-				const originalText = resetButton.textContent;
-				try {
-					// Show loading state
-					resetButton.textContent = 'Resetting...';
-					resetButton.disabled = true;
-
-					// Send reset message to background (sendBackgroundMessage already handles orgId)
-					const result = await sendBackgroundMessage({
-						type: 'resetOrgData'
-					});
-
-					if (result) {
-						// Show success message
-						resetButton.textContent = 'Reset Complete!';
-						resetButton.style.background = SUCCESS_GREEN;
-
-						// Reset button after delay
-						setTimeout(() => {
-							resetButton.textContent = originalText;
-							resetButton.style.background = RED_WARNING;
-							resetButton.disabled = false;
-						}, 2000);
-					} else {
-						throw new Error('Reset failed');
-					}
-				} catch (error) {
-					// Show error
-					resetButton.textContent = 'Reset Failed';
-					await Log("error", 'Reset failed:', error);
-
-					// Reset button after delay
-					setTimeout(() => {
-						resetButton.textContent = originalText;
-						resetButton.disabled = false;
-					}, 2000);
-				}
 			}
 		});
 
@@ -420,7 +366,6 @@ class SettingsCard extends FloatingCard {
 		this.element.appendChild(input);
 		buttonContainer.appendChild(saveButton);
 		buttonContainer.appendChild(debugButton);
-		buttonContainer.appendChild(resetButton);
 		this.element.appendChild(buttonContainer);
 
 		this.addCloseButton();

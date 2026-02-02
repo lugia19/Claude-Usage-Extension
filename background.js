@@ -2,10 +2,8 @@ import './lib/browser-polyfill.min.js';
 import './lib/o200k_base.js';
 import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addContainerFetchListener, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './bg-components/utils.js';
 import { tokenStorageManager, tokenCounter, getTextFromContent } from './bg-components/tokenManagement.js';
-import { firebaseSyncManager } from './bg-components/firebase.js';
-import { UsageData, ConversationData } from './bg-components/bg-dataclasses.js';
 import { ClaudeAPI, ConversationAPI } from './bg-components/claude-api.js';
-import { scheduleAlarm, clearAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
+import { scheduleAlarm, createNotification } from './bg-components/electron-compat.js';
 
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
@@ -109,24 +107,6 @@ if (!isElectron) {
 		["responseHeaders"]
 	);
 
-	// Tab listeners
-	// Track focused/visible claude.ai tabs
-	browser.tabs.onActivated.addListener((activeInfo) =>
-		runOnceInitialized(updateSyncAlarmIntervalAndFetchData, [activeInfo.tabId])
-	);
-
-	// Handle tab updates
-	browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-		if (changeInfo.url?.includes('claude.ai') || tab.url?.includes('claude.ai')) {
-			runOnceInitialized(updateSyncAlarmIntervalAndFetchData, [tabId]);
-		}
-	});
-
-	// Handle tab closing
-	browser.tabs.onRemoved.addListener((tabId, removeInfo) =>
-		runOnceInitialized(updateSyncAlarmIntervalAndFetchData, [tabId, true])
-	);
-
 	addContainerFetchListener();
 }
 
@@ -135,14 +115,6 @@ async function handleAlarm(alarmName) {
 	await Log("Alarm triggered:", alarmName);
 
 	await tokenStorageManager.ensureOrgIds();
-
-	if (alarmName === 'firebaseSync') {
-		await firebaseSyncManager.syncWithFirebase();
-	}
-
-	if (alarmName === 'capHitsSync') {
-		await firebaseSyncManager.syncCapHits();
-	}
 
 	if (alarmName.startsWith('notifyReset_')) {
 		// Handle notification alarm
@@ -160,9 +132,7 @@ async function handleAlarm(alarmName) {
 			await Log("error", "Failed to create notification:", error);
 		}
 
-		const orgId = alarmName.split('_')[1];
 		await Log(`Notification sent`);
-		await firebaseSyncManager.triggerReset(orgId);
 	}
 }
 
@@ -177,48 +147,6 @@ if (chrome.alarms) {
 
 //#endregion
 
-//#region Alarms
-async function updateSyncAlarmIntervalAndFetchData(sourceTabId, fromRemovedEvent = false) {
-	const allClaudeTabs = await browser.tabs.query({ url: "*://claude.ai/*" });
-	let state;
-	let desiredInterval;
-
-	if (allClaudeTabs.length === 0 || (fromRemovedEvent && allClaudeTabs.length <= 1)) {
-		state = 'none';
-		desiredInterval = CONFIG.SYNC_INTERVALS.none;
-	} else {
-		const activeClaudeTabs = await browser.tabs.query({ url: "*://claude.ai/*", active: true });
-		if (activeClaudeTabs.length > 0) {
-			state = 'active';
-			desiredInterval = CONFIG.SYNC_INTERVALS.active;
-		} else {
-			state = 'inactive';
-			desiredInterval = CONFIG.SYNC_INTERVALS.inactive;
-		}
-	}
-	await Log("Current state:", state, "Desired interval:", desiredInterval);
-
-	const currentAlarm = await getAlarm('firebaseSync');
-	const isStateChange = !currentAlarm || currentAlarm.periodInMinutes !== desiredInterval;
-	//const wasActive = currentAlarm && currentAlarm.periodInMinutes === CONFIG.SYNC_INTERVALS.active;
-
-	if (isStateChange) {
-		await clearAlarm('firebaseSync');
-		await scheduleAlarm('firebaseSync', { periodInMinutes: desiredInterval });
-		await Log(`Updated firebaseSync alarm to ${desiredInterval} minutes (state: ${state})`);
-
-		// Trigger sync if we're changing to or from active state
-		if (state === 'active' && sourceTabId) {
-			await Log("Changed to active, triggering immediate sync! Ensuring we have the orgId first.")
-			const orgId = await requestActiveOrgId(sourceTabId);
-			await tokenStorageManager.addOrgId(orgId);
-			await firebaseSyncManager.syncWithFirebase();
-		}
-	}
-}
-
-scheduleAlarm('capHitsSync', { periodInMinutes: 10 });
-Log("Firebase alarms created.");
 //#endregion
 
 
@@ -332,9 +260,6 @@ messageRegistry.register('getUsageCap', async (message, sender, orgId) => {
 	return usageData.usageCap;
 });
 
-messageRegistry.register('resetOrgData', (message, sender, orgId) => firebaseSyncManager.triggerReset(orgId));
-
-
 messageRegistry.register('rateLimitExceeded', async (message, sender, orgId) => {
 	// Only add reset if we actually exceeded the limit
 	if (message?.detail?.type === 'exceeded_limit') {
@@ -424,22 +349,6 @@ async function openDebugPage() {
 	return 'fallback';
 }
 messageRegistry.register(openDebugPage);
-
-messageRegistry.register('electronTabActivated', (message, sender) => {
-	updateSyncAlarmIntervalAndFetchData(sender.tab.id);
-	return true;
-});
-
-messageRegistry.register('electronTabDeactivated', (message, sender) => {
-	updateSyncAlarmIntervalAndFetchData(sender.tab.id);
-	return true;
-});
-
-messageRegistry.register('electronTabRemoved', (message, sender) => {
-	updateSyncAlarmIntervalAndFetchData(sender.tab.id, true);
-	return true;
-});
-
 
 messageRegistry.register('checkAndResetExpired', async (message, sender, orgId) => {
 	await Log(`UI triggered reset check for org ${orgId}`);
@@ -744,13 +653,11 @@ async function processNextTask() {
 //#region Variable fill in and initialization
 pendingRequests = new StoredMap("pendingRequests"); // conversationId -> {userId, tabId}
 scheduledNotifications = new StoredMap('scheduledNotifications');
-firebaseSyncManager.setUpdateAllTabsCallback(updateAllTabsWithUsage);
 
 isInitialized = true;
 for (const handler of functionsPendingUntilInitialization) {
 	handler.fn(...handler.args);
 }
 functionsPendingUntilInitialization = [];
-updateSyncAlarmIntervalAndFetchData();
 Log("Done initializing.")
 //#endregion

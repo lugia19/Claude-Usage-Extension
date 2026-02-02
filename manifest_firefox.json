@@ -2,7 +2,7 @@
 	"manifest_version": 3,
 	"name": "Claude Usage Tracker",
 	"version": "4.1.3",
-	"description": "Helps you track your claude.ai usage caps based on tokens sent, and syncs across devices using firebase.",
+	"description": "Helps you track your claude.ai usage caps based on tokens sent.",
 	"author": "lugia19",
 	"browser_specific_settings": {
 		"gecko": {

@@ -22,11 +22,6 @@ const CONFIG = {
 		"Opus": 5,
 		"Haiku": 0.25
 	},
-	"SYNC_INTERVALS": {
-		"none": 30,
-		"inactive": 10,
-		"active": 4
-	},
 	"WARNING_THRESHOLD": 0.9,
 	"WARNING": {
 		"PERCENT_THRESHOLD": 0.9,
