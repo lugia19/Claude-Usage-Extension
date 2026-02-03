@@ -1,6 +1,6 @@
 /* global CONFIG, Log, setupTooltip, getResetTimeHTML, sleep, sendBackgroundMessage,
    isMobileView, UsageData, ConversationData, getConversationId, getCurrentModel,
-   RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN */
+   RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS */
 'use strict';
 
 // Length UI actor - handles all conversation-related displays
@@ -128,7 +128,7 @@ class LengthUI {
 	// ========== MOUNT (attach to page) ==========
 
 	mountTitleArea() {
-		const chatMenu = document.querySelector(CONFIG.SELECTORS.CHAT_MENU);
+		const chatMenu = document.querySelector(SELECTORS.CHAT_MENU);
 		if (!chatMenu) return false;
 
 		const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');

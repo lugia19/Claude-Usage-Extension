@@ -2,6 +2,20 @@ import { CONFIG, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValu
 import { tokenCounter, getTextFromContent } from './tokenManagement.js';
 import { UsageData, ConversationData } from '../shared/dataclasses.js';
 
+const FEATURE_COSTS = {
+	"enabled_artifacts_attachments": 2200,
+	"preview_feature_uses_artifacts": 8400,
+	"preview_feature_uses_latex": 200,
+	"enabled_bananagrams": 750,
+	"enabled_sourdough": 900,
+	"enabled_focaccia": 1350,
+	"enabled_web_search": 10250,
+	"citation_info": 450,
+	"compass_mode": 1000,
+	"profile_preferences": 850,
+	"enabled_tumeric": 2000
+};
+
 async function Log(...args) {
 	await RawLog("claude-api", ...args);
 }
@@ -98,7 +112,7 @@ class ClaudeAPI {
 		const profileData = await this.getRequest('/account_profile');
 		let totalTokens = 0;
 		if (profileData.conversation_preferences) {
-			totalTokens = await tokenCounter.countText(profileData.conversation_preferences) + CONFIG.FEATURE_COSTS["profile_preferences"];
+			totalTokens = await tokenCounter.countText(profileData.conversation_preferences) + FEATURE_COSTS["profile_preferences"];
 		}
 		await Log(`Profile tokens: ${totalTokens}`);
 		return totalTokens;
@@ -466,16 +480,16 @@ class ConversationAPI {
 		// Add settings costs
 		for (const [setting, enabled] of Object.entries(conversationData.settings)) {
 			await Log("Setting:", setting, enabled);
-			if (enabled && CONFIG.FEATURE_COSTS[setting]) {
-				lengthTokens += CONFIG.FEATURE_COSTS[setting];
-				costTokens += CONFIG.FEATURE_COSTS[setting] * CONFIG.CACHING_MULTIPLIER;
+			if (enabled && FEATURE_COSTS[setting]) {
+				lengthTokens += FEATURE_COSTS[setting];
+				costTokens += FEATURE_COSTS[setting] * CONFIG.CACHING_MULTIPLIER;
 			}
 		}
 
 		if ("enabled_web_search" in conversationData.settings || "enabled_bananagrams" in conversationData.settings) {
 			if (conversationData.settings?.enabled_websearch || conversationData.settings?.enabled_bananagrams) {
-				lengthTokens += CONFIG.FEATURE_COSTS["citation_info"];
-				costTokens += CONFIG.FEATURE_COSTS["citation_info"] * CONFIG.CACHING_MULTIPLIER;
+				lengthTokens += FEATURE_COSTS["citation_info"];
+				costTokens += FEATURE_COSTS["citation_info"] * CONFIG.CACHING_MULTIPLIER;
 			}
 		}
 

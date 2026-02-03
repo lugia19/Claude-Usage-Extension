@@ -1,6 +1,6 @@
 /* global CONFIG, Log, ProgressBar, findSidebarContainers, sendBackgroundMessage,
    setupTooltip, getResetTimeHTML, sleep, isMobileView, UsageData,
-   RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN */
+   RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS */
 'use strict';
 
 // Usage section with multiple limit bars
@@ -402,7 +402,7 @@ class UsageUI {
 	}
 
 	mountChatArea() {
-		const modelSelector = document.querySelector(CONFIG.SELECTORS.MODEL_SELECTOR);
+		const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
 		if (!modelSelector) return false;
 
 		const selectorLine = modelSelector?.parentElement?.parentElement;
@@ -455,7 +455,7 @@ class UsageUI {
 			}
 
 			// Add weekly marker (filter by current model)
-			const modelSelector = document.querySelector(CONFIG.SELECTORS.MODEL_SELECTOR);
+			const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
 			const modelName = modelSelector?.textContent?.trim() || null;
 			const weeklyLimit = usageData.getBindingWeeklyLimit(modelName);
 			if (weeklyLimit) {
@@ -514,7 +514,7 @@ class UsageUI {
 	}
 
 	checkModelChange() {
-		const modelSelector = document.querySelector(CONFIG.SELECTORS.MODEL_SELECTOR);
+		const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
 		const modelName = modelSelector?.textContent?.trim() || null;
 
 		if (modelName && modelName !== this.state.currentModel) {

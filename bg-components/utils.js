@@ -1,6 +1,5 @@
 // Configuration object (moved from constants.json)
 const CONFIG = {
-	UI_UPDATE_INTERVAL_MS: 3000,
 	"OUTPUT_TOKEN_MULTIPLIER": 5,
 	"USAGE_CAP": {
 		"BASELINE": 700000,
@@ -28,30 +27,7 @@ const CONFIG = {
 		"LENGTH": 50000,
 		"COST": 250000
 	},
-	"SELECTORS": {
-		"MODEL_PICKER": "[data-testid=\"model-selector-dropdown\"]",
-		"USER_MENU_BUTTON": "button[data-testid=\"user-menu-button\"]",
-		"SIDEBAR_NAV": "nav.flex",
-		"SIDEBAR_CONTAINER": ".overflow-y-auto.overflow-x-hidden.flex.flex-col.gap-4",
-		"CHAT_MENU": "[data-testid=\"chat-menu-trigger\"]",
-		"MODEL_SELECTOR": "[data-testid=\"model-selector-dropdown\"]",
-		"INIT_LOGIN_SCREEN": "button[data-testid=\"login-with-google\"]",
-		"VERIF_LOGIN_SCREEN": "input[data-testid=\"code\"]"
-	},
 	"BASE_SYSTEM_PROMPT_LENGTH": 3200,
-	"FEATURE_COSTS": {
-		"enabled_artifacts_attachments": 2200,
-		"preview_feature_uses_artifacts": 8400,
-		"preview_feature_uses_latex": 200,
-		"enabled_bananagrams": 750,
-		"enabled_sourdough": 900,
-		"enabled_focaccia": 1350,
-		"enabled_web_search": 10250,
-		"citation_info": 450,
-		"compass_mode": 1000,
-		"profile_preferences": 850,
-		"enabled_tumeric": 2000
-	},
 	"DONATION_TOKEN_THRESHOLDS": [
 		10000000,
 		50000000,

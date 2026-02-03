@@ -4,6 +4,16 @@
 const BLUE_HIGHLIGHT = "#2c84db";
 const RED_WARNING = "#de2929";
 const SUCCESS_GREEN = "#22c55e";
+
+const SELECTORS = {
+	MODEL_PICKER: '[data-testid="model-selector-dropdown"]',
+	USER_MENU_BUTTON: 'button[data-testid="user-menu-button"]',
+	SIDEBAR_NAV: 'nav.flex',
+	CHAT_MENU: '[data-testid="chat-menu-trigger"]',
+	MODEL_SELECTOR: '[data-testid="model-selector-dropdown"]',
+	INIT_LOGIN_SCREEN: 'button[data-testid="login-with-google"]',
+	VERIF_LOGIN_SCREEN: 'input[data-testid="code"]'
+};
 // Dynamic debug setting - will be loaded from storage
 let FORCE_DEBUG = true;
 // Load FORCE_DEBUG from storage and set up error handlers
@@ -160,7 +170,7 @@ async function waitForElement(target, selector, maxTime = 1000) {
 }
 
 async function getCurrentModel(maxWait = 3000) {
-	const modelSelector = await waitForElement(document, CONFIG.SELECTORS.MODEL_PICKER, maxWait);
+	const modelSelector = await waitForElement(document, SELECTORS.MODEL_PICKER, maxWait);
 	if (!modelSelector) return undefined;
 
 	let fullModelName = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim() || 'default';
@@ -329,7 +339,7 @@ function setupTooltip(element, tooltip, options = {}) {
 // Helper function to find sidebar containers
 async function findSidebarContainers() {
 	// First find the nav element
-	const sidebarNav = document.querySelector(CONFIG.SELECTORS.SIDEBAR_NAV);
+	const sidebarNav = document.querySelector(SELECTORS.SIDEBAR_NAV);
 	if (!sidebarNav) {
 		await Log("error", 'Could not find sidebar nav');
 		return null;
@@ -493,7 +503,7 @@ async function initExtension() {
 	// Wait for login
 	const LOGIN_CHECK_DELAY = 10000;
 	while (true) {
-		const userMenuButton = await waitForElement(document, CONFIG.SELECTORS.USER_MENU_BUTTON, 6000);
+		const userMenuButton = await waitForElement(document, SELECTORS.USER_MENU_BUTTON, 6000);
 		if (userMenuButton) {
 			if (userMenuButton.getAttribute('data-script-loaded')) {
 				await Log('Script already running, stopping duplicate');
@@ -503,8 +513,8 @@ async function initExtension() {
 			break;
 		}
 
-		const initialLoginScreen = document.querySelector(CONFIG.SELECTORS.INIT_LOGIN_SCREEN);
-		const verificationLoginScreen = document.querySelector(CONFIG.SELECTORS.VERIF_LOGIN_SCREEN);
+		const initialLoginScreen = document.querySelector(SELECTORS.INIT_LOGIN_SCREEN);
+		const verificationLoginScreen = document.querySelector(SELECTORS.VERIF_LOGIN_SCREEN);
 		if (!initialLoginScreen && !verificationLoginScreen) {
 			await Log("error", 'Neither user menu button nor any login screen found');
 			return;
