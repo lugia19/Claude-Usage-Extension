@@ -1,6 +1,8 @@
 /* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN */
 'use strict';
 
+const DONATION_TOKEN_THRESHOLDS = [10000000, 50000000, 100000000, 300000000, 1000000000];
+
 // Draggable functionality for cards
 function makeDraggable(element, dragHandle = null) {
 	let isDragging = false;
@@ -133,121 +135,55 @@ class FloatingCard {
 	}
 }
 
-// Version/donation notification card
-class VersionNotificationCard extends FloatingCard {
-	constructor(donationInfo) {
+// Base class for notification cards with buttons (Ko-fi, QoL)
+class ButtonNotificationCard extends FloatingCard {
+	constructor() {
 		super();
-		this.donationInfo = donationInfo;
 		this.element.classList.add('ut-text-center');
 		this.element.style.maxWidth = '250px';
-		this.build();
 	}
 
-	build() {
-		const dragHandle = document.createElement('div');
-		dragHandle.className = 'border-b border-border-400 ut-header';
-		dragHandle.textContent = 'Usage Tracker';
+	addKofiButton() {
+		const kofiButton = document.createElement('a');
+		kofiButton.href = 'https://ko-fi.com/R6R14IUBY';
+		kofiButton.target = '_blank';
+		kofiButton.className = 'ut-block ut-text-center';
+		kofiButton.style.marginTop = '10px';
 
-		const message = document.createElement('div');
-		message.className = 'ut-mb-2';
-		message.textContent = this.donationInfo.versionMessage;
+		const kofiImg = document.createElement('img');
+		kofiImg.src = browser.runtime.getURL('kofi-button.png');
+		kofiImg.height = 36;
+		kofiImg.style.border = '0';
+		kofiImg.alt = 'Buy Me a Coffee at ko-fi.com';
+		kofiButton.appendChild(kofiImg);
 
-		let patchContainer = null;
-		if (this.donationInfo.patchHighlights?.length > 0) {
-			patchContainer = document.createElement('div');
-			patchContainer.className = 'bg-bg-000 ut-content-box ut-text-left ut-mb-2';
-			patchContainer.style.maxHeight = '150px';
+		this.element.appendChild(kofiButton);
+	}
 
-			if (!this.donationInfo.patchHighlights[0].includes("donation")) {
-				const patchTitle = document.createElement('div');
-				patchTitle.textContent = "What's New:";
-				patchTitle.style.fontWeight = 'bold';
-				patchTitle.className = 'ut-mb-1';
-				patchContainer.appendChild(patchTitle);
-			}
-
-			const patchList = document.createElement('ul');
-			patchList.style.paddingLeft = '12px';
-			patchList.style.margin = '0';
-			patchList.style.listStyleType = 'disc';
-
-			this.donationInfo.patchHighlights.forEach(highlight => {
-				const item = document.createElement('li');
-				item.textContent = highlight;
-				item.style.marginBottom = '3px';
-				item.style.paddingLeft = '3px';
-				patchList.appendChild(item);
-			});
-
-			patchContainer.appendChild(patchList);
-		}
-
-		const patchNotesLink = document.createElement('a');
-		patchNotesLink.href = 'https://github.com/lugia19/Claude-Usage-Extension/releases';
-		patchNotesLink.target = '_blank';
-		patchNotesLink.className = 'ut-link ut-block ut-mb-2';
-		patchNotesLink.style.color = BLUE_HIGHLIGHT;
-		patchNotesLink.textContent = 'View full release notes';
-
-		// Check if this is the v4.1.1 update
-		const isV411Update = this.donationInfo.versionMessage.includes("to v4.1.1");
-
-		// Assemble common parts
-		this.element.appendChild(dragHandle);
-		this.element.appendChild(message);
-		if (patchContainer) this.element.appendChild(patchContainer);
-		this.element.appendChild(patchNotesLink);
-
+	addQoLButton() {
 		const hasQoL = document.documentElement.hasAttribute('data-claude-qol-installed');
+		if (hasQoL) return;
 
-		// Add either GitHub button (for v4.1.1) or Ko-fi button
-		if (isV411Update && !hasQoL) {
-			const isChrome = !!window.chrome && (!!window.chrome.webstore || !!window.chrome.runtime);
+		const isChrome = !!window.chrome && (!!window.chrome.webstore || !!window.chrome.runtime);
 
-			const storeLink = document.createElement('a');
-			storeLink.href = isChrome
-				? 'https://chromewebstore.google.com/detail/claude-qol/dkdnancajokhfclpjpplkhlkbhaeejob'
-				: 'https://addons.mozilla.org/en-US/firefox/addon/claude-qol/';
-			storeLink.target = '_blank';
-			storeLink.className = 'ut-block ut-text-center';
-			storeLink.style.marginTop = '10px';
+		const storeLink = document.createElement('a');
+		storeLink.href = isChrome
+			? 'https://chromewebstore.google.com/detail/claude-qol/dkdnancajokhfclpjpplkhlkbhaeejob'
+			: 'https://addons.mozilla.org/en-US/firefox/addon/claude-qol/';
+		storeLink.target = '_blank';
+		storeLink.className = 'ut-block ut-text-center';
+		storeLink.style.marginTop = '10px';
 
-			const storeImg = document.createElement('img');
-			storeImg.src = browser.runtime.getURL('qol-badge.png');
-			storeImg.height = 36; // Match Ko-fi button size
-			storeImg.style.border = '0';
-			storeImg.style.borderRadius = '4px'; // Rounded corners
-			storeImg.style.display = 'inline-block'; // Ensure proper centering
-			storeImg.alt = 'Get Claude QoL Extension';
-			storeLink.appendChild(storeImg);
+		const storeImg = document.createElement('img');
+		storeImg.src = browser.runtime.getURL('qol-badge.png');
+		storeImg.height = 36;
+		storeImg.style.border = '0';
+		storeImg.style.borderRadius = '4px';
+		storeImg.style.display = 'inline-block';
+		storeImg.alt = 'Get Claude QoL Extension';
+		storeLink.appendChild(storeImg);
 
-			this.element.appendChild(storeLink);
-		} else {
-			const kofiButton = document.createElement('a');
-			kofiButton.href = 'https://ko-fi.com/R6R14IUBY';
-			kofiButton.target = '_blank';
-			kofiButton.className = 'ut-block ut-text-center';
-			kofiButton.style.marginTop = '10px';
-
-			const kofiImg = document.createElement('img');
-			kofiImg.src = browser.runtime.getURL('kofi-button.png');
-			kofiImg.height = 36;
-			kofiImg.style.border = '0';
-			kofiImg.alt = 'Buy Me a Coffee at ko-fi.com';
-			kofiButton.appendChild(kofiImg);
-
-			this.element.appendChild(kofiButton);
-		}
-
-		this.addDesktopFooter();
-
-		// Only add QoL footer if NOT showing the big button
-		if (!isV411Update) {
-			this.addQoLFooter();
-		}
-
-		this.addCloseButton();
-		this.makeCardDraggable(dragHandle);
+		this.element.appendChild(storeLink);
 	}
 
 	async addDesktopFooter() {
@@ -268,26 +204,106 @@ class VersionNotificationCard extends FloatingCard {
 		this.element.appendChild(footer);
 	}
 
-	addQoLFooter() {
-		// Check if Claude QoL extension is installed
-		const hasQoL = document.documentElement.hasAttribute('data-claude-qol-installed');
-		if (hasQoL) return;
+}
 
-		const footer = document.createElement('div');
-		footer.className = 'ut-desktop-footer';
+// Version update notification card
+class VersionNotificationCard extends ButtonNotificationCard {
+	constructor(previousVersion, currentVersion, patchHighlights) {
+		super();
+		this.previousVersion = previousVersion;
+		this.currentVersion = currentVersion;
+		this.patchHighlights = patchHighlights;
+		this.build();
+	}
 
-		const isChrome = !!window.chrome && (!!window.chrome.webstore || !!window.chrome.runtime);
-		const link = document.createElement('a');
-		link.href = isChrome
-			? 'https://chromewebstore.google.com/detail/claude-qol/dkdnancajokhfclpjpplkhlkbhaeejob'
-			: 'https://addons.mozilla.org/en-US/firefox/addon/claude-qol/';
-		link.target = '_blank';
-		link.className = 'ut-link';
-		link.style.color = BLUE_HIGHLIGHT;
-		link.textContent = 'Get Claude QoL extension →';
+	build() {
+		const dragHandle = document.createElement('div');
+		dragHandle.className = 'border-b border-border-400 ut-header';
+		dragHandle.textContent = 'Usage Tracker';
 
-		footer.appendChild(link);
-		this.element.appendChild(footer);
+		const message = document.createElement('div');
+		message.className = 'ut-mb-2';
+		message.textContent = `Updated from v${this.previousVersion} to v${this.currentVersion}!`;
+
+		this.element.appendChild(dragHandle);
+		this.element.appendChild(message);
+
+		if (this.patchHighlights?.length > 0) {
+			const patchContainer = document.createElement('div');
+			patchContainer.className = 'bg-bg-000 ut-content-box ut-text-left ut-mb-2';
+			patchContainer.style.maxHeight = '150px';
+
+			const patchTitle = document.createElement('div');
+			patchTitle.textContent = "What's New:";
+			patchTitle.style.fontWeight = 'bold';
+			patchTitle.className = 'ut-mb-1';
+			patchContainer.appendChild(patchTitle);
+
+			const patchList = document.createElement('ul');
+			patchList.style.paddingLeft = '12px';
+			patchList.style.margin = '0';
+			patchList.style.listStyleType = 'disc';
+
+			this.patchHighlights.forEach(highlight => {
+				const item = document.createElement('li');
+				item.textContent = highlight;
+				item.style.marginBottom = '3px';
+				item.style.paddingLeft = '3px';
+				patchList.appendChild(item);
+			});
+
+			patchContainer.appendChild(patchList);
+			this.element.appendChild(patchContainer);
+		}
+
+		const patchNotesLink = document.createElement('a');
+		patchNotesLink.href = 'https://github.com/lugia19/Claude-Usage-Extension/releases';
+		patchNotesLink.target = '_blank';
+		patchNotesLink.className = 'ut-link ut-block ut-mb-2';
+		patchNotesLink.style.color = BLUE_HIGHLIGHT;
+		patchNotesLink.textContent = 'View full release notes';
+		this.element.appendChild(patchNotesLink);
+
+		this.addKofiButton();
+		this.addQoLButton();
+		this.addDesktopFooter();
+
+		this.addCloseButton();
+		this.makeCardDraggable(dragHandle);
+	}
+}
+
+// Donation milestone notification card
+class DonationNotificationCard extends ButtonNotificationCard {
+	constructor(tokenMillions) {
+		super();
+		this.tokenMillions = tokenMillions;
+		this.build();
+	}
+
+	build() {
+		const dragHandle = document.createElement('div');
+		dragHandle.className = 'border-b border-border-400 ut-header';
+		dragHandle.textContent = 'Usage Tracker';
+
+		const message = document.createElement('div');
+		message.className = 'ut-mb-2';
+		message.textContent = `You've tracked over ${this.tokenMillions}M tokens!`;
+
+		const supportMessage = document.createElement('div');
+		supportMessage.className = 'ut-mb-2';
+		supportMessage.style.fontSize = '0.9em';
+		supportMessage.textContent = 'Consider supporting continued development';
+
+		this.element.appendChild(dragHandle);
+		this.element.appendChild(message);
+		this.element.appendChild(supportMessage);
+
+		this.addKofiButton();
+		this.addQoLButton();
+
+		this.addCloseButton();
+		this.makeCardDraggable(dragHandle);
 	}
 }
 
@@ -408,7 +424,7 @@ class SettingsCard extends FloatingCard {
 class FloatingCardsUI {
 	constructor() {
 		this.setupEventListeners();
-		this.checkVersionNotification();
+		this.checkNotifications();
 	}
 
 	setupEventListeners() {
@@ -429,11 +445,15 @@ class FloatingCardsUI {
 		}
 	}
 
-	async checkVersionNotification() {
+	async checkNotifications() {
+		await this.checkForVersionUpdate();
+		await this.checkForDonationMilestone();
+	}
+
+	async checkForVersionUpdate() {
 		const currentVersion = browser.runtime.getManifest().version;
-		const storage = await browser.storage.local.get(['previousVersion', 'shownDonationThresholds']);
+		const storage = await browser.storage.local.get(['previousVersion']);
 		const previousVersion = storage.previousVersion;
-		const shownDonationThresholds = storage.shownDonationThresholds || [];
 
 		// First install - don't show notification
 		if (!previousVersion) {
@@ -441,51 +461,53 @@ class FloatingCardsUI {
 			return;
 		}
 
-		const donationInfo = { shouldShow: false, versionMessage: '', patchHighlights: [] };
-
-		// Version change - show update notification
-		if (previousVersion !== currentVersion) {
-			donationInfo.shouldShow = true;
-			donationInfo.versionMessage = `Updated from v${previousVersion} to v${currentVersion}!`;
-
-			try {
-				const patchNotesFile = await fetch(browser.runtime.getURL('update_patchnotes.txt'));
-				if (patchNotesFile.ok) {
-					const patchNotesText = await patchNotesFile.text();
-					donationInfo.patchHighlights = patchNotesText
-						.split('\n')
-						.filter(line => line.trim().length > 0);
-				}
-			} catch (error) {
-				await Log("error", "Failed to load patch notes:", error);
-			}
-
-			await browser.storage.local.set({ previousVersion: currentVersion });
-		} else {
-			// Check token thresholds (requires background)
-			const totalTokens = await sendBackgroundMessage({ type: 'getTotalTokensTracked' });
-			const tokenThresholds = [1000000, 5000000, 10000000, 50000000];
-
-			const exceededThreshold = tokenThresholds.find(threshold =>
-				totalTokens >= threshold && !shownDonationThresholds.includes(threshold)
-			);
-
-			if (exceededThreshold) {
-				const tokenMillions = Math.floor(exceededThreshold / 1000000);
-				donationInfo.shouldShow = true;
-				donationInfo.versionMessage = `You've tracked over ${tokenMillions}M tokens!`;
-				donationInfo.patchHighlights = ["Please consider supporting continued development with a donation!"];
-
-				await browser.storage.local.set({
-					shownDonationThresholds: [...shownDonationThresholds, exceededThreshold]
-				});
-			}
+		// No version change
+		if (previousVersion === currentVersion) {
+			return;
 		}
 
-		if (donationInfo.shouldShow) {
-			const notificationCard = new VersionNotificationCard(donationInfo);
-			notificationCard.show();
+		// Load patch notes
+		let patchHighlights = [];
+		try {
+			const patchNotesFile = await fetch(browser.runtime.getURL('update_patchnotes.txt'));
+			if (patchNotesFile.ok) {
+				const patchNotesText = await patchNotesFile.text();
+				patchHighlights = patchNotesText
+					.split('\n')
+					.filter(line => line.trim().length > 0);
+			}
+		} catch (error) {
+			await Log("error", "Failed to load patch notes:", error);
 		}
+
+		await browser.storage.local.set({ previousVersion: currentVersion });
+
+		const notificationCard = new VersionNotificationCard(previousVersion, currentVersion, patchHighlights);
+		notificationCard.show();
+	}
+
+	async checkForDonationMilestone() {
+		const storage = await browser.storage.local.get(['shownDonationThresholds']);
+		const shownDonationThresholds = storage.shownDonationThresholds || [];
+
+		const totalTokens = await sendBackgroundMessage({ type: 'getTotalTokensTracked' });
+
+		const exceededThreshold = DONATION_TOKEN_THRESHOLDS.find(threshold =>
+			totalTokens >= threshold && !shownDonationThresholds.includes(threshold)
+		);
+
+		if (!exceededThreshold) {
+			return;
+		}
+
+		const tokenMillions = Math.floor(exceededThreshold / 1000000);
+
+		await browser.storage.local.set({
+			shownDonationThresholds: [...shownDonationThresholds, exceededThreshold]
+		});
+
+		const notificationCard = new DonationNotificationCard(tokenMillions);
+		notificationCard.show();
 	}
 }
 

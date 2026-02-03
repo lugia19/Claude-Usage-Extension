@@ -28,13 +28,6 @@ const CONFIG = {
 		"COST": 250000
 	},
 	"BASE_SYSTEM_PROMPT_LENGTH": 3200,
-	"DONATION_TOKEN_THRESHOLDS": [
-		10000000,
-		50000000,
-		100000000,
-		300000000,
-		1000000000
-	],
 	"CACHING_MULTIPLIER": 0.1,
 	"TOKEN_CACHING_DURATION_MS": 5 * 60 * 1000, // 5 minutes
 	// Placeholder values - to be calibrated via testing
