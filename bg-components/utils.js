@@ -1,16 +1,6 @@
 // Configuration object (moved from constants.json)
 const CONFIG = {
 	"OUTPUT_TOKEN_MULTIPLIER": 5,
-	"USAGE_CAP": {
-		"BASELINE": 700000,
-		"MULTIPLIERS": {
-			"claude_free": 0.2,
-			"claude_pro": 1,
-			"claude_team": 1.5,
-			"claude_max_5x": 5,
-			"claude_max_20x": 20
-		}
-	},
 	"MODELS": [
 		"Opus",
 		"Sonnet",
@@ -30,28 +20,64 @@ const CONFIG = {
 	"BASE_SYSTEM_PROMPT_LENGTH": 3200,
 	"CACHING_MULTIPLIER": 0.1,
 	"TOKEN_CACHING_DURATION_MS": 5 * 60 * 1000, // 5 minutes
-	// Placeholder values - to be calibrated via testing
 	"ESTIMATED_CAPS": {
 		"claude_free": {
 			"session": 50000,
 			"weekly": 150000
 		},
-		"claude_pro": {
-			"session": 150000,
-			"weekly": 500000
-		},
+		"claude_pro": {},
+		// Genuinely mostly just vibes here, this is just a first draft
+		// Next update will do telemetry to refine these values
 		"claude_max_5x": {
-			"session": 750000,
-			"weekly": 2500000,
-			"sonnetWeekly": 2500000
+			"session": 5 * 10 ** 6,
+			"weekly": 50 * 10 ** 6,
+			"sonnetWeekly": 30 * 10 ** 6
 		},
-		"claude_max_20x": {
-			"session": 3000000,
-			"weekly": 10000000,
-			"sonnetWeekly": 10000000
-		}
+		"claude_max_20x": {}
 	}
 };
+
+function fillEstimatedCaps(caps) {
+	// Multipliers relative to pro (the base tier)
+	const tierMultipliers = {
+		claude_pro: 1,
+		claude_max_5x: 5,
+		claude_max_20x: 20,
+	};
+
+	const tiers = Object.keys(tierMultipliers);
+
+	// For session and weekly: find the first tier that has a value,
+	// normalize it back to "pro-equivalent", then fill in the rest.
+	// Priority order: pro → 5x → 20x (due to tiers array order)
+	for (const key of ['session', 'weekly']) {
+		const sourceTier = tiers.find(t => caps[t]?.[key] != null);
+		if (!sourceTier) continue;
+
+		const proEquivalent = caps[sourceTier][key] / tierMultipliers[sourceTier];
+
+		for (const tier of tiers) {
+			caps[tier] ??= {};
+			caps[tier][key] ??= proEquivalent * tierMultipliers[tier];
+		}
+	}
+
+	// sonnetWeekly only lives on max_5x and max_20x (4x relationship)
+	const max5x = caps.claude_max_5x;
+	const max20x = caps.claude_max_20x;
+	if (max5x && max20x) {
+		if (max5x.sonnetWeekly != null && max20x.sonnetWeekly == null) {
+			max20x.sonnetWeekly = max5x.sonnetWeekly * 4;
+		} else if (max20x.sonnetWeekly != null && max5x.sonnetWeekly == null) {
+			max5x.sonnetWeekly = max20x.sonnetWeekly / 4;
+		}
+	}
+
+	return caps;
+}
+
+CONFIG.ESTIMATED_CAPS = fillEstimatedCaps(CONFIG.ESTIMATED_CAPS);
+console.log("Final estimated caps:", CONFIG.ESTIMATED_CAPS);
 
 const isElectron = chrome.action === undefined;
 const FORCE_DEBUG = true; // Set to true to force debug mode

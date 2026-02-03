@@ -95,11 +95,6 @@ export class UsageData {
 			.map(key => this.limits[key] ? { key, ...this.limits[key] } : null)
 			.filter(Boolean);
 
-		// If model is sonnet, remove the weekly limit if sonnetWeekly exists
-		if (model && model.toLowerCase().includes('sonnet')) {
-			candidates.shift(); // remove 'weekly'
-		}
-
 		if (candidates.length === 0) return null;
 		return candidates.reduce((a, b) => a.percentage > b.percentage ? a : b);
 	}
