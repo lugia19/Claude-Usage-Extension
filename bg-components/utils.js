@@ -17,9 +17,9 @@ const CONFIG = {
 		"Haiku"
 	],
 	"MODEL_WEIGHTS": {
-		"Sonnet": 1,
-		"Opus": 1.67,
-		"Haiku": 0.33
+		"Opus": 5,
+		"Sonnet": 3,
+		"Haiku": 1
 	},
 	"WARNING_THRESHOLD": 0.9,
 	"WARNING": {

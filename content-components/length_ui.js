@@ -233,7 +233,19 @@ class LengthUI {
 		} else {
 			costColor = conversationData.isExpensive() ? RED_WARNING : BLUE_HIGHLIGHT;
 		}
-		cost.innerHTML = `Cost: <span style="color: ${costColor}">${weightedCost.toLocaleString()}</span> credits`;
+
+		// Check if limits are maxed - if so, display in dollars instead of credits
+		const { usageData } = this.state;
+		const sessionMaxed = usageData?.limits?.session?.percentage >= 100;
+		const weeklyLimit = usageData?.getBindingWeeklyLimit(currentModel);
+		const weeklyMaxed = weeklyLimit?.percentage >= 100;
+
+		if (sessionMaxed || weeklyMaxed) {
+			const dollars = weightedCost / 1_000_000;
+			cost.innerHTML = `Cost: <span style="color: ${costColor}">$${dollars.toFixed(2)}</span>`;
+		} else {
+			cost.innerHTML = `Cost: <span style="color: ${costColor}">${weightedCost.toLocaleString()}</span> credits`;
+		}
 
 		// Cached
 		if (conversationData.isCurrentlyCached()) {

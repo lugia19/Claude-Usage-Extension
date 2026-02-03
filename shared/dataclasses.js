@@ -174,14 +174,14 @@ export class ConversationData {
 	getWeightedCost(modelOverride) {
 		let model = this.model;
 		if (modelOverride) model = modelOverride;
-		const weight = CONFIG.MODEL_WEIGHTS[model] || 1;
+		const weight = CONFIG.MODEL_WEIGHTS[model] || CONFIG.MODEL_WEIGHTS["Sonnet"];
 		return Math.round(this.cost * weight);
 	}
 
 	getWeightedFutureCost(modelOverride) {
 		let model = this.model;
 		if (modelOverride) model = modelOverride;
-		const weight = CONFIG.MODEL_WEIGHTS[model] || 1;
+		const weight = CONFIG.MODEL_WEIGHTS[model] || CONFIG.MODEL_WEIGHTS["Sonnet"];
 		return Math.round(this.futureCost * weight);
 	}
 
