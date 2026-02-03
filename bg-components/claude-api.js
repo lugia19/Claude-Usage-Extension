@@ -575,20 +575,11 @@ class ConversationAPI {
 		}
 
 		// Steps 9-10: Project tokens and model detection
-		let projectStats = null;
 		if (conversationData.project_uuid) {
-			projectStats = await this.api.getProjectStats(conversationData.project_uuid, isNewMessage);
+			const projectStats = await this.api.getProjectStats(conversationData.project_uuid, isNewMessage);
 			lengthTokens += projectStats.tokenInfo.length;
 			costTokens += projectStats.tokenInfo.isCached ? 0 : projectStats.tokenInfo.length;
 		}
-
-		// Determine if length is an estimate (features that add unknown tokens)
-		const lengthIsEstimate = !!(
-			conversationData.settings?.enabled_monkeys_in_a_barrel ||  // Code execution
-			conversationData.settings?.enabled_web_search ||           // Web search
-			conversationData.settings?.enabled_bananagrams ||          // Drive search
-			projectStats?.use_project_knowledge_search                 // Project retrieval
-		);
 
 		let conversationModelType = undefined;
 		let modelString = "sonnet"
@@ -623,8 +614,7 @@ class ConversationAPI {
 			conversationIsCachedUntil: conversationIsCachedUntil,
 			projectUuid: conversationData.project_uuid,
 			settings: conversationData.settings,
-			lastMessageTimestamp: new Date(lastRawMessage.created_at).getTime(),
-			lengthIsEstimate: lengthIsEstimate
+			lastMessageTimestamp: new Date(lastRawMessage.created_at).getTime() // Add this!
 		});
 	}
 }
