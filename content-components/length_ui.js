@@ -364,7 +364,14 @@ class LengthUI {
 
 				await this.checkConversationChange();
 				await this.checkModelChange();
-				this.renderCachedTime();
+				const cacheExpired = this.renderCachedTime();
+				if (cacheExpired && this.state.conversationData?.conversationId) {
+					// Request fresh data since futureCost needs recalculating without cache
+					sendBackgroundMessage({
+						type: 'requestData',
+						conversationId: this.state.conversationData.conversationId
+					});
+				}
 				this.mountTitleArea();
 				this.mountStatLine();
 			}
