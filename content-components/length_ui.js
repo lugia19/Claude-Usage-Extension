@@ -214,7 +214,14 @@ class LengthUI {
 
 		// Length
 		const lengthColor = conversationData.isLong() ? RED_WARNING : BLUE_HIGHLIGHT;
-		length.innerHTML = `Length: <span style="color: ${lengthColor}">${conversationData.length.toLocaleString()}</span> tokens`;
+		const lengthLabel = conversationData.lengthIsEstimate ? 'Length*' : 'Length';
+		length.innerHTML = `${lengthLabel}: <span style="color: ${lengthColor}">${conversationData.length.toLocaleString()}</span> tokens`;
+
+		// Update length tooltip based on estimate status
+		const baseTooltip = 'Length of the conversation, in tokens. The longer it is, the faster your limits run out.';
+		this.elements.tooltips.length.textContent = conversationData.lengthIsEstimate
+			? baseTooltip + '\n\nNOTE: Count may be inaccurate due to enabled features.'
+			: baseTooltip;
 
 		// Cost
 		const weightedCost = conversationData.getWeightedFutureCost(currentModel);

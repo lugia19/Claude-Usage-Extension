@@ -146,6 +146,7 @@ export class ConversationData {
 		this.styleId = data.styleId || null;
 		this.settings = data.settings || {};
 		this.lastMessageTimestamp = data.lastMessageTimestamp || null; // Timestamp of the last message in the conversation
+		this.lengthIsEstimate = data.lengthIsEstimate || false; // True if length may be inaccurate due to features
 	}
 
 	// Add helper method to check if currently cached
@@ -207,7 +208,8 @@ export class ConversationData {
 			projectUuid: this.projectUuid,
 			styleId: this.styleId,
 			settings: this.settings,
-			lastMessageTimestamp: this.lastMessageTimestamp
+			lastMessageTimestamp: this.lastMessageTimestamp,
+			lengthIsEstimate: this.lengthIsEstimate
 		};
 	}
 

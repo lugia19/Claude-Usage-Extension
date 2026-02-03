@@ -3,17 +3,20 @@ import { tokenCounter, getTextFromContent } from './tokenManagement.js';
 import { UsageData, ConversationData } from '../shared/dataclasses.js';
 
 const FEATURE_COSTS = {
-	"enabled_artifacts_attachments": 2200,
-	"preview_feature_uses_artifacts": 8400,
-	"preview_feature_uses_latex": 200,
-	"enabled_bananagrams": 750,
-	"enabled_sourdough": 900,
-	"enabled_focaccia": 1350,
-	"enabled_web_search": 10250,
-	"citation_info": 450,
-	"compass_mode": 1000,
-	"profile_preferences": 850,
-	"enabled_tumeric": 2000
+	"enabled_artifacts_attachments": 2200,	// DEPRECATED: Analysis tool
+	"preview_feature_uses_artifacts": 8400,	// Artifacts
+	"preview_feature_uses_latex": 200,		// DEPRECATED: LaTeX
+	"enabled_bananagrams": 750,				// Drive search
+	"enabled_sourdough": 900,				// GCal or GMail search (not sure which)
+	"enabled_focaccia": 1350,				// GCal or GMail search (not sure which)
+	"enabled_web_search": 10250,			// Web search
+	"citation_info": 450,					// Citation info
+	"compass_mode": 1000,					// Research tool
+	"profile_preferences": 850,				// Base preferences cost
+	"enabled_turmeric": 2000,				// AI artifacts
+	"enabled_saffron": 4250,				// Memory base cost (actual memory content counted separately)
+	"enabled_saffron_search": 3000,			// Memory search
+	"enabled_monkeys_in_a_barrel": 5300		// Code Interpreter
 };
 
 async function Log(...args) {
@@ -54,6 +57,11 @@ class ClaudeAPI {
 	// Fetch usage limits from the /usage endpoint
 	async getUsageLimits() {
 		return this.getRequest(`/organizations/${this.orgId}/usage`);
+	}
+
+	// Fetch memory content
+	async getMemory() {
+		return this.getRequest(`/organizations/${this.orgId}/memory`);
 	}
 
 	// Platform operations
@@ -493,6 +501,21 @@ class ConversationAPI {
 			}
 		}
 
+		// Add memory content tokens if memory is enabled
+		if (conversationData.settings?.enabled_saffron) {
+			try {
+				const memoryData = await this.api.getMemory();
+				if (memoryData?.memory) {
+					const memoryTokens = await tokenCounter.countText(memoryData.memory);
+					await Log("Memory tokens:", memoryTokens);
+					lengthTokens += memoryTokens;
+					costTokens += memoryTokens * CONFIG.CACHING_MULTIPLIER;
+				}
+			} catch (error) {
+				await Log("warn", "Failed to fetch memory:", error);
+			}
+		}
+
 		// Steps 7-8: Process messages and count tokens
 		const humanMessageData = [];
 		const assistantMessageData = [];
@@ -552,11 +575,20 @@ class ConversationAPI {
 		}
 
 		// Steps 9-10: Project tokens and model detection
+		let projectStats = null;
 		if (conversationData.project_uuid) {
-			const projectStats = await this.api.getProjectStats(conversationData.project_uuid, isNewMessage);
+			projectStats = await this.api.getProjectStats(conversationData.project_uuid, isNewMessage);
 			lengthTokens += projectStats.tokenInfo.length;
 			costTokens += projectStats.tokenInfo.isCached ? 0 : projectStats.tokenInfo.length;
 		}
+
+		// Determine if length is an estimate (features that add unknown tokens)
+		const lengthIsEstimate = !!(
+			conversationData.settings?.enabled_monkeys_in_a_barrel ||  // Code execution
+			conversationData.settings?.enabled_web_search ||           // Web search
+			conversationData.settings?.enabled_bananagrams ||          // Drive search
+			projectStats?.use_project_knowledge_search                 // Project retrieval
+		);
 
 		let conversationModelType = undefined;
 		let modelString = "sonnet"
@@ -591,7 +623,8 @@ class ConversationAPI {
 			conversationIsCachedUntil: conversationIsCachedUntil,
 			projectUuid: conversationData.project_uuid,
 			settings: conversationData.settings,
-			lastMessageTimestamp: new Date(lastRawMessage.created_at).getTime() // Add this!
+			lastMessageTimestamp: new Date(lastRawMessage.created_at).getTime(),
+			lengthIsEstimate: lengthIsEstimate
 		});
 	}
 }
