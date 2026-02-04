@@ -1,5 +1,7 @@
-/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, originalText */
+/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN */
 'use strict';
+
+const DONATION_TOKEN_THRESHOLDS = [10000000, 50000000, 100000000, 300000000, 1000000000];
 
 // Draggable functionality for cards
 function makeDraggable(element, dragHandle = null) {
@@ -133,121 +135,55 @@ class FloatingCard {
 	}
 }
 
-// Version/donation notification card
-class VersionNotificationCard extends FloatingCard {
-	constructor(donationInfo) {
+// Base class for notification cards with buttons (Ko-fi, QoL)
+class ButtonNotificationCard extends FloatingCard {
+	constructor() {
 		super();
-		this.donationInfo = donationInfo;
 		this.element.classList.add('ut-text-center');
 		this.element.style.maxWidth = '250px';
-		this.build();
 	}
 
-	build() {
-		const dragHandle = document.createElement('div');
-		dragHandle.className = 'border-b border-border-400 ut-header';
-		dragHandle.textContent = 'Usage Tracker';
+	addKofiButton() {
+		const kofiButton = document.createElement('a');
+		kofiButton.href = 'https://ko-fi.com/R6R14IUBY';
+		kofiButton.target = '_blank';
+		kofiButton.className = 'ut-block ut-text-center';
+		kofiButton.style.marginTop = '10px';
 
-		const message = document.createElement('div');
-		message.className = 'ut-mb-2';
-		message.textContent = this.donationInfo.versionMessage;
+		const kofiImg = document.createElement('img');
+		kofiImg.src = browser.runtime.getURL('kofi-button.png');
+		kofiImg.height = 36;
+		kofiImg.style.border = '0';
+		kofiImg.alt = 'Buy Me a Coffee at ko-fi.com';
+		kofiButton.appendChild(kofiImg);
 
-		let patchContainer = null;
-		if (this.donationInfo.patchHighlights?.length > 0) {
-			patchContainer = document.createElement('div');
-			patchContainer.className = 'bg-bg-000 ut-content-box ut-text-left ut-mb-2';
-			patchContainer.style.maxHeight = '150px';
+		this.element.appendChild(kofiButton);
+	}
 
-			if (!this.donationInfo.patchHighlights[0].includes("donation")) {
-				const patchTitle = document.createElement('div');
-				patchTitle.textContent = "What's New:";
-				patchTitle.style.fontWeight = 'bold';
-				patchTitle.className = 'ut-mb-1';
-				patchContainer.appendChild(patchTitle);
-			}
-
-			const patchList = document.createElement('ul');
-			patchList.style.paddingLeft = '12px';
-			patchList.style.margin = '0';
-			patchList.style.listStyleType = 'disc';
-
-			this.donationInfo.patchHighlights.forEach(highlight => {
-				const item = document.createElement('li');
-				item.textContent = highlight;
-				item.style.marginBottom = '3px';
-				item.style.paddingLeft = '3px';
-				patchList.appendChild(item);
-			});
-
-			patchContainer.appendChild(patchList);
-		}
-
-		const patchNotesLink = document.createElement('a');
-		patchNotesLink.href = 'https://github.com/lugia19/Claude-Usage-Extension/releases';
-		patchNotesLink.target = '_blank';
-		patchNotesLink.className = 'ut-link ut-block ut-mb-2';
-		patchNotesLink.style.color = BLUE_HIGHLIGHT;
-		patchNotesLink.textContent = 'View full release notes';
-
-		// Check if this is the v4.1.1 update
-		const isV411Update = this.donationInfo.versionMessage.includes("to v4.1.1");
-
-		// Assemble common parts
-		this.element.appendChild(dragHandle);
-		this.element.appendChild(message);
-		if (patchContainer) this.element.appendChild(patchContainer);
-		this.element.appendChild(patchNotesLink);
-
+	addQoLButton() {
 		const hasQoL = document.documentElement.hasAttribute('data-claude-qol-installed');
+		if (hasQoL) return;
 
-		// Add either GitHub button (for v4.1.1) or Ko-fi button
-		if (isV411Update && !hasQoL) {
-			const isChrome = !!window.chrome && (!!window.chrome.webstore || !!window.chrome.runtime);
+		const isChrome = !!window.chrome && (!!window.chrome.webstore || !!window.chrome.runtime);
 
-			const storeLink = document.createElement('a');
-			storeLink.href = isChrome
-				? 'https://chromewebstore.google.com/detail/claude-qol/dkdnancajokhfclpjpplkhlkbhaeejob'
-				: 'https://addons.mozilla.org/en-US/firefox/addon/claude-qol/';
-			storeLink.target = '_blank';
-			storeLink.className = 'ut-block ut-text-center';
-			storeLink.style.marginTop = '10px';
+		const storeLink = document.createElement('a');
+		storeLink.href = isChrome
+			? 'https://chromewebstore.google.com/detail/claude-qol/dkdnancajokhfclpjpplkhlkbhaeejob'
+			: 'https://addons.mozilla.org/en-US/firefox/addon/claude-qol/';
+		storeLink.target = '_blank';
+		storeLink.className = 'ut-block ut-text-center';
+		storeLink.style.marginTop = '10px';
 
-			const storeImg = document.createElement('img');
-			storeImg.src = browser.runtime.getURL('qol-badge.png');
-			storeImg.height = 36; // Match Ko-fi button size
-			storeImg.style.border = '0';
-			storeImg.style.borderRadius = '4px'; // Rounded corners
-			storeImg.style.display = 'inline-block'; // Ensure proper centering
-			storeImg.alt = 'Get Claude QoL Extension';
-			storeLink.appendChild(storeImg);
+		const storeImg = document.createElement('img');
+		storeImg.src = browser.runtime.getURL('qol-badge.png');
+		storeImg.height = 36;
+		storeImg.style.border = '0';
+		storeImg.style.borderRadius = '4px';
+		storeImg.style.display = 'inline-block';
+		storeImg.alt = 'Get Claude QoL Extension';
+		storeLink.appendChild(storeImg);
 
-			this.element.appendChild(storeLink);
-		} else {
-			const kofiButton = document.createElement('a');
-			kofiButton.href = 'https://ko-fi.com/R6R14IUBY';
-			kofiButton.target = '_blank';
-			kofiButton.className = 'ut-block ut-text-center';
-			kofiButton.style.marginTop = '10px';
-
-			const kofiImg = document.createElement('img');
-			kofiImg.src = browser.runtime.getURL('kofi-button.png');
-			kofiImg.height = 36;
-			kofiImg.style.border = '0';
-			kofiImg.alt = 'Buy Me a Coffee at ko-fi.com';
-			kofiButton.appendChild(kofiImg);
-
-			this.element.appendChild(kofiButton);
-		}
-
-		this.addDesktopFooter();
-
-		// Only add QoL footer if NOT showing the big button
-		if (!isV411Update) {
-			this.addQoLFooter();
-		}
-
-		this.addCloseButton();
-		this.makeCardDraggable(dragHandle);
+		this.element.appendChild(storeLink);
 	}
 
 	async addDesktopFooter() {
@@ -268,26 +204,106 @@ class VersionNotificationCard extends FloatingCard {
 		this.element.appendChild(footer);
 	}
 
-	addQoLFooter() {
-		// Check if Claude QoL extension is installed
-		const hasQoL = document.documentElement.hasAttribute('data-claude-qol-installed');
-		if (hasQoL) return;
+}
 
-		const footer = document.createElement('div');
-		footer.className = 'ut-desktop-footer';
+// Version update notification card
+class VersionNotificationCard extends ButtonNotificationCard {
+	constructor(previousVersion, currentVersion, patchHighlights) {
+		super();
+		this.previousVersion = previousVersion;
+		this.currentVersion = currentVersion;
+		this.patchHighlights = patchHighlights;
+		this.build();
+	}
 
-		const isChrome = !!window.chrome && (!!window.chrome.webstore || !!window.chrome.runtime);
-		const link = document.createElement('a');
-		link.href = isChrome
-			? 'https://chromewebstore.google.com/detail/claude-qol/dkdnancajokhfclpjpplkhlkbhaeejob'
-			: 'https://addons.mozilla.org/en-US/firefox/addon/claude-qol/';
-		link.target = '_blank';
-		link.className = 'ut-link';
-		link.style.color = BLUE_HIGHLIGHT;
-		link.textContent = 'Get Claude QoL extension →';
+	build() {
+		const dragHandle = document.createElement('div');
+		dragHandle.className = 'border-b border-border-400 ut-header';
+		dragHandle.textContent = 'Usage Tracker';
 
-		footer.appendChild(link);
-		this.element.appendChild(footer);
+		const message = document.createElement('div');
+		message.className = 'ut-mb-2';
+		message.textContent = `Updated from v${this.previousVersion} to v${this.currentVersion}!`;
+
+		this.element.appendChild(dragHandle);
+		this.element.appendChild(message);
+
+		if (this.patchHighlights?.length > 0) {
+			const patchContainer = document.createElement('div');
+			patchContainer.className = 'bg-bg-000 ut-content-box ut-text-left ut-mb-2';
+			patchContainer.style.maxHeight = '150px';
+
+			const patchTitle = document.createElement('div');
+			patchTitle.textContent = "What's New:";
+			patchTitle.style.fontWeight = 'bold';
+			patchTitle.className = 'ut-mb-1';
+			patchContainer.appendChild(patchTitle);
+
+			const patchList = document.createElement('ul');
+			patchList.style.paddingLeft = '12px';
+			patchList.style.margin = '0';
+			patchList.style.listStyleType = 'disc';
+
+			this.patchHighlights.forEach(highlight => {
+				const item = document.createElement('li');
+				item.textContent = highlight;
+				item.style.marginBottom = '3px';
+				item.style.paddingLeft = '3px';
+				patchList.appendChild(item);
+			});
+
+			patchContainer.appendChild(patchList);
+			this.element.appendChild(patchContainer);
+		}
+
+		const patchNotesLink = document.createElement('a');
+		patchNotesLink.href = 'https://github.com/lugia19/Claude-Usage-Extension/releases';
+		patchNotesLink.target = '_blank';
+		patchNotesLink.className = 'ut-link ut-block ut-mb-2';
+		patchNotesLink.style.color = BLUE_HIGHLIGHT;
+		patchNotesLink.textContent = 'View full release notes';
+		this.element.appendChild(patchNotesLink);
+
+		this.addKofiButton();
+		this.addQoLButton();
+		this.addDesktopFooter();
+
+		this.addCloseButton();
+		this.makeCardDraggable(dragHandle);
+	}
+}
+
+// Donation milestone notification card
+class DonationNotificationCard extends ButtonNotificationCard {
+	constructor(tokenMillions) {
+		super();
+		this.tokenMillions = tokenMillions;
+		this.build();
+	}
+
+	build() {
+		const dragHandle = document.createElement('div');
+		dragHandle.className = 'border-b border-border-400 ut-header';
+		dragHandle.textContent = 'Usage Tracker';
+
+		const message = document.createElement('div');
+		message.className = 'ut-mb-2';
+		message.textContent = `You've tracked over ${this.tokenMillions}M tokens!`;
+
+		const supportMessage = document.createElement('div');
+		supportMessage.className = 'ut-mb-2';
+		supportMessage.style.fontSize = '0.9em';
+		supportMessage.textContent = 'Consider supporting continued development';
+
+		this.element.appendChild(dragHandle);
+		this.element.appendChild(message);
+		this.element.appendChild(supportMessage);
+
+		this.addKofiButton();
+		this.addQoLButton();
+
+		this.addCloseButton();
+		this.makeCardDraggable(dragHandle);
 	}
 }
 
@@ -323,25 +339,6 @@ class SettingsCard extends FloatingCard {
 		saveButton.style.background = BLUE_HIGHLIGHT;
 		saveButton.style.color = 'white';
 
-		// Modifier section
-		const modifierContainer = document.createElement('div');
-		modifierContainer.className = 'ut-row ut-mb-3';
-
-		const modifierLabel = document.createElement('label');
-		modifierLabel.textContent = 'Cap Modifier:';
-		modifierLabel.className = 'text-text-000 text-sm';
-
-		const modifierInput = document.createElement('input');
-		modifierInput.type = 'text';
-		modifierInput.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input ut-mb-0 text-sm';
-		modifierInput.style.width = '60px';
-
-		const result = await sendBackgroundMessage({ type: 'getCapModifier' });
-		modifierInput.value = `${((result || 1) * 100)}%`;
-
-		modifierContainer.appendChild(modifierLabel);
-		modifierContainer.appendChild(modifierInput);
-
 		// Button container
 		const buttonContainer = document.createElement('div');
 		buttonContainer.className = 'ut-row';
@@ -349,12 +346,6 @@ class SettingsCard extends FloatingCard {
 		const debugButton = document.createElement('button');
 		debugButton.textContent = 'Debug Logs';
 		debugButton.className = 'bg-bg-300 border border-border-400 text-text-400 ut-button text-sm';
-
-		const resetButton = document.createElement('button');
-		resetButton.textContent = 'Reset Quota';
-		resetButton.className = 'ut-button text-sm';
-		resetButton.style.background = RED_WARNING;
-		resetButton.style.color = 'white';
 
 		// Event listeners
 		debugButton.addEventListener('click', async () => {
@@ -369,62 +360,7 @@ class SettingsCard extends FloatingCard {
 			}
 		});
 
-		resetButton.addEventListener('click', async () => {
-			// Show confirmation dialog
-			const confirmation = confirm(
-				'Are you sure you want to reset usage data for this organization?\n\n' +
-				'This will reset ALL models\' usage counters to zero and sync this reset across all your devices. ' +
-				'This action cannot be undone.'
-			);
-
-			if (confirmation) {
-				try {
-					// Show loading state
-					const originalText = resetButton.textContent;
-					resetButton.textContent = 'Resetting...';
-					resetButton.disabled = true;
-
-					// Send reset message to background (sendBackgroundMessage already handles orgId)
-					const result = await sendBackgroundMessage({
-						type: 'resetOrgData'
-					});
-
-					if (result) {
-						// Show success message
-						resetButton.textContent = 'Reset Complete!';
-						resetButton.style.background = SUCCESS_GREEN;
-
-						// Reset button after delay
-						setTimeout(() => {
-							resetButton.textContent = originalText;
-							resetButton.style.background = RED_WARNING;
-							resetButton.disabled = false;
-						}, 2000);
-					} else {
-						throw new Error('Reset failed');
-					}
-				} catch (error) {
-					// Show error
-					resetButton.textContent = 'Reset Failed';
-					await Log("error", 'Reset failed:', error);
-
-					// Reset button after delay
-					setTimeout(() => {
-						resetButton.textContent = originalText;
-						resetButton.disabled = false;
-					}, 2000);
-				}
-			}
-		});
-
 		saveButton.addEventListener('click', async () => {
-			const modifierValue = modifierInput.value.replace('%', '');
-			let modifier = 1;
-			if (!isNaN(modifierValue)) {
-				modifier = parseFloat(modifierValue) / 100;
-			}
-
-			await sendBackgroundMessage({ type: 'setCapModifier', modifier });
 			let result = await sendBackgroundMessage({ type: 'setAPIKey', newKey: input.value });
 
 			if (!result) {
@@ -444,10 +380,8 @@ class SettingsCard extends FloatingCard {
 		// Assemble
 		this.element.appendChild(label);
 		this.element.appendChild(input);
-		this.element.appendChild(modifierContainer);
 		buttonContainer.appendChild(saveButton);
 		buttonContainer.appendChild(debugButton);
-		buttonContainer.appendChild(resetButton);
 		this.element.appendChild(buttonContainer);
 
 		this.addCloseButton();
@@ -485,3 +419,99 @@ class SettingsCard extends FloatingCard {
 		}
 	}
 }
+
+// Floating cards actor - owns all card lifecycle
+class FloatingCardsUI {
+	constructor() {
+		this.setupEventListeners();
+		this.checkNotifications();
+	}
+
+	setupEventListeners() {
+		document.addEventListener('ut:toggleSettings', async (event) => {
+			await this.handleToggleSettings(event.detail);
+		});
+	}
+
+	async handleToggleSettings(detail) {
+		const position = detail?.position || null;
+
+		if (SettingsCard.currentInstance) {
+			SettingsCard.currentInstance.remove();
+		} else {
+			const settingsCard = new SettingsCard();
+			await settingsCard.build();
+			settingsCard.show(position);
+		}
+	}
+
+	async checkNotifications() {
+		// Delay to allow other extensions (like QoL) to load first
+		await new Promise(resolve => setTimeout(resolve, 1000));
+		await this.checkForVersionUpdate();
+		await this.checkForDonationMilestone();
+	}
+
+	async checkForVersionUpdate() {
+		const currentVersion = browser.runtime.getManifest().version;
+		const storage = await browser.storage.local.get(['previousVersion']);
+		const previousVersion = storage.previousVersion;
+
+		// First install - don't show notification
+		if (!previousVersion) {
+			await browser.storage.local.set({ previousVersion: currentVersion });
+			return;
+		}
+
+		// No version change
+		if (previousVersion === currentVersion) {
+			return;
+		}
+
+		// Load patch notes
+		let patchHighlights = [];
+		try {
+			const patchNotesFile = await fetch(browser.runtime.getURL('update_patchnotes.txt'));
+			if (patchNotesFile.ok) {
+				const patchNotesText = await patchNotesFile.text();
+				patchHighlights = patchNotesText
+					.split('\n')
+					.filter(line => line.trim().length > 0);
+			}
+		} catch (error) {
+			await Log("error", "Failed to load patch notes:", error);
+		}
+
+		await browser.storage.local.set({ previousVersion: currentVersion });
+
+		const notificationCard = new VersionNotificationCard(previousVersion, currentVersion, patchHighlights);
+		notificationCard.show();
+	}
+
+	async checkForDonationMilestone() {
+		const storage = await browser.storage.local.get(['shownDonationThresholds']);
+		const shownDonationThresholds = storage.shownDonationThresholds || [];
+
+		const totalTokens = await sendBackgroundMessage({ type: 'getTotalTokensTracked' });
+
+		const exceededThreshold = DONATION_TOKEN_THRESHOLDS.find(threshold =>
+			totalTokens >= threshold && !shownDonationThresholds.includes(threshold)
+		);
+
+		if (!exceededThreshold) {
+			return;
+		}
+
+		const tokenMillions = Math.floor(exceededThreshold / 1000000);
+
+		await browser.storage.local.set({
+			shownDonationThresholds: [...shownDonationThresholds, exceededThreshold]
+		});
+
+		const notificationCard = new DonationNotificationCard(tokenMillions);
+		notificationCard.show();
+	}
+}
+
+// Self-initialize
+const floatingCardsUI = new FloatingCardsUI();

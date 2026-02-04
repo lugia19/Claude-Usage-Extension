@@ -1,11 +1,10 @@
 import './lib/browser-polyfill.min.js';
 import './lib/o200k_base.js';
 import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addContainerFetchListener, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './bg-components/utils.js';
-import { tokenStorageManager, tokenCounter, getTextFromContent } from './bg-components/tokenManagement.js';
-import { firebaseSyncManager } from './bg-components/firebase.js';
-import { UsageData, ConversationData } from './bg-components/bg-dataclasses.js';
+import { tokenStorageManager, tokenCounter } from './bg-components/tokenManagement.js';
 import { ClaudeAPI, ConversationAPI } from './bg-components/claude-api.js';
-import { scheduleAlarm, clearAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
+import { UsageData } from './shared/dataclasses.js';
+import { scheduleAlarm, createNotification } from './bg-components/electron-compat.js';
 
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
@@ -35,7 +34,6 @@ let processingLock = null;  // Unix timestamp or null
 const pendingTasks = [];
 const LOCK_TIMEOUT = 30000;  // 30 seconds - if a task takes longer, something's wrong
 let pendingRequests;
-let capModifiers;
 let scheduledNotifications;
 
 let isInitialized = false;
@@ -49,56 +47,6 @@ function runOnceInitialized(fn, args) {
 	return fn(...args);
 }
 //#endregion
-
-// Temporary telemetry to try and identify the memory leak. Only works if debug mode is enabled.
-const functionCallCounts = new Map();
-const SUSPICIOUS_THRESHOLD = 10000;
-let alertSent = false;
-
-async function trackCall(functionName) {
-	const debugUntil = await getStorageValue('debug_mode_until');
-	const now = Date.now();
-
-	if ((!debugUntil || debugUntil <= now) && !FORCE_DEBUG) {
-		return;
-	}
-
-	const count = (functionCallCounts.get(functionName) || 0) + 1;
-	functionCallCounts.set(functionName, count);
-
-	// Check total across all functions
-	let totalCalls = 0;
-	for (const [_, funcCount] of functionCallCounts) {
-		totalCalls += funcCount;
-	}
-
-	if (totalCalls >= SUSPICIOUS_THRESHOLD && !alertSent) {
-		console.error("Total count", totalCalls, "has reached the suspicious threshold of", SUSPICIOUS_THRESHOLD);
-		console.error(functionCallCounts)
-		alertSent = true;  // Only send once per service worker lifetime
-		await sendTelemetryAlert();
-	}
-}
-
-
-// Send the entire map as one object
-async function sendTelemetryAlert() {
-	const alertId = crypto.randomUUID();
-	const url = `https://claude-usage-tracker-default-rtdb.europe-west1.firebasedatabase.app/telemetry/${alertId}.json`;
-
-	const report = {
-		counts: Object.fromEntries(functionCallCounts),  // The entire map
-		timestamp: Date.now(),
-		version: chrome.runtime.getManifest().version,
-		userAgent: navigator.userAgent,
-		trigger: 'threshold_exceeded'
-	};
-
-	await fetch(url, {
-		method: 'PUT',
-		body: JSON.stringify(report)
-	});
-}
 
 //#region Listener setup (I hate MV3 - listeners must be initialized here)
 //Extension-related listeners:
@@ -160,47 +108,14 @@ if (!isElectron) {
 		["responseHeaders"]
 	);
 
-	// Tab listeners
-	// Track focused/visible claude.ai tabs
-	browser.tabs.onActivated.addListener((activeInfo) =>
-		runOnceInitialized(updateSyncAlarmIntervalAndFetchData, [activeInfo.tabId])
-	);
-
-	// Handle tab updates
-	browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-		if (changeInfo.url?.includes('claude.ai') || tab.url?.includes('claude.ai')) {
-			runOnceInitialized(updateSyncAlarmIntervalAndFetchData, [tabId]);
-		}
-	});
-
-	// Handle tab closing
-	browser.tabs.onRemoved.addListener((tabId, removeInfo) =>
-		runOnceInitialized(updateSyncAlarmIntervalAndFetchData, [tabId, true])
-	);
-
 	addContainerFetchListener();
 }
 
 //Alarm listeners
 async function handleAlarm(alarmName) {
 	await Log("Alarm triggered:", alarmName);
-	trackCall("AlarmWakeup");
-
-	await tokenStorageManager.ensureOrgIds();
-
-	if (alarmName === 'firebaseSync') {
-		await firebaseSyncManager.syncWithFirebase();
-	}
-
-	if (alarmName === 'capHitsSync') {
-		await firebaseSyncManager.syncCapHits();
-	}
 
 	if (alarmName.startsWith('notifyReset_')) {
-		// Handle notification alarm
-		await Log(`Notification alarm triggered: ${alarmName}`);
-
-		// Create notification - works for both Chrome and Electron
 		try {
 			await createNotification({
 				type: 'basic',
@@ -208,13 +123,10 @@ async function handleAlarm(alarmName) {
 				title: 'Claude Usage Reset',
 				message: 'Your Claude usage limit has been reset!'
 			});
+			await Log(`Notification sent for: ${alarmName}`);
 		} catch (error) {
 			await Log("error", "Failed to create notification:", error);
 		}
-
-		const orgId = alarmName.split('_')[1];
-		await Log(`Notification sent`);
-		await firebaseSyncManager.triggerReset(orgId);
 	}
 }
 
@@ -229,49 +141,6 @@ if (chrome.alarms) {
 
 //#endregion
 
-//#region Alarms
-async function updateSyncAlarmIntervalAndFetchData(sourceTabId, fromRemovedEvent = false) {
-	trackCall("updateSyncAlarmIntervalAndFetchData");
-	const allClaudeTabs = await browser.tabs.query({ url: "*://claude.ai/*" });
-	let state;
-	let desiredInterval;
-
-	if (allClaudeTabs.length === 0 || (fromRemovedEvent && allClaudeTabs.length <= 1)) {
-		state = 'none';
-		desiredInterval = CONFIG.SYNC_INTERVALS.none;
-	} else {
-		const activeClaudeTabs = await browser.tabs.query({ url: "*://claude.ai/*", active: true });
-		if (activeClaudeTabs.length > 0) {
-			state = 'active';
-			desiredInterval = CONFIG.SYNC_INTERVALS.active;
-		} else {
-			state = 'inactive';
-			desiredInterval = CONFIG.SYNC_INTERVALS.inactive;
-		}
-	}
-	await Log("Current state:", state, "Desired interval:", desiredInterval);
-
-	const currentAlarm = await getAlarm('firebaseSync');
-	const isStateChange = !currentAlarm || currentAlarm.periodInMinutes !== desiredInterval;
-	//const wasActive = currentAlarm && currentAlarm.periodInMinutes === CONFIG.SYNC_INTERVALS.active;
-
-	if (isStateChange) {
-		await clearAlarm('firebaseSync');
-		await scheduleAlarm('firebaseSync', { periodInMinutes: desiredInterval });
-		await Log(`Updated firebaseSync alarm to ${desiredInterval} minutes (state: ${state})`);
-
-		// Trigger sync if we're changing to or from active state
-		if (state === 'active' && sourceTabId) {
-			await Log("Changed to active, triggering immediate sync! Ensuring we have the orgId first.")
-			const orgId = await requestActiveOrgId(sourceTabId);
-			await tokenStorageManager.addOrgId(orgId);
-			await firebaseSyncManager.syncWithFirebase();
-		}
-	}
-}
-
-scheduleAlarm('capHitsSync', { periodInMinutes: 10 });
-Log("Firebase alarms created.");
 //#endregion
 
 
@@ -298,7 +167,6 @@ async function logError(error) {
 
 
 async function requestActiveOrgId(tab) {
-	trackCall("requestActiveOrgId");
 	if (typeof tab === "number") {
 		tab = await browser.tabs.get(tab);
 	}
@@ -336,27 +204,26 @@ async function requestActiveOrgId(tab) {
 //#region Messaging
 
 // Updates all tabs with usage data only
-async function updateAllTabsWithUsage() {
-	trackCall("updateAllTabsWithUsage");
+async function updateAllTabsWithUsage(usageData = null) {
 	await Log("Updating all tabs with usage data");
 	const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 
 	for (const tab of tabs) {
-		const orgId = await requestActiveOrgId(tab);
-		await Log("Updating tab:", tab.id, "with orgId:", orgId);
+		let data = usageData;
 
-		// Create API to get subscription tier
-		const api = new ClaudeAPI(tab.cookieStoreId, orgId);
-		const subscriptionTier = await api.getSubscriptionTier();
+		// If no usageData provided, fetch fresh
+		if (!data) {
+			const orgId = await requestActiveOrgId(tab);
+			const api = new ClaudeAPI(tab.cookieStoreId, orgId);
+			const usageLimitsResponse = await api.getUsageLimits();
+			const subscriptionTier = await api.getSubscriptionTier();
+			data = UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier);
+		}
 
-		// Get usage data with tier
-		const usageData = await tokenStorageManager.getUsageData(orgId, subscriptionTier);
-
-		await Log("Updating tab with usage data:", JSON.stringify(usageData));
 		sendTabMessage(tab.id, {
 			type: 'updateUsage',
 			data: {
-				usageData: usageData.toJSON()
+				usageData: data.toJSON()
 			}
 		});
 	}
@@ -364,7 +231,6 @@ async function updateAllTabsWithUsage() {
 
 // Updates a specific tab with conversation metrics
 async function updateTabWithConversationData(tabId, conversationData) {
-	trackCall("updateTabWithConversationData");
 	await Log("Updating tab with conversation metrics:", tabId, conversationData);
 
 	sendTabMessage(tabId, {
@@ -380,72 +246,6 @@ async function updateTabWithConversationData(tabId, conversationData) {
 // Simple handlers with inline functions
 messageRegistry.register('getConfig', () => CONFIG);
 messageRegistry.register('initOrg', (message, sender, orgId) => tokenStorageManager.addOrgId(orgId).then(() => true));
-// Update getUsageCap handler
-messageRegistry.register('getUsageCap', async (message, sender, orgId) => {
-	const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
-	const tier = await api.getSubscriptionTier();
-	const usageData = await tokenStorageManager.getUsageData(orgId, tier);
-	return usageData.usageCap;
-});
-
-messageRegistry.register('resetOrgData', (message, sender, orgId) => firebaseSyncManager.triggerReset(orgId));
-
-
-messageRegistry.register('rateLimitExceeded', async (message, sender, orgId) => {
-	trackCall("RateLimitExceeded");
-	// Only add reset if we actually exceeded the limit
-	if (message?.detail?.type === 'exceeded_limit') {
-		await Log(`Rate limit exceeded for org ${orgId}, adding reset`);
-		const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
-		const tier = await api.getSubscriptionTier();
-
-		await tokenStorageManager.addCapHit(orgId, "Sonnet", tier)
-			.catch(async err => await Log("error", 'Adding reset failed:', err));
-	}
-
-	// Update with authoritative timestamp if we have one
-	if (message?.detail?.resetsAt) {
-		try {
-			await Log(`Updating authoritative timestamp for org ${orgId}: ${message?.detail?.resetsAt}`);
-			await tokenStorageManager.updateAuthoritativeTimestamp(orgId, message?.detail?.resetsAt);
-		} catch (error) {
-			await Log("error", "Failed to update authoritative timestamp:", error);
-		}
-	}
-
-	// Schedule notification if we have a timestamp (for both exceeded and nearing)
-	if (message?.detail?.resetsAt) {
-		try {
-			await Log(`Scheduling notification for org ${orgId} at ${message?.detail?.resetsAt * 1000}`);
-			const resetTime = new Date(message?.detail?.resetsAt * 1000); // Convert seconds to milliseconds
-			const timestampKey = resetTime.getTime().toString();
-
-			// Check if we already have a notification scheduled for this timestamp
-			if (!(await scheduledNotifications.has(timestampKey))) {
-				const alarmName = `notifyReset_${orgId}_${timestampKey}`;
-
-				// Schedule the alarm for when the reset occurs
-				await scheduleAlarm(alarmName, {
-					when: resetTime.getTime()
-				});
-
-				// Calculate expiry time: 1 hour after the reset time
-				const expiryTime = resetTime.getTime() + (60 * 60 * 1000) - Date.now();
-
-				// Store in our map with expiration 1 hour after reset time
-				await scheduledNotifications.set(timestampKey, alarmName, expiryTime);
-
-				await Log(`Scheduled notification alarm: ${alarmName} for ${resetTime.toISOString()}`);
-			} else {
-				await Log(`Notification already scheduled for timestamp: ${resetTime.toISOString()}`);
-			}
-		} catch (error) {
-			await Log("error", "Failed to schedule notification:", error);
-		}
-	}
-
-	return true;
-});
 
 messageRegistry.register('getAPIKey', () => getStorageValue('apiKey'));
 messageRegistry.register('setAPIKey', async (message) => {
@@ -468,14 +268,6 @@ messageRegistry.register('setAPIKey', async (message) => {
 	}
 });
 
-messageRegistry.register('getCapModifier', async () => {
-	return await capModifiers.get('global') || 1;
-});
-messageRegistry.register('setCapModifier', async (message) => {
-	await capModifiers.set('global', message.modifier);
-	return true;
-});
-
 messageRegistry.register('isElectron', () => isElectron);
 messageRegistry.register('getMonkeypatchPatterns', () => isElectron ? INTERCEPT_PATTERNS : false);
 
@@ -490,48 +282,23 @@ async function openDebugPage() {
 }
 messageRegistry.register(openDebugPage);
 
-messageRegistry.register('electronTabActivated', (message, sender) => {
-	updateSyncAlarmIntervalAndFetchData(sender.tab.id);
-	return true;
-});
-
-messageRegistry.register('electronTabDeactivated', (message, sender) => {
-	updateSyncAlarmIntervalAndFetchData(sender.tab.id);
-	return true;
-});
-
-messageRegistry.register('electronTabRemoved', (message, sender) => {
-	updateSyncAlarmIntervalAndFetchData(sender.tab.id, true);
-	return true;
-});
-
-
-messageRegistry.register('checkAndResetExpired', async (message, sender, orgId) => {
-	await Log(`UI triggered reset check for org ${orgId}`);
-	const wasCleared = await tokenStorageManager.checkAndCleanExpiredData(orgId);
-	if (wasCleared) {
-		await Log("Usage was expired and reset");
-		await updateAllTabsWithUsage();
-	}
-	return wasCleared;
-});
-
 // Complex handlers
 async function requestData(message, sender, orgId) {
-	trackCall("requestData");
 	const { conversationId } = message;
 	const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
 
-	// Get subscription tier
+	// Fetch usage from endpoint
+	const usageLimitsResponse = await api.getUsageLimits();
 	const subscriptionTier = await api.getSubscriptionTier();
+	const usageData = UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier);
 
-	// Always send usage data
-	const usageData = await tokenStorageManager.getUsageData(orgId, subscriptionTier);
+	// Schedule notifications for any maxed limits
+	await scheduleResetNotifications(orgId, usageData);
+
+	// Send usage data
 	await sendTabMessage(sender.tab.id, {
 		type: 'updateUsage',
-		data: {
-			usageData: usageData.toJSON()  // Send in storage format
-		}
+		data: { usageData: usageData.toJSON() }
 	});
 
 	// If conversationId provided, also send conversation metrics
@@ -542,10 +309,8 @@ async function requestData(message, sender, orgId) {
 		const profileTokens = await api.getProfileTokens();
 
 		if (conversationData) {
-			// Add profile tokens to the conversation data
 			conversationData.length += profileTokens;
 			conversationData.cost += profileTokens * CONFIG.CACHING_MULTIPLIER;
-
 			await updateTabWithConversationData(sender.tab.id, conversationData);
 		}
 	}
@@ -575,70 +340,13 @@ async function interceptedResponse(message, sender) {
 }
 messageRegistry.register(interceptedResponse);
 
-async function shouldShowDonationNotification(message) {
-	trackCall("shouldShowDonationNotification");
-	const { currentVersion } = message;
-	let previousVersion = await getStorageValue('previousVersion');
-
-	// Prepare response object
-	const donationInfo = {
-		shouldShow: false,
-		versionMessage: '',
-		patchHighlights: []
-	};
-
-	// First install - don't show notification
-	if (!previousVersion) {
-		await setStorageValue('previousVersion', currentVersion);
-		return donationInfo;
-	}
-
-	// Get total tokens tracked
-	const totalTokens = await tokenStorageManager.getTotalTokens();
-	const tokenThresholds = CONFIG.DONATION_TOKEN_THRESHOLDS;
-	const shownDonationThresholds = await getStorageValue('shownDonationThresholds', []);
-
-	const exceededThreshold = tokenThresholds.find(threshold =>
-		totalTokens >= threshold && !shownDonationThresholds.includes(threshold)
-	);
-
-	// Version change - show update notification with patch notes
-	if (previousVersion !== currentVersion) {
-		donationInfo.shouldShow = true;
-		donationInfo.versionMessage = `Updated from v${previousVersion} to v${currentVersion}!`;
-
-		try {
-			const patchNotesFile = await fetch(browser.runtime.getURL('update_patchnotes.txt'));
-			if (patchNotesFile.ok) {
-				const patchNotesText = await patchNotesFile.text();
-				donationInfo.patchHighlights = patchNotesText
-					.split('\n')
-					.filter(line => line.trim().length > 0);
-			}
-		} catch (error) {
-			await Log("error", "Failed to load patch notes:", error);
-		}
-
-		await setStorageValue('previousVersion', currentVersion);
-	}
-	else if (exceededThreshold) {
-		const tokenMillions = Math.floor(exceededThreshold / 1000000);
-		donationInfo.shouldShow = true;
-		donationInfo.versionMessage = `You've tracked over ${tokenMillions}M tokens with this extension!`;
-		donationInfo.patchHighlights = [
-			"Please consider supporting continued development with a donation!"
-		];
-
-		// Mark this threshold as shown
-		await setStorageValue('shownDonationThresholds', [...shownDonationThresholds, exceededThreshold]);
-	}
-	return donationInfo;
+async function getTotalTokensTracked() {
+	return await tokenStorageManager.getTotalTokens();
 }
-messageRegistry.register(shouldShowDonationNotification);
+messageRegistry.register(getTotalTokensTracked);
 
 // Main handler function
 async function handleMessageFromContent(message, sender) {
-	trackCall("handleMessageFromContent");
 	return messageRegistry.handle(message, sender);
 }
 //#endregion
@@ -647,7 +355,6 @@ async function handleMessageFromContent(message, sender) {
 
 //#region Network handling
 async function parseRequestBody(requestBody) {
-	trackCall("parseRequestBody");
 	if (!requestBody?.raw?.[0]?.bytes) return undefined;
 
 	// Handle differently based on source
@@ -679,35 +386,35 @@ async function parseRequestBody(requestBody) {
 }
 
 async function processResponse(orgId, conversationId, responseKey, details) {
-	trackCall("processResponse");
 	const tabId = details.tabId;
 	const api = new ClaudeAPI(details.cookieStoreId, orgId);
-	await Log("Processing response...")
+	await Log("Processing response...");
 
 	const pendingRequest = await pendingRequests.get(responseKey);
 	const isNewMessage = pendingRequest !== undefined;
+	const model = pendingRequest?.model || "Sonnet";
 
-	// Get subscription tier
+	// Fetch current usage limits from endpoint
+	const usageLimitsResponse = await api.getUsageLimits();
 	const subscriptionTier = await api.getSubscriptionTier();
+	const usageData = UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier);
 
+	// Fetch conversation data
 	const conversation = await api.getConversation(conversationId);
 	const conversationData = await conversation.getInfo(isNewMessage);
+
 	if (!conversationData) {
-		await Log("warn", "Could not get conversation tokens, exiting...")
+		await Log("warn", "Could not get conversation data, exiting...");
 		return false;
 	}
 
-	await Log("Current base length:", conversationData.length);
-	await Log("Current message cost (raw):", conversationData.cost);
-
-	// Process all the modifiers
+	// Add modifier costs to conversation data
 	let modifierCost = 0;
 	const profileTokens = await api.getProfileTokens();
 	modifierCost += profileTokens;
 
 	const styleTokens = await api.getStyleTokens(pendingRequest?.styleId, tabId);
 	modifierCost += styleTokens;
-	await Log("Added style tokens:", styleTokens);
 
 	if (pendingRequest?.toolDefinitions) {
 		let toolTokens = 0;
@@ -716,41 +423,146 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 				`${tool.name} ${tool.description} ${tool.schema}`
 			);
 		}
-		await Log("Added tool definition tokens:", toolTokens);
 		modifierCost += toolTokens;
 	}
+
 	conversationData.cost += modifierCost;
+	conversationData.futureCost += modifierCost;
+	conversationData.length += profileTokens;
+	conversationData.model = model;
 
-	const model = pendingRequest?.model || conversationData.model || "Sonnet";
-	if (isNewMessage) {
-		const weightedCost = conversationData.getWeightedCost(model);
+	// If new message: log delta and update total tokens
+	if (isNewMessage && pendingRequest.previousUsage) {
+		const previousUsage = UsageData.fromJSON(pendingRequest.previousUsage);
+		await logUsageDelta(orgId, previousUsage, usageData, conversationData.length, model);
 
-		await Log(`Raw message cost: ${conversationData.cost}, Model: ${model}, Weighted cost: ${weightedCost}`);
+		// Add message cost to total tracked
+		await tokenStorageManager.addToTotalTokens(conversationData.cost);
 
-		const requestTime = pendingRequest.requestTimestamp;
-		if (conversationData.lastMessageTimestamp < requestTime - 5000) {
-			await Log("Message appears to be older than our request, likely an error");
-		} else {
-			await Log(`=============Adding tokens for model: ${model}, Raw tokens: ${conversationData.cost}, Weighted tokens: ${weightedCost}============`);
-			await tokenStorageManager.addTokensToModel(orgId, model, conversationData.cost, subscriptionTier);
-		}
+		// Debug: log per-message cost keyed by limit reset timestamps
+		await debugLogMessageCost(usageData, conversationData);
 	}
 
-	conversationData.model = model;  // Ensure it's set before forwarding it
+	// Schedule notifications for any maxed limits
+	await scheduleResetNotifications(orgId, usageData);
 
-	// Update all tabs with usage data
-	await updateAllTabsWithUsage();
-
-	// Update specific tab with conversation metrics
+	// Send updates to UI
+	await updateAllTabsWithUsage(usageData);
 	await updateTabWithConversationData(tabId, conversationData);
 
 	return true;
 }
 
+async function debugLogMessageCost(usageData, conversationData) {
+	if (!FORCE_DEBUG) return;
+
+	const limitMapping = {
+		session: 'debug_session',
+		weekly: 'debug_weekly',
+		sonnetWeekly: 'debug_sonnet_weekly',
+		opusWeekly: 'debug_opus_weekly'
+	};
+
+	for (const [limitKey, storagePrefix] of Object.entries(limitMapping)) {
+		const limit = usageData.limits[limitKey];
+		if (!limit) continue;
+
+		const storageKey = `${storagePrefix}_${limit.resetsAt}`;
+		const existing = await getStorageValue(storageKey, {
+			resetsAt: limit.resetsAt,
+			limitKey,
+			messages: [],
+			accumulatedCost: 0,
+			lastPercentage: null
+		});
+
+		const percentageChanged = existing.lastPercentage !== null && limit.percentage !== existing.lastPercentage;
+
+		if (percentageChanged) {
+			// Percentage changed - log entry with accumulated cost included
+			const entry = {
+				timestamp: Date.now(),
+				cost: conversationData.cost,
+				accumulatedCost: existing.accumulatedCost,
+				totalCost: conversationData.cost + existing.accumulatedCost,
+				futureCost: conversationData.futureCost,
+				model: conversationData.model,
+				conversationLength: conversationData.length,
+				percentageDelta: limit.percentage - existing.lastPercentage,
+			};
+			existing.messages.push(entry);
+			existing.accumulatedCost = 0; // Reset accumulator
+			await Log(`Debug [${limitKey}]: logged message cost ${entry.totalCost} (accumulated: ${entry.accumulatedCost}, this msg: ${entry.cost}, delta: ${entry.percentageDelta}%)`);
+		} else {
+			// Percentage didn't change - accumulate the cost
+			existing.accumulatedCost += conversationData.cost;
+			await Log(`Debug [${limitKey}]: accumulated cost ${conversationData.cost}, total accumulated: ${existing.accumulatedCost}`);
+		}
+
+		existing.lastPercentage = limit.percentage;
+		await setStorageValue(storageKey, existing);
+	}
+}
+
+async function logUsageDelta(orgId, previousUsage, currentUsage, conversationLength, model) {
+	const deltas = {};
+
+	for (const [key, currentLimit] of Object.entries(currentUsage.limits)) {
+		if (!currentLimit) continue;
+
+		const previousLimit = previousUsage.limits[key];
+		if (!previousLimit) continue;
+
+		const delta = currentLimit.percentage - previousLimit.percentage;
+
+		// Only log if change >= 1%
+		if (delta >= 1) {
+			deltas[key] = delta;
+		}
+	}
+
+	if (Object.keys(deltas).length > 0) {
+		const entry = {
+			timestamp: Date.now(),
+			orgId,
+			conversationLength,
+			model,
+			deltas
+		};
+
+		await Log(`Usage delta: ${JSON.stringify(entry)}`);
+	}
+}
+
+async function scheduleResetNotifications(orgId, usageData) {
+	const maxedLimits = usageData.getMaxedLimits();
+
+	for (const limit of maxedLimits) {
+		const timestampKey = limit.resetsAt.toString();
+
+		// Check if we already have a notification scheduled for this reset time
+		if (await scheduledNotifications.has(timestampKey)) {
+			continue;
+		}
+
+		const alarmName = `notifyReset_${orgId}_${limit.key}_${timestampKey}`;
+
+		// Schedule the alarm
+		await scheduleAlarm(alarmName, {
+			when: limit.resetsAt
+		});
+
+		// Store in map with expiration 1 hour after reset time
+		const expiryTime = limit.resetsAt + (60 * 60 * 1000) - Date.now();
+		await scheduledNotifications.set(timestampKey, alarmName, expiryTime);
+
+		await Log(`Scheduled notification: ${alarmName} for ${new Date(limit.resetsAt).toISOString()}`);
+	}
+}
+
 
 // Listen for message sending
 async function onBeforeRequestHandler(details) {
-	trackCall("onBeforeRequestHandler");
 	await Log("Intercepted request:", details.url);
 	await Log("Intercepted body:", details.requestBody);
 	if (details.method === "POST" &&
@@ -791,6 +603,18 @@ async function onBeforeRequestHandler(details) {
 		})) || [];
 		await Log("Tool definitions:", toolDefs);
 
+		// Fetch current usage to snapshot before message
+		let previousUsage = null;
+		try {
+			const api = new ClaudeAPI(details.cookieStoreId, orgId);
+			const currentUsage = await api.getUsageLimits();
+			const subscriptionTier = await api.getSubscriptionTier();
+			const usageData = UsageData.fromAPIResponse(currentUsage, subscriptionTier);
+			previousUsage = usageData.toJSON();
+		} catch (error) {
+			await Log("warn", "Failed to fetch pre-message usage snapshot:", error);
+		}
+
 		// Store pending request with all data
 		await pendingRequests.set(key, {
 			orgId: orgId,
@@ -799,7 +623,8 @@ async function onBeforeRequestHandler(details) {
 			styleId: styleId,
 			model: model,
 			requestTimestamp: Date.now(),
-			toolDefinitions: toolDefs
+			toolDefinitions: toolDefs,
+			previousUsage: previousUsage
 		});
 	}
 
@@ -812,7 +637,6 @@ async function onBeforeRequestHandler(details) {
 }
 
 async function onCompletedHandler(details) {
-	trackCall("onCompletedHandler");
 	if (details.method === "GET" &&
 		details.url.includes("/chat_conversations/") &&
 		details.url.includes("tree=True") &&
@@ -837,7 +661,6 @@ async function onCompletedHandler(details) {
 }
 
 async function processNextTask() {
-	trackCall("processNextTask");
 	// Check if already processing
 	if (processingLock) {
 		const lockAge = Date.now() - processingLock;
@@ -871,15 +694,12 @@ async function processNextTask() {
 
 //#region Variable fill in and initialization
 pendingRequests = new StoredMap("pendingRequests"); // conversationId -> {userId, tabId}
-capModifiers = new StoredMap('capModifiers');
 scheduledNotifications = new StoredMap('scheduledNotifications');
-firebaseSyncManager.setUpdateAllTabsCallback(updateAllTabsWithUsage);
 
 isInitialized = true;
 for (const handler of functionsPendingUntilInitialization) {
 	handler.fn(...handler.args);
 }
 functionsPendingUntilInitialization = [];
-updateSyncAlarmIntervalAndFetchData();
 Log("Done initializing.")
 //#endregion

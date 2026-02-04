@@ -1,31 +1,15 @@
 // Configuration object (moved from constants.json)
 const CONFIG = {
-	UI_UPDATE_INTERVAL_MS: 3000,
-	"OUTPUT_TOKEN_MULTIPLIER": 5,
-	"USAGE_CAP": {
-		"BASELINE": 700000,
-		"MULTIPLIERS": {
-			"claude_free": 0.2,
-			"claude_pro": 1,
-			"claude_team": 1.5,
-			"claude_max_5x": 5,
-			"claude_max_20x": 20
-		}
-	},
+	"OUTPUT_TOKEN_MULTIPLIER": 4,
 	"MODELS": [
 		"Opus",
 		"Sonnet",
 		"Haiku"
 	],
 	"MODEL_WEIGHTS": {
-		"Sonnet": 1,
-		"Opus": 5,
-		"Haiku": 0.25
-	},
-	"SYNC_INTERVALS": {
-		"none": 30,
-		"inactive": 10,
-		"active": 4
+		"Opus": 6.25,
+		"Sonnet": 3.75,
+		"Haiku": 1.25
 	},
 	"WARNING_THRESHOLD": 0.9,
 	"WARNING": {
@@ -33,40 +17,67 @@ const CONFIG = {
 		"LENGTH": 50000,
 		"COST": 250000
 	},
-	"SELECTORS": {
-		"MODEL_PICKER": "[data-testid=\"model-selector-dropdown\"]",
-		"USER_MENU_BUTTON": "button[data-testid=\"user-menu-button\"]",
-		"SIDEBAR_NAV": "nav.flex",
-		"SIDEBAR_CONTAINER": ".overflow-y-auto.overflow-x-hidden.flex.flex-col.gap-4",
-		"CHAT_MENU": "[data-testid=\"chat-menu-trigger\"]",
-		"MODEL_SELECTOR": "[data-testid=\"model-selector-dropdown\"]",
-		"INIT_LOGIN_SCREEN": "button[data-testid=\"login-with-google\"]",
-		"VERIF_LOGIN_SCREEN": "input[data-testid=\"code\"]"
-	},
 	"BASE_SYSTEM_PROMPT_LENGTH": 3200,
-	"FEATURE_COSTS": {
-		"enabled_artifacts_attachments": 2200,
-		"preview_feature_uses_artifacts": 8400,
-		"preview_feature_uses_latex": 200,
-		"enabled_bananagrams": 750,
-		"enabled_sourdough": 900,
-		"enabled_focaccia": 1350,
-		"enabled_web_search": 10250,
-		"citation_info": 450,
-		"compass_mode": 1000,
-		"profile_preferences": 850,
-		"enabled_tumeric": 2000
-	},
-	"DONATION_TOKEN_THRESHOLDS": [
-		10000000,
-		50000000,
-		100000000,
-		300000000,
-		1000000000
-	],
-	"CACHING_MULTIPLIER": 0.1,
-	"TOKEN_CACHING_DURATION_MS": 5 * 60 * 1000 // 5 minutes
+	"CACHING_MULTIPLIER": 0.07,	// Just a guess for now.
+	"TOKEN_CACHING_DURATION_MS": 5 * 60 * 1000, // 5 minutes
+	"ESTIMATED_CAPS": {
+		// I have no idea. This is very napkin math.
+		"claude_free": {
+			"session": 375000
+		},
+		"claude_pro": {},
+		// Genuinely mostly just vibes here, this is just a first draft
+		// Next update will do telemetry to refine these values
+		"claude_max_5x": {
+			"session": 5 * 10 ** 6,
+			"weekly": 50 * 10 ** 6,
+			"sonnetWeekly": 30 * 10 ** 6
+		},
+		"claude_max_20x": {}
+	}
 };
+
+function fillEstimatedCaps(caps) {
+	// Multipliers relative to pro (the base tier)
+	const tierMultipliers = {
+		claude_pro: 1,
+		claude_max_5x: 5,
+		claude_max_20x: 20,
+	};
+
+	const tiers = Object.keys(tierMultipliers);
+
+	// For session and weekly: find the first tier that has a value,
+	// normalize it back to "pro-equivalent", then fill in the rest.
+	// Priority order: pro → 5x → 20x (due to tiers array order)
+	for (const key of ['session', 'weekly']) {
+		const sourceTier = tiers.find(t => caps[t]?.[key] != null);
+		if (!sourceTier) continue;
+
+		const proEquivalent = caps[sourceTier][key] / tierMultipliers[sourceTier];
+
+		for (const tier of tiers) {
+			caps[tier] ??= {};
+			caps[tier][key] ??= proEquivalent * tierMultipliers[tier];
+		}
+	}
+
+	// sonnetWeekly only lives on max_5x and max_20x (4x relationship)
+	const max5x = caps.claude_max_5x;
+	const max20x = caps.claude_max_20x;
+	if (max5x && max20x) {
+		if (max5x.sonnetWeekly != null && max20x.sonnetWeekly == null) {
+			max20x.sonnetWeekly = max5x.sonnetWeekly * 4;
+		} else if (max20x.sonnetWeekly != null && max5x.sonnetWeekly == null) {
+			max5x.sonnetWeekly = max20x.sonnetWeekly / 4;
+		}
+	}
+
+	return caps;
+}
+
+CONFIG.ESTIMATED_CAPS = fillEstimatedCaps(CONFIG.ESTIMATED_CAPS);
+console.log("Final estimated caps:", CONFIG.ESTIMATED_CAPS);
 
 const isElectron = chrome.action === undefined;
 const FORCE_DEBUG = true; // Set to true to force debug mode

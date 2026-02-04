@@ -10,3 +10,6 @@ node_modules/*
 package-lock.json
 package.json
 eslint.config.js
+.claude/*
+content-components/ui_dataclasses.js
+content-components/ui_dataclasses.js

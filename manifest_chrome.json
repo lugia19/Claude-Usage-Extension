@@ -1,8 +1,8 @@
 {
 	"manifest_version": 3,
 	"name": "Claude Usage Tracker",
-	"version": "4.1.1",
-	"description": "Helps you track your claude.ai usage caps based on tokens sent, and syncs across devices using firebase.",
+	"version": "5.0.0",
+	"description": "Helps you track your claude.ai usage caps based on tokens sent.",
 	"author": "lugia19",
 	"browser_specific_settings": {
 		"gecko": {
@@ -25,9 +25,8 @@
 				"content-components/electron_reciever.js",
 				"content-components/ui_dataclasses.js",
 				"content-components/notification_card.js",
-				"content-components/sidebar_ui.js",
-				"content-components/chat_ui.js",
-				"ui.js"
+				"content-components/usage_ui.js",
+				"content-components/length_ui.js"
 			]
 		}
 	],

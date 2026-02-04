@@ -72,11 +72,16 @@
 
 /* Progress bars always the same */
 .ut-progress {
+	position: relative;
+	width: 100%;
+	user-select: none;
+}
+
+.ut-progress-track {
 	height: 6px;
 	border-radius: 3px;
 	overflow: hidden;
 	width: 100%;
-	user-select: none;
 }
 
 .ut-progress-bar {
@@ -212,6 +217,28 @@
 
 .ut-select-text {
 	user-select: text;
+}
+
+.ut-weekly-marker {
+    position: absolute;
+    bottom: 0;
+    height: 6px;
+    width: 3px;
+    background: var(--marker-color);
+    z-index: 2;
+    pointer-events: auto;
+    cursor: default;
+}
+
+.ut-weekly-marker::before {
+    content: '';
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-left: 5.5px solid transparent;
+    border-right: 5.5px solid transparent;
+    border-top: 8px solid var(--marker-color);
 }
 
 .ut-desktop-footer {

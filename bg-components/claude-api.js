@@ -1,12 +1,30 @@
 import { CONFIG, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey, sendTabMessage, containerFetch } from './utils.js';
-import { tokenCounter, tokenStorageManager, getTextFromContent } from './tokenManagement.js';
-import { UsageData, ConversationData } from './bg-dataclasses.js';
+import { tokenCounter, getTextFromContent } from './tokenManagement.js';
+import { UsageData, ConversationData } from '../shared/dataclasses.js';
+
+const FEATURE_COSTS = {
+	"enabled_artifacts_attachments": 2200,	// DEPRECATED: Analysis tool
+	"preview_feature_uses_artifacts": 8400,	// Artifacts
+	"preview_feature_uses_latex": 200,		// DEPRECATED: LaTeX
+	"enabled_bananagrams": 750,				// Drive search
+	"enabled_sourdough": 900,				// GCal or GMail search (not sure which)
+	"enabled_focaccia": 1350,				// GCal or GMail search (not sure which)
+	"enabled_web_search": 10250,			// Web search
+	"citation_info": 450,					// Citation info
+	"compass_mode": 1000,					// Research tool
+	"profile_preferences": 850,				// Base preferences cost
+	"enabled_turmeric": 2000,				// AI artifacts
+	"enabled_saffron": 4250,				// Memory base cost (actual memory content counted separately)
+	"enabled_saffron_search": 3000,			// Memory search
+	"enabled_monkeys_in_a_barrel": 5300		// Code Interpreter
+};
 
 async function Log(...args) {
 	await RawLog("claude-api", ...args);
 }
 const subscriptionTiersCache = new StoredMap("subscriptionTiers");
 const syncTokenCache = new StoredMap("syncTokens");
+const projectCache = new StoredMap("projectCache");
 
 // Pure HTTP/API layer
 class ClaudeAPI {
@@ -36,6 +54,16 @@ class ClaudeAPI {
 		return new ConversationAPI(conversationId, this);
 	}
 
+	// Fetch usage limits from the /usage endpoint
+	async getUsageLimits() {
+		return this.getRequest(`/organizations/${this.orgId}/usage`);
+	}
+
+	// Fetch memory content
+	async getMemory() {
+		return this.getRequest(`/organizations/${this.orgId}/memory`);
+	}
+
 	// Platform operations
 	async getGoogleDriveDocument(uri) {
 		return this.getRequest(`/organizations/${this.orgId}/sync/mcp/drive/document/${uri}`);
@@ -47,13 +75,12 @@ class ClaudeAPI {
 		const projectSize = projectStats.use_project_knowledge_search ? 0 : projectStats.knowledge_size;
 
 		// Check cache
-		const cachedAmount = await tokenStorageManager.projectCache.get(projectId) || -1;
+		const cachedAmount = await projectCache.get(projectId) || -1;
 		const isCached = cachedAmount == projectSize;
 
 		// Update cache if this is a new message
 		if (isNewMessage) {
-
-			await tokenStorageManager.projectCache.set(projectId, projectSize, CONFIG.TOKEN_CACHING_DURATION_MS);
+			await projectCache.set(projectId, projectSize, CONFIG.TOKEN_CACHING_DURATION_MS);
 		}
 
 		return {
@@ -93,7 +120,7 @@ class ClaudeAPI {
 		const profileData = await this.getRequest('/account_profile');
 		let totalTokens = 0;
 		if (profileData.conversation_preferences) {
-			totalTokens = await tokenCounter.countText(profileData.conversation_preferences) + CONFIG.FEATURE_COSTS["profile_preferences"];
+			totalTokens = await tokenCounter.countText(profileData.conversation_preferences) + FEATURE_COSTS["profile_preferences"];
 		}
 		await Log(`Profile tokens: ${totalTokens}`);
 		return totalTokens;
@@ -461,26 +488,49 @@ class ConversationAPI {
 		// Add settings costs
 		for (const [setting, enabled] of Object.entries(conversationData.settings)) {
 			await Log("Setting:", setting, enabled);
-			if (enabled && CONFIG.FEATURE_COSTS[setting]) {
-				lengthTokens += CONFIG.FEATURE_COSTS[setting];
-				costTokens += CONFIG.FEATURE_COSTS[setting] * CONFIG.CACHING_MULTIPLIER;
+			if (enabled && FEATURE_COSTS[setting]) {
+				lengthTokens += FEATURE_COSTS[setting];
+				costTokens += FEATURE_COSTS[setting] * CONFIG.CACHING_MULTIPLIER;
 			}
 		}
 
 		if ("enabled_web_search" in conversationData.settings || "enabled_bananagrams" in conversationData.settings) {
 			if (conversationData.settings?.enabled_websearch || conversationData.settings?.enabled_bananagrams) {
-				lengthTokens += CONFIG.FEATURE_COSTS["citation_info"];
-				costTokens += CONFIG.FEATURE_COSTS["citation_info"] * CONFIG.CACHING_MULTIPLIER;
+				lengthTokens += FEATURE_COSTS["citation_info"];
+				costTokens += FEATURE_COSTS["citation_info"] * CONFIG.CACHING_MULTIPLIER;
+			}
+		}
+
+		// Add memory content tokens if memory is enabled
+		if (conversationData.settings?.enabled_saffron) {
+			try {
+				const memoryData = await this.api.getMemory();
+				if (memoryData?.memory) {
+					const memoryTokens = await tokenCounter.countText(memoryData.memory);
+					await Log("Memory tokens:", memoryTokens);
+					lengthTokens += memoryTokens;
+					costTokens += memoryTokens * CONFIG.CACHING_MULTIPLIER;
+				}
+			} catch (error) {
+				await Log("warn", "Failed to fetch memory:", error);
 			}
 		}
 
 		// Steps 7-8: Process messages and count tokens
 		const humanMessageData = [];
 		const assistantMessageData = [];
+		let hasWebSearchResult = false;
 
 		for (let i = 0; i < currentTrunk.length; i++) {
 			const rawMessageData = currentTrunk[i];
 			const message = new MessageAPI(rawMessageData, cacheIsActive, this.api);
+
+			// Check for web search results in message content
+			if (!hasWebSearchResult && rawMessageData.content) {
+				hasWebSearchResult = rawMessageData.content.some(
+					item => item.type === 'tool_result' && item.name === 'web_search'
+				);
+			}
 
 			// Run both in parallel
 			const [fileTokens, syncTokens] = await Promise.all([
@@ -533,11 +583,20 @@ class ConversationAPI {
 		}
 
 		// Steps 9-10: Project tokens and model detection
+		let projectStats = null;
 		if (conversationData.project_uuid) {
-			const projectStats = await this.api.getProjectStats(conversationData.project_uuid, isNewMessage);
+			projectStats = await this.api.getProjectStats(conversationData.project_uuid, isNewMessage);
 			lengthTokens += projectStats.tokenInfo.length;
 			costTokens += projectStats.tokenInfo.isCached ? 0 : projectStats.tokenInfo.length;
 		}
+
+		// Determine if length is an estimate (features that add unknown tokens)
+		const lengthIsEstimate = !!(
+			conversationData.settings?.enabled_monkeys_in_a_barrel ||  // Code execution
+			hasWebSearchResult ||                                      // Web search result in history
+			conversationData.settings?.enabled_bananagrams ||          // Drive search
+			projectStats?.use_project_knowledge_search                 // Project retrieval
+		);
 
 		let conversationModelType = undefined;
 		let modelString = "sonnet"
@@ -572,7 +631,8 @@ class ConversationAPI {
 			conversationIsCachedUntil: conversationIsCachedUntil,
 			projectUuid: conversationData.project_uuid,
 			settings: conversationData.settings,
-			lastMessageTimestamp: new Date(lastRawMessage.created_at).getTime() // Add this!
+			lastMessageTimestamp: new Date(lastRawMessage.created_at).getTime(),
+			lengthIsEstimate: lengthIsEstimate
 		});
 	}
 }

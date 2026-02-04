@@ -4,6 +4,16 @@
 const BLUE_HIGHLIGHT = "#2c84db";
 const RED_WARNING = "#de2929";
 const SUCCESS_GREEN = "#22c55e";
+
+const SELECTORS = {
+	MODEL_PICKER: '[data-testid="model-selector-dropdown"]',
+	USER_MENU_BUTTON: 'button[data-testid="user-menu-button"]',
+	SIDEBAR_NAV: 'nav.flex',
+	CHAT_MENU: '[data-testid="chat-menu-trigger"]',
+	MODEL_SELECTOR: '[data-testid="model-selector-dropdown"]',
+	INIT_LOGIN_SCREEN: 'button[data-testid="login-with-google"]',
+	VERIF_LOGIN_SCREEN: 'input[data-testid="code"]'
+};
 // Dynamic debug setting - will be loaded from storage
 let FORCE_DEBUG = true;
 // Load FORCE_DEBUG from storage and set up error handlers
@@ -30,8 +40,7 @@ browser.storage.local.get('force_debug').then(result => {
 });
 
 // Global variables that will be shared across all content scripts
-let config;
-let ui;
+let CONFIG;
 
 // Logging function
 async function Log(...args) {
@@ -161,14 +170,14 @@ async function waitForElement(target, selector, maxTime = 1000) {
 }
 
 async function getCurrentModel(maxWait = 3000) {
-	const modelSelector = await waitForElement(document, config.SELECTORS.MODEL_PICKER, maxWait);
+	const modelSelector = await waitForElement(document, SELECTORS.MODEL_PICKER, maxWait);
 	if (!modelSelector) return undefined;
 
 	let fullModelName = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim() || 'default';
 	if (!fullModelName || fullModelName === 'default') return undefined;
 
 	fullModelName = fullModelName.toLowerCase();
-	const modelTypes = config.MODELS
+	const modelTypes = CONFIG.MODELS
 
 	for (const modelType of modelTypes) {
 		if (fullModelName.includes(modelType.toLowerCase())) {
@@ -182,25 +191,6 @@ async function getCurrentModel(maxWait = 3000) {
 function isMobileView() {
 	// Check if height > width (portrait orientation)
 	return window.innerHeight > window.innerWidth;
-}
-
-async function setupRateLimitMonitoring() {
-	// Set up rate limit event listener
-	window.addEventListener('rateLimitExceeded', async (event) => {
-		await Log("Rate limit exceeded", event.detail);
-		await sendBackgroundMessage({
-			type: 'rateLimitExceeded',
-			detail: event.detail
-		})
-	});
-
-	// Inject external rate limit monitoring script
-	const script = document.createElement('script');
-	script.src = browser.runtime.getURL('injections/rate-limit-watcher.js');
-	script.onload = function () {
-		this.remove();
-	};
-	(document.head || document.documentElement).appendChild(script);
 }
 
 async function setupRequestInterception(patterns) {
@@ -345,3 +335,206 @@ function setupTooltip(element, tooltip, options = {}) {
 		});
 	}
 }
+
+// Helper function to find sidebar containers
+async function findSidebarContainers() {
+	// First find the nav element
+	const sidebarNav = document.querySelector(SELECTORS.SIDEBAR_NAV);
+	if (!sidebarNav) {
+		await Log("error", 'Could not find sidebar nav');
+		return null;
+	}
+
+	// Look for the main container that holds all sections
+	const containerWrapper = sidebarNav.querySelector('.flex.flex-grow.flex-col.overflow-y-auto')
+	const containers = containerWrapper?.querySelectorAll('.flex-1.relative');
+	const mainContainer = containers[containers.length - 1].querySelector('.px-2.mt-4');
+	if (!mainContainer) {
+		await Log("error", 'Could not find main container in sidebar');
+		return null;
+	}
+
+	// Look for the Starred section
+	const starredSection = await waitForElement(mainContainer, 'div.flex.flex-col.mb-4', 5000);
+	if (!starredSection) {
+		await Log("error", 'Could not find Starred section.');
+	}
+
+	// Check if the Recents section exists as the next sibling
+	let recentsSection = null;
+	if (starredSection) {
+		recentsSection = starredSection.nextElementSibling;
+	} else {
+		recentsSection = mainContainer.firstChild;
+	}
+
+	if (!recentsSection) {
+		await Log("error", 'Could not find any injection site');
+		return null;
+	}
+
+	// Return the parent container so we can insert our UI between Starred and Recents
+	return {
+		container: mainContainer,
+		starredSection: starredSection,
+		recentsSection: recentsSection
+	};
+}
+
+// Progress bar component
+class ProgressBar {
+	constructor(options = {}) {
+		const {
+			width = '100%',
+			height = '6px'
+		} = options;
+
+		this.container = document.createElement('div');
+		this.container.className = 'ut-progress';
+		if (width !== '100%') this.container.style.width = width;
+
+		this.track = document.createElement('div');
+		this.track.className = 'bg-bg-500 ut-progress-track';
+		if (height !== '6px') this.track.style.height = height;
+
+		this.bar = document.createElement('div');
+		this.bar.className = 'ut-progress-bar';
+		this.bar.style.background = BLUE_HIGHLIGHT;
+
+		this.tooltip = document.createElement('div');
+		this.tooltip.className = 'bg-bg-500 text-text-000 ut-tooltip';
+
+		this.track.appendChild(this.bar);
+		this.container.appendChild(this.track);
+		document.body.appendChild(this.tooltip);
+		setupTooltip(this.container, this.tooltip, { topOffset: 10 });
+	}
+
+	updateProgress(total, maxTokens) {
+		const percentage = (total / maxTokens) * 100;
+		this.bar.style.width = `${Math.min(percentage, 100)}%`;
+		this.bar.style.background = total >= maxTokens * CONFIG.WARNING.PERCENT_THRESHOLD ? RED_WARNING : BLUE_HIGHLIGHT;
+		this.tooltip.textContent = `${total.toLocaleString()} / ${maxTokens.toLocaleString()} credits (${percentage.toFixed(1)}%)`;
+	}
+
+	setMarker(percentage, label) {
+		if (!this.marker) {
+			this.marker = document.createElement('div');
+			this.marker.className = 'ut-weekly-marker';
+			this.marker.style.setProperty('--marker-color', RED_WARNING);
+			this.container.style.paddingTop = '10px';
+			this.container.style.marginTop = '-10px';
+			this.container.appendChild(this.marker);
+
+			this.markerTooltip = document.createElement('div');
+			this.markerTooltip.className = 'bg-bg-500 text-text-000 ut-tooltip';
+			document.body.appendChild(this.markerTooltip);
+			setupTooltip(this.marker, this.markerTooltip);
+		}
+		this.marker.style.left = `${Math.min(percentage, 100)}%`;
+		this.marker.style.display = 'block';
+		if (label) this.markerTooltip.textContent = label;
+	}
+
+	clearMarker() {
+		if (this.marker) {
+			this.marker.style.display = 'none';
+			this.container.style.paddingTop = '';
+			this.container.style.marginTop = '';
+		}
+	}
+}
+
+// Message handlers for background script requests
+browser.runtime.onMessage.addListener(async (message) => {
+	if (message.type === 'getActiveModel') {
+		const currModel = await getCurrentModel();
+		return currModel || "Sonnet";
+	}
+	if (message.action === "getOrgID") {
+		const orgId = document.cookie
+			.split('; ')
+			.find(row => row.startsWith('lastActiveOrg='))
+			?.split('=')[1];
+		return Promise.resolve({ orgId });
+	}
+	if (message.action === "getStyleId") {
+		const storedStyle = localStorage.getItem('LSS-claude_personalized_style');
+		let styleId;
+		if (storedStyle) {
+			try {
+				const styleData = JSON.parse(storedStyle);
+				if (styleData) styleId = styleData.styleKey;
+			} catch (e) {
+				await Log("error", 'Failed to parse stored style:', e);
+			}
+		}
+		return Promise.resolve({ styleId });
+	}
+});
+
+// Style injection
+async function injectStyles() {
+	if (document.getElementById('ut-styles')) return;
+	try {
+		const cssContent = await fetch(browser.runtime.getURL('tracker-styles.css')).then(r => r.text());
+		const style = document.createElement('link');
+		style.rel = 'stylesheet';
+		style.id = 'ut-styles';
+		style.href = `data:text/css;charset=utf-8,${encodeURIComponent(cssContent)}`;
+		document.head.appendChild(style);
+	} catch (error) {
+		await Log("error", 'Failed to load tracker styles:', error);
+	}
+}
+
+// Main initialization
+async function initExtension() {
+	if (window.claudeTrackerInstance) {
+		Log('Instance already running, stopping');
+		return;
+	}
+	window.claudeTrackerInstance = true;
+
+	await injectStyles();
+	CONFIG = await sendBackgroundMessage({ type: 'getConfig' });
+	await Log("Config received...");
+
+	// Wait for login
+	const LOGIN_CHECK_DELAY = 10000;
+	while (true) {
+		const userMenuButton = await waitForElement(document, SELECTORS.USER_MENU_BUTTON, 6000);
+		if (userMenuButton) {
+			if (userMenuButton.getAttribute('data-script-loaded')) {
+				await Log('Script already running, stopping duplicate');
+				return;
+			}
+			userMenuButton.setAttribute('data-script-loaded', true);
+			break;
+		}
+
+		const initialLoginScreen = document.querySelector(SELECTORS.INIT_LOGIN_SCREEN);
+		const verificationLoginScreen = document.querySelector(SELECTORS.VERIF_LOGIN_SCREEN);
+		if (!initialLoginScreen && !verificationLoginScreen) {
+			await Log("error", 'Neither user menu button nor any login screen found');
+			return;
+		}
+		await Log('Login screen detected, waiting before retry...');
+		await sleep(LOGIN_CHECK_DELAY);
+	}
+
+	// Request initial data
+	sendBackgroundMessage({ type: 'requestData' });
+	sendBackgroundMessage({ type: 'initOrg' });
+
+	await Log('Initialization complete. Ready to track tokens.');
+}
+
+// Self-initialize
+(async () => {
+	try {
+		await initExtension();
+	} catch (error) {
+		await Log("error", 'Failed to initialize Chat Token Counter:', error);
+	}
+})();

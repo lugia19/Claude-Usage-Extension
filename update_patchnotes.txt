@@ -1,4 +1,10 @@
-Changed caching time to 5m (Actually correct)
-I made a new extension! Check it out!
-Features include: Summarizing, TTS, STT, text search, and more!
-Next major update (v5) is in the works, and will use the official metrics
+V5 is FINALLY done-ish.
+Refactored UI
+Uses official metrics
+Added pricing display when using extra usage
+Supports memory and code execution
+Removed firebase sync
+
+Future updates:
+Telemetry to crowd source better limits
+Proper multi-turn handling
