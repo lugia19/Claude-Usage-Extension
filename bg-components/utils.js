@@ -1,15 +1,15 @@
 // Configuration object (moved from constants.json)
 const CONFIG = {
-	"OUTPUT_TOKEN_MULTIPLIER": 5,
+	"OUTPUT_TOKEN_MULTIPLIER": 4,
 	"MODELS": [
 		"Opus",
 		"Sonnet",
 		"Haiku"
 	],
 	"MODEL_WEIGHTS": {
-		"Opus": 5,
-		"Sonnet": 3,
-		"Haiku": 1
+		"Opus": 6.25,
+		"Sonnet": 3.75,
+		"Haiku": 1.25
 	},
 	"WARNING_THRESHOLD": 0.9,
 	"WARNING": {
@@ -18,12 +18,12 @@ const CONFIG = {
 		"COST": 250000
 	},
 	"BASE_SYSTEM_PROMPT_LENGTH": 3200,
-	"CACHING_MULTIPLIER": 0.1,
+	"CACHING_MULTIPLIER": 0.07,	// Just a guess for now.
 	"TOKEN_CACHING_DURATION_MS": 5 * 60 * 1000, // 5 minutes
 	"ESTIMATED_CAPS": {
+		// I have no idea. This is very napkin math.
 		"claude_free": {
-			"session": 50000,
-			"weekly": 150000
+			"session": 375000
 		},
 		"claude_pro": {},
 		// Genuinely mostly just vibes here, this is just a first draft

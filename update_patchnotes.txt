@@ -1,4 +1,10 @@
-Fix UI not showing
-Refactor Chat and Length UI
-V5 is still being worked on! I've mostly finished the UI refactor.
-Sorry for the slow updates, I've got exams for my masters to focus on.
+V5 is FINALLY done-ish.
+Refactored UI
+Uses official metrics
+Added pricing display when using extra usage
+Supports memory and code execution
+Removed firebase sync
+
+Future updates:
+Telemetry to crowd source better limits
+Proper multi-turn handling
