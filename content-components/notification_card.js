@@ -446,6 +446,8 @@ class FloatingCardsUI {
 	}
 
 	async checkNotifications() {
+		// Delay to allow other extensions (like QoL) to load first
+		await new Promise(resolve => setTimeout(resolve, 1000));
 		await this.checkForVersionUpdate();
 		await this.checkForDonationMilestone();
 	}

@@ -519,10 +519,18 @@ class ConversationAPI {
 		// Steps 7-8: Process messages and count tokens
 		const humanMessageData = [];
 		const assistantMessageData = [];
+		let hasWebSearchResult = false;
 
 		for (let i = 0; i < currentTrunk.length; i++) {
 			const rawMessageData = currentTrunk[i];
 			const message = new MessageAPI(rawMessageData, cacheIsActive, this.api);
+
+			// Check for web search results in message content
+			if (!hasWebSearchResult && rawMessageData.content) {
+				hasWebSearchResult = rawMessageData.content.some(
+					item => item.type === 'tool_result' && item.name === 'web_search'
+				);
+			}
 
 			// Run both in parallel
 			const [fileTokens, syncTokens] = await Promise.all([
@@ -575,11 +583,20 @@ class ConversationAPI {
 		}
 
 		// Steps 9-10: Project tokens and model detection
+		let projectStats = null;
 		if (conversationData.project_uuid) {
-			const projectStats = await this.api.getProjectStats(conversationData.project_uuid, isNewMessage);
+			projectStats = await this.api.getProjectStats(conversationData.project_uuid, isNewMessage);
 			lengthTokens += projectStats.tokenInfo.length;
 			costTokens += projectStats.tokenInfo.isCached ? 0 : projectStats.tokenInfo.length;
 		}
+
+		// Determine if length is an estimate (features that add unknown tokens)
+		const lengthIsEstimate = !!(
+			conversationData.settings?.enabled_monkeys_in_a_barrel ||  // Code execution
+			hasWebSearchResult ||                                      // Web search result in history
+			conversationData.settings?.enabled_bananagrams ||          // Drive search
+			projectStats?.use_project_knowledge_search                 // Project retrieval
+		);
 
 		let conversationModelType = undefined;
 		let modelString = "sonnet"
@@ -614,7 +631,8 @@ class ConversationAPI {
 			conversationIsCachedUntil: conversationIsCachedUntil,
 			projectUuid: conversationData.project_uuid,
 			settings: conversationData.settings,
-			lastMessageTimestamp: new Date(lastRawMessage.created_at).getTime() // Add this!
+			lastMessageTimestamp: new Date(lastRawMessage.created_at).getTime(),
+			lengthIsEstimate: lengthIsEstimate
 		});
 	}
 }

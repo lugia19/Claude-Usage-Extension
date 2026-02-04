@@ -130,6 +130,9 @@ class UsageSection {
 			const remainingHours = hours % 24;
 			return `⏱ ${days}d ${remainingHours}h`;
 		}
+		if (hours === 0) {
+			return `⏱ ${minutes}m`;
+		}
 		return `⏱ ${hours}h ${minutes}m`;
 	}
 
@@ -295,11 +298,8 @@ class UsageUI {
 	}
 
 	createQoLFooter() {
-		const hasQoL = document.documentElement.hasAttribute('data-claude-qol-installed');
-		if (hasQoL) return null;
-
 		const footer = document.createElement('div');
-		footer.className = 'ut-desktop-footer ut-sidebar-footer mt-1';
+		footer.className = 'ut-desktop-footer ut-sidebar-footer mt-1 ut-qol-footer';
 
 		const isChrome = !!window.chrome && (!!window.chrome.webstore || !!window.chrome.runtime);
 		const link = document.createElement('a');
@@ -320,6 +320,7 @@ class UsageUI {
 		const statLine = document.createElement('div');
 		statLine.id = 'ut-chat-stat-line';
 		statLine.className = 'ut-row';
+		statLine.style.paddingLeft = '6px'; // Align with chatbox text input
 
 		// Left container (usage)
 		const leftContainer = document.createElement('div');
@@ -378,8 +379,8 @@ class UsageUI {
 		};
 
 		return {
-			usage: create("How much of your quota you've used"),
-			timer: create('When your usage will reset to full'),
+			usage: create("How much of your 5-hour quota you've used"),
+			timer: create('When your 5-hour usage will reset'),
 		};
 	}
 
@@ -460,7 +461,8 @@ class UsageUI {
 			const weeklyLimit = usageData.getBindingWeeklyLimit(modelName);
 			if (weeklyLimit) {
 				const markerLabels = { weekly: 'All Models (Weekly)', sonnetWeekly: 'Sonnet (Weekly)', opusWeekly: 'Opus (Weekly)' };
-				progressBar.setMarker(weeklyLimit.percentage, markerLabels[weeklyLimit.key] || 'All Models (Weekly)');
+				const markerLabel = `${markerLabels[weeklyLimit.key] || 'Weekly'}: ${weeklyLimit.percentage.toFixed(0)}%`;
+				progressBar.setMarker(weeklyLimit.percentage, markerLabel);
 			} else {
 				progressBar.clearMarker();
 			}
@@ -523,6 +525,16 @@ class UsageUI {
 		}
 	}
 
+	checkQoLInstalled() {
+		const hasQoL = document.documentElement.hasAttribute('data-claude-qol-installed');
+		if (hasQoL) {
+			const qolFooter = this.elements.sidebar?.container?.querySelector('.ut-qol-footer');
+			if (qolFooter) {
+				qolFooter.remove();
+			}
+		}
+	}
+
 	// ========== UPDATE LOOP ==========
 
 	startUpdateLoop() {
@@ -532,6 +544,7 @@ class UsageUI {
 				this.renderResetTimes();
 				this.checkExpiredLimits();
 				this.checkModelChange();
+				this.checkQoLInstalled();
 				await this.mountSidebar();
 				this.mountChatArea();
 			}

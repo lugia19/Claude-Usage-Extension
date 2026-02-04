@@ -79,8 +79,9 @@ class LengthUI {
 
 	createTitleAreaElements() {
 		const container = document.createElement('div');
-		container.className = 'text-text-500 text-xs !px-1 ut-select-none';
+		container.className = 'text-text-500 text-xs ut-select-none ut-title-stats';
 		container.style.marginTop = '2px';
+		container.style.flexBasis = '100%'; // Force onto its own line
 
 		const length = document.createElement('span');
 		const cost = document.createElement('span');
@@ -93,7 +94,7 @@ class LengthUI {
 		const estimate = document.createElement('div');
 		estimate.className = 'text-text-400 text-xs';
 		estimate.style.cursor = 'help';
-		if (!isMobileView()) estimate.style.marginRight = '8px';
+		// No margin-right so it aligns with the send button
 
 		return { estimate };
 	}
@@ -137,11 +138,14 @@ class LengthUI {
 		// Prepare layout if needed
 		this.prepareLayoutForTitleArea(titleLine, chatMenu);
 
-		// Mount container
-		const chatMenuParent = chatMenu.closest('.chat-project-wrapper') || chatMenu.parentElement;
-		if (chatMenuParent && chatMenuParent.nextElementSibling !== this.elements.titleArea.container) {
-			chatMenuParent.after(this.elements.titleArea.container);
+		// Append to end of titleLine - flex-wrap + flex-basis: 100% will put it on its own line
+		if (!titleLine.contains(this.elements.titleArea.container)) {
+			titleLine.appendChild(this.elements.titleArea.container);
 		}
+
+		// Adjust padding based on whether there's a project (project link has no padding, title button has px-2)
+		const hasProject = !!titleLine.querySelector('a[href^="/project/"]');
+		this.elements.titleArea.container.classList.toggle('!px-2', !hasProject);
 
 		return true;
 	}
@@ -156,29 +160,8 @@ class LengthUI {
 			header.classList.remove('h-12');
 		}
 
-		// Handle project link wrapping
-		const projectLink = titleLine.querySelector('a[href^="/project/"]');
-		if (projectLink && !titleLine.querySelector('.chat-project-wrapper')) {
-			const wrapper = document.createElement('div');
-			wrapper.className = 'chat-project-wrapper flex min-w-0 flex-row items-center md:items-center 2xl:justify-center';
-
-			projectLink.remove();
-			wrapper.appendChild(projectLink);
-
-			const chatMenuContainer = chatMenu.closest('.flex.min-w-0.items-center');
-			if (chatMenuContainer) {
-				chatMenuContainer.remove();
-				wrapper.appendChild(chatMenuContainer);
-			}
-
-			titleLine.insertBefore(wrapper, titleLine.firstChild);
-		}
-
-		// Adjust title line layout
-		titleLine.classList.remove('md:items-center');
-		titleLine.classList.add('md:items-start');
-		titleLine.classList.remove('md:flex-row');
-		titleLine.classList.add('md:flex-col');
+		// Enable flex wrap so our element can go to a new line
+		titleLine.classList.add('flex-wrap');
 	}
 
 	mountStatLine() {
