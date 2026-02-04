@@ -463,28 +463,45 @@ async function debugLogMessageCost(usageData, conversationData) {
 		opusWeekly: 'debug_opus_weekly'
 	};
 
-	const entry = {
-		timestamp: Date.now(),
-		cost: conversationData.cost,
-		futureCost: conversationData.futureCost,
-		model: conversationData.model,
-		conversationLength: conversationData.length,
-	};
-
 	for (const [limitKey, storagePrefix] of Object.entries(limitMapping)) {
 		const limit = usageData.limits[limitKey];
 		if (!limit) continue;
 
 		const storageKey = `${storagePrefix}_${limit.resetsAt}`;
-		const existing = await getStorageValue(storageKey, { resetsAt: limit.resetsAt, limitKey, messages: [] });
+		const existing = await getStorageValue(storageKey, {
+			resetsAt: limit.resetsAt,
+			limitKey,
+			messages: [],
+			accumulatedCost: 0,
+			lastPercentage: null
+		});
+
+		const percentageChanged = existing.lastPercentage !== null && limit.percentage !== existing.lastPercentage;
+
+		if (percentageChanged) {
+			// Percentage changed - log entry with accumulated cost included
+			const entry = {
+				timestamp: Date.now(),
+				cost: conversationData.cost,
+				accumulatedCost: existing.accumulatedCost,
+				totalCost: conversationData.cost + existing.accumulatedCost,
+				futureCost: conversationData.futureCost,
+				model: conversationData.model,
+				conversationLength: conversationData.length,
+				percentageDelta: limit.percentage - existing.lastPercentage,
+			};
+			existing.messages.push(entry);
+			existing.accumulatedCost = 0; // Reset accumulator
+			await Log(`Debug [${limitKey}]: logged message cost ${entry.totalCost} (accumulated: ${entry.accumulatedCost}, this msg: ${entry.cost}, delta: ${entry.percentageDelta}%)`);
+		} else {
+			// Percentage didn't change - accumulate the cost
+			existing.accumulatedCost += conversationData.cost;
+			await Log(`Debug [${limitKey}]: accumulated cost ${conversationData.cost}, total accumulated: ${existing.accumulatedCost}`);
+		}
 
 		existing.lastPercentage = limit.percentage;
-		existing.messages.push(entry);
-
 		await setStorageValue(storageKey, existing);
 	}
-
-	await Log(`Debug: logged message cost ${conversationData.cost} (model: ${conversationData.model})`);
 }
 
 async function logUsageDelta(orgId, previousUsage, currentUsage, conversationLength, model) {
