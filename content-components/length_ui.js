@@ -135,17 +135,54 @@ class LengthUI {
 		const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
 		if (!titleLine) return false;
 
-		// Prepare layout if needed
-		this.prepareLayoutForTitleArea(titleLine, chatMenu);
+		const container = this.elements.titleArea.container;
+		const mobile = isMobileView();
+		const headerRow = titleLine.parentElement;
 
-		// Append to end of titleLine - flex-wrap + flex-basis: 100% will put it on its own line
-		if (!titleLine.contains(this.elements.titleArea.container)) {
-			titleLine.appendChild(this.elements.titleArea.container);
+		if (mobile) {
+			// On mobile, mount as sibling to titleLine to avoid layout issues
+			if (!headerRow) return false;
+
+			// Remove from titleLine if it was there (e.g., window resized)
+			if (titleLine.contains(container)) {
+				container.remove();
+			}
+
+			// Enable flex-wrap on parent so stats go to new line
+			headerRow.classList.add('flex-wrap');
+
+			if (!headerRow.contains(container)) {
+				headerRow.appendChild(container);
+			}
+
+			// Full width on mobile, reduce vertical gap
+			container.style.flexBasis = '100%';
+			container.style.marginTop = '-36px'; // Counteract the parent's gap
+			// Extend background to left edge by pulling out of parent padding
+			const headerPadding = parseFloat(getComputedStyle(headerRow).paddingLeft) || 0;
+			container.style.marginLeft = `-${headerPadding}px`;
+			container.style.paddingLeft = `${headerPadding + 8}px`; // Keep text aligned with title
+			container.classList.remove('!px-2');
+			container.classList.add('bg-bg-100'); // Match header background
+		} else {
+			// On desktop, mount inside titleLine as before
+			// Remove from headerRow if it was there (e.g., window resized)
+			if (headerRow && headerRow.contains(container) && !titleLine.contains(container)) {
+				container.remove();
+			}
+
+			this.prepareLayoutForTitleArea(titleLine, chatMenu);
+
+			if (!titleLine.contains(container)) {
+				titleLine.appendChild(container);
+			}
+
+			container.style.flexBasis = '100%';
+
+			// Adjust padding based on whether there's a project
+			const hasProject = !!titleLine.querySelector('a[href^="/project/"]');
+			container.classList.toggle('!px-2', !hasProject);
 		}
-
-		// Adjust padding based on whether there's a project (project link has no padding, title button has px-2)
-		const hasProject = !!titleLine.querySelector('a[href^="/project/"]');
-		this.elements.titleArea.container.classList.toggle('!px-2', !hasProject);
 
 		return true;
 	}
@@ -254,7 +291,7 @@ class LengthUI {
 			elements = [length, cost, cached].filter(el => el.innerHTML);
 		}
 
-		const separator = isMobileView() ? '<br>' : ' | ';
+		const separator = ' | ';
 
 		elements.forEach((element, index) => {
 			container.appendChild(element);
