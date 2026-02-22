@@ -407,14 +407,6 @@ class ConversationAPI {
 			return null;
 		}
 
-		const lastRawMessage = currentTrunk[currentTrunk.length - 1];
-		if (humanMessagesCount === 0 || assistantMessagesCount === 0 ||
-			humanMessagesCount !== assistantMessagesCount ||
-			!lastRawMessage || lastRawMessage.sender !== "assistant") {
-			await Log(`Message count mismatch or wrong last sender - Human: ${humanMessagesCount}, Assistant: ${assistantMessagesCount}, Last message sender: ${lastRawMessage?.sender}`);
-			return null;
-		}
-
 		// Cache determination
 		// The cache boundary (where cached content ends) is always the second latest
 		// assistant message, because the latest assistant message was output, not input -
@@ -564,8 +556,12 @@ class ConversationAPI {
 				assistantMessageData.push({ content: textContent, isCached: message.isCached });
 			}
 
-			// Last message output tokens
-			if (i === currentTrunk.length - 1) {
+			// Last message output tokens (or second to last if last is human)
+			const isLastMessage = i === currentTrunk.length - 1;
+			const isSecondToLast = i === currentTrunk.length - 2;
+
+			if ((isLastMessage && message.sender === "assistant") ||
+				(isSecondToLast && message.sender === "assistant" && currentTrunk[currentTrunk.length - 1].sender === "human")) {
 				const lastMessageContent = await message.getTextContent(true, this, this.orgId);
 				costTokens += await tokenCounter.countText(lastMessageContent) * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
 			}
@@ -630,7 +626,11 @@ class ConversationAPI {
 			futureCost = Math.round(costTokens);
 		}
 
+		let lastMessageTimestamp = null;
 		const lastRawMessage = currentTrunk[currentTrunk.length - 1];
+		if (lastRawMessage) {
+			lastMessageTimestamp = new Date(lastRawMessage.created_at).getTime();
+		}
 		// Step 12: Return result
 		return new ConversationData({
 			conversationId: this.conversationId,
@@ -642,7 +642,7 @@ class ConversationAPI {
 			conversationIsCachedUntil: conversationIsCachedUntil,
 			projectUuid: conversationData.project_uuid,
 			settings: conversationData.settings,
-			lastMessageTimestamp: new Date(lastRawMessage.created_at).getTime(),
+			lastMessageTimestamp: lastMessageTimestamp,
 			lengthIsEstimate: lengthIsEstimate
 		});
 	}
