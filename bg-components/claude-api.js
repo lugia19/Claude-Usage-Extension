@@ -404,7 +404,7 @@ class ConversationAPI {
 
 		// Validation
 		if (!currentTrunk || currentTrunk.length == 0) {
-			return null; // Caller should handle this
+			return null;
 		}
 
 		const lastRawMessage = currentTrunk[currentTrunk.length - 1];
@@ -416,27 +416,38 @@ class ConversationAPI {
 		}
 
 		// Cache determination
-		const referenceMessage = isNewMessage ? secondLatestAssistant : latestAssistant;
+		// The cache boundary (where cached content ends) is always the second latest
+		// assistant message, because the latest assistant message was output, not input -
+		// it won't be part of the cached prefix until the next request.
+		// The cache age, however, depends on whether we're mid-request or at rest:
+		// - At rest: the cache was written when the latest response was generated
+		// - New message: the currently warm cache was written by the previous response
+		const cacheBoundary = secondLatestAssistant;
+		const cacheAgeReference = isNewMessage ? secondLatestAssistant : latestAssistant;
+
 		let cacheEndId = null;
 		let conversationIsCached = false;
 		const cache_lifetime = CONFIG.TOKEN_CACHING_DURATION_MS;
 
-		if (!referenceMessage) {
+		if (!cacheBoundary) {
 			conversationIsCached = false;
-			await Log("Not enough messages to determine cache status - cache is cold");
+			await Log("No second latest assistant message - cache has no boundary");
+		} else if (!cacheAgeReference) {
+			conversationIsCached = false;
+			await Log("No cache age reference available - cache is cold");
 		} else {
-			const messageAge = Date.now() - Date.parse(referenceMessage.created_at);
+			const messageAge = Date.now() - Date.parse(cacheAgeReference.created_at);
 			if (messageAge >= cache_lifetime) {
 				conversationIsCached = false;
-				await Log("Reference message too old - cache is cold");
+				await Log("Cache has expired based on age reference");
 			} else {
-				if (currentTrunkIds.has(referenceMessage.uuid)) {
+				if (currentTrunkIds.has(cacheBoundary.uuid)) {
 					conversationIsCached = true;
-					cacheEndId = referenceMessage.uuid;
-					await Log("Reference message in current trunk - cache available up to:", cacheEndId);
+					cacheEndId = cacheBoundary.uuid;
+					await Log("Cache boundary in current trunk - cache available up to:", cacheEndId);
 				} else {
 					// Find common ancestor
-					let currentId = referenceMessage.uuid;
+					let currentId = cacheBoundary.uuid;
 					while (currentId && currentId !== rootId) {
 						if (currentTrunkIds.has(currentId)) {
 							conversationIsCached = true;
