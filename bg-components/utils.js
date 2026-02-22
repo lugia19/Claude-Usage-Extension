@@ -7,9 +7,9 @@ const CONFIG = {
 		"Haiku"
 	],
 	"MODEL_WEIGHTS": {
-		"Opus": 6.25,
-		"Sonnet": 3.75,
-		"Haiku": 1.25
+		"Opus": 5,
+		"Sonnet": 3,
+		"Haiku": 1
 	},
 	"WARNING_THRESHOLD": 0.9,
 	"WARNING": {
@@ -18,7 +18,7 @@ const CONFIG = {
 		"COST": 250000
 	},
 	"BASE_SYSTEM_PROMPT_LENGTH": 3200,
-	"CACHING_MULTIPLIER": 0.07,	// Just a guess for now.
+	"CACHING_MULTIPLIER": 0, // Seems to be free.
 	"TOKEN_CACHING_DURATION_MS": 5 * 60 * 1000, // 5 minutes
 	"ESTIMATED_CAPS": {
 		// I have no idea. This is very napkin math.

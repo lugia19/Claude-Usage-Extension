@@ -1,4 +1,3 @@
-icon.psd
 web-ext-artifacts/*
 .idea/*
 icon_new.psd
@@ -13,3 +12,5 @@ eslint.config.js
 .claude/*
 content-components/ui_dataclasses.js
 content-components/ui_dataclasses.js
+*.png
+*.psd

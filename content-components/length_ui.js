@@ -359,9 +359,8 @@ class LengthUI {
 			return;
 		}
 
-		// Cache UsageData but don't re-render estimate
-		// (estimate calculation needs fresh conversation cost)
 		this.state.usageData = UsageData.fromJSON(usageDataJSON);
+		this.renderEstimate();
 	}
 
 	handleConversationUpdate(conversationDataJSON) {

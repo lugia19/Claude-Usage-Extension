@@ -112,7 +112,15 @@ if (!isElectron) {
 }
 
 //Alarm listeners
+const handledAlarms = new Set();
+
 async function handleAlarm(alarmName) {
+	if (handledAlarms.has(alarmName)) {
+		await Log("warn", "Alarm already handled, skipping:", alarmName);
+		return;
+	}
+	handledAlarms.add(alarmName);
+
 	await Log("Alarm triggered:", alarmName);
 
 	if (alarmName.startsWith('notifyReset_')) {
@@ -129,9 +137,12 @@ async function handleAlarm(alarmName) {
 		}
 	}
 }
-
+let alarmListenerRegistered = false;
 if (chrome.alarms) {
-	chrome.alarms.onAlarm.addListener(alarm => handleAlarm(alarm.name));
+	if (chrome.alarms && !alarmListenerRegistered) {
+		alarmListenerRegistered = true;
+		chrome.alarms.onAlarm.addListener(alarm => handleAlarm(alarm.name));
+	}
 } else {
 	messageRegistry.register('electron-alarm', (msg) => {
 		handleAlarm(msg.name);
@@ -534,29 +545,34 @@ async function logUsageDelta(orgId, previousUsage, currentUsage, conversationLen
 	}
 }
 
+// This just exists to avoid a possible race condition where multiple messages in quick succession could trigger multiple notifications for the same limit reset
+const pendingSchedules = new Set();
+
 async function scheduleResetNotifications(orgId, usageData) {
 	const maxedLimits = usageData.getMaxedLimits();
 
 	for (const limit of maxedLimits) {
 		const timestampKey = limit.resetsAt.toString();
 
-		// Check if we already have a notification scheduled for this reset time
-		if (await scheduledNotifications.has(timestampKey)) {
-			continue;
+		// In-memory guard against concurrent calls
+		if (pendingSchedules.has(timestampKey)) continue;
+		pendingSchedules.add(timestampKey);
+
+		try {
+			if (await scheduledNotifications.has(timestampKey)) {
+				continue;
+			}
+
+			const alarmName = `notifyReset_${orgId}_${limit.key}_${timestampKey}`;
+			await scheduleAlarm(alarmName, { when: limit.resetsAt });
+
+			const expiryTime = limit.resetsAt + (60 * 60 * 1000) - Date.now();
+			await scheduledNotifications.set(timestampKey, alarmName, expiryTime);
+
+			await Log(`Scheduled notification: ${alarmName} for ${new Date(limit.resetsAt).toISOString()}`);
+		} finally {
+			setTimeout(() => pendingSchedules.delete(timestampKey), 5000);
 		}
-
-		const alarmName = `notifyReset_${orgId}_${limit.key}_${timestampKey}`;
-
-		// Schedule the alarm
-		await scheduleAlarm(alarmName, {
-			when: limit.resetsAt
-		});
-
-		// Store in map with expiration 1 hour after reset time
-		const expiryTime = limit.resetsAt + (60 * 60 * 1000) - Date.now();
-		await scheduledNotifications.set(timestampKey, alarmName, expiryTime);
-
-		await Log(`Scheduled notification: ${alarmName} for ${new Date(limit.resetsAt).toISOString()}`);
 	}
 }
 
