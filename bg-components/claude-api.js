@@ -479,7 +479,22 @@ class ConversationAPI {
 		await Log("API: Requesting information for conversation:", this.conversationId);
 		const conversationData = await this.getData(true);
 		const cachingInfo = await this.getCachingInfo(isNewMessage);
-		if (!cachingInfo) return undefined;
+		if (!cachingInfo) {
+			// Something is VERY wrong if we can't get caching info - return base prompt cost as fallback
+			return new ConversationData({
+				conversationId: this.conversationId,
+				length: CONFIG.BASE_SYSTEM_PROMPT_LENGTH,
+				cost: CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER,
+				futureCost: CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER,
+				model: undefined,
+				costUsedCache: false,
+				conversationIsCachedUntil: null,
+				projectUuid: conversationData.project_uuid,
+				settings: conversationData.settings,
+				lastMessageTimestamp: null,
+				lengthIsEstimate: false
+			});
+		}
 
 		const { currentTrunk, conversationIsCached, cacheEndId, conversationIsCachedUntil } = cachingInfo;
 
