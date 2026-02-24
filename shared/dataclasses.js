@@ -128,8 +128,10 @@ export class ConversationData {
 
 		// Calculated metrics
 		this.length = data.length || 0;  // Total tokens in conversation
-		this.cost = data.cost || 0;      // Token cost (with caching considered)
+		this.cost = data.cost || 0;		 // Token cost (with caching possibly considered)
+		this.uncachedCost = data.uncachedCost || 0;       // Without caching
 		this.futureCost = data.futureCost || 0; // Estimated cost of future messages
+		this.uncachedFutureCost = data.uncachedFutureCost || 0; // Estimated future cost without caching
 		this.model = data.model || 'Sonnet';
 
 		// Cache status
@@ -196,7 +198,9 @@ export class ConversationData {
 			messages: this.messages,
 			length: this.length,
 			cost: this.cost,
+			uncachedCost: this.uncachedCost,
 			futureCost: this.futureCost,
+			uncachedFutureCost: this.uncachedFutureCost,
 			model: this.model,
 			costUsedCache: this.costUsedCache,
 			conversationIsCachedUntil: this.conversationIsCachedUntil,

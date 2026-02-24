@@ -152,8 +152,6 @@ if (chrome.alarms) {
 
 //#endregion
 
-//#endregion
-
 
 async function Log(...args) {
 	await RawLog("background", ...args)
@@ -296,25 +294,44 @@ messageRegistry.register(openDebugPage);
 // Complex handlers
 async function requestData(message, sender, orgId) {
 	const { conversationId } = message;
+
+	// Check cache first
+	if (conversationId) {
+		const cached = await conversationCache.get(conversationId);
+		if (cached) {
+			await Log(`Cache hit for conversation: ${conversationId}`);
+
+			// Swap to uncached costs if prompt cache has expired
+			if (cached.conversationIsCachedUntil && cached.conversationIsCachedUntil <= Date.now()) {
+				cached.cost = cached.uncachedCost;
+				cached.futureCost = cached.uncachedFutureCost;
+				cached.conversationIsCachedUntil = null;
+			}
+
+			await sendTabMessage(sender.tab.id, {
+				type: 'updateConversationData',
+				data: { conversationData: cached }
+			});
+			return true;
+		}
+	}
+
+	// Cache miss — full processing
+	await Log(`Cache miss for conversation: ${conversationId}`);
 	const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
 
-	// Fetch usage from endpoint
 	const usageLimitsResponse = await api.getUsageLimits();
 	const subscriptionTier = await api.getSubscriptionTier();
 	const usageData = UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier);
 
-	// Schedule notifications for any maxed limits
 	await scheduleResetNotifications(orgId, usageData);
 
-	// Send usage data
 	await sendTabMessage(sender.tab.id, {
 		type: 'updateUsage',
 		data: { usageData: usageData.toJSON() }
 	});
 
-	// If conversationId provided, also send conversation metrics
 	if (conversationId) {
-		await Log(`Requested metrics for conversation: ${conversationId}`);
 		const conversation = await api.getConversation(conversationId);
 		const conversationData = await conversation.getInfo(false);
 		const profileTokens = await api.getProfileTokens();
@@ -322,6 +339,9 @@ async function requestData(message, sender, orgId) {
 		if (conversationData) {
 			conversationData.length += profileTokens;
 			conversationData.cost += profileTokens * CONFIG.CACHING_MULTIPLIER;
+			conversationData.uncachedCost += profileTokens * CONFIG.CACHING_MULTIPLIER;
+
+			await conversationCache.set(conversationId, conversationData.toJSON(), CONVERSATION_CACHE_TTL);
 			await updateTabWithConversationData(sender.tab.id, conversationData);
 		}
 	}
@@ -439,6 +459,9 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 
 	conversationData.cost += modifierCost;
 	conversationData.futureCost += modifierCost;
+	conversationData.uncachedCost += modifierCost;
+	conversationData.uncachedFutureCost += modifierCost;
+
 	conversationData.length += profileTokens;
 	conversationData.model = model;
 
@@ -460,6 +483,8 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	// Send updates to UI
 	await updateAllTabsWithUsage(usageData);
 	await updateTabWithConversationData(tabId, conversationData);
+
+	await conversationCache.set(conversationId, conversationData.toJSON(), CONVERSATION_CACHE_TTL);
 
 	return true;
 }
@@ -711,6 +736,8 @@ async function processNextTask() {
 //#region Variable fill in and initialization
 pendingRequests = new StoredMap("pendingRequests"); // conversationId -> {userId, tabId}
 scheduledNotifications = new StoredMap('scheduledNotifications');
+const conversationCache = new StoredMap("conversationCache");	// This is for convo stats
+const CONVERSATION_CACHE_TTL = 60 * 60 * 1000; // 60 minutes
 
 isInitialized = true;
 for (const handler of functionsPendingUntilInitialization) {

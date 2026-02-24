@@ -410,6 +410,10 @@ class LengthUI {
 				type: 'requestData',
 				conversationId: newConversation
 			});
+			this.state.conversationData = null;
+			// Clear old data to avoid showing wrong info and to spam messages
+			this.renderCostAndLength();
+			this.renderEstimate();
 		}
 
 		if (isHomePage && this.state.conversationData !== null) {

@@ -534,6 +534,7 @@ class ConversationAPI {
 			}
 		}
 
+		let uncachedCostTokens = costTokens; // Same — system prompts are always platform-cached
 		// Steps 7-8: Process messages and count tokens
 		const humanMessageData = [];
 		const assistantMessageData = [];
@@ -561,6 +562,7 @@ class ConversationAPI {
 			costTokens += message.isCached ?
 				(fileTokens + syncTokens) * CONFIG.CACHING_MULTIPLIER :
 				(fileTokens + syncTokens);
+			uncachedCostTokens += fileTokens + syncTokens; // Always full price
 
 			// Text content
 			const textContent = await message.getTextContent(false, this, this.orgId);
@@ -579,6 +581,7 @@ class ConversationAPI {
 				(isSecondToLast && message.sender === "assistant" && currentTrunk[currentTrunk.length - 1].sender === "human")) {
 				const lastMessageContent = await message.getTextContent(true, this, this.orgId);
 				costTokens += await tokenCounter.countText(lastMessageContent) * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
+				uncachedCostTokens += await tokenCounter.countText(lastMessageContent) * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
 			}
 
 			// Update cache status
@@ -595,6 +598,7 @@ class ConversationAPI {
 		);
 		lengthTokens += allMessageTokens;
 		costTokens += allMessageTokens;
+		uncachedCostTokens += allMessageTokens;
 
 		// Subtract cached tokens
 		const cachedHuman = humanMessageData.filter(m => m.isCached).map(m => m.content);
@@ -610,6 +614,7 @@ class ConversationAPI {
 			projectStats = await this.api.getProjectStats(conversationData.project_uuid, isNewMessage);
 			lengthTokens += projectStats.tokenInfo.length;
 			costTokens += projectStats.tokenInfo.isCached ? 0 : projectStats.tokenInfo.length;
+			uncachedCostTokens += projectStats.tokenInfo.length; // Always full price
 		}
 
 		// Determine if length is an estimate (features that add unknown tokens)
@@ -634,11 +639,14 @@ class ConversationAPI {
 
 		// Step 11: Future cost
 		let futureCost;
+		let uncachedFutureCost;
 		if (isNewMessage) {
 			const futureConversation = await this.getInfo(false);
 			futureCost = futureConversation.cost;
+			uncachedFutureCost = futureConversation.uncachedCost;
 		} else {
 			futureCost = Math.round(costTokens);
+			uncachedFutureCost = Math.round(uncachedCostTokens);
 		}
 
 		let lastMessageTimestamp = null;
@@ -651,7 +659,9 @@ class ConversationAPI {
 			conversationId: this.conversationId,
 			length: Math.round(lengthTokens),
 			cost: Math.round(costTokens),
+			uncachedCost: Math.round(uncachedCostTokens),
 			futureCost: futureCost,
+			uncachedFutureCost: uncachedFutureCost,
 			model: conversationModelType,
 			costUsedCache: conversationIsCached,
 			conversationIsCachedUntil: conversationIsCachedUntil,
