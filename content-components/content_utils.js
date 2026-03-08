@@ -496,6 +496,11 @@ async function initExtension() {
 	}
 	window.claudeTrackerInstance = true;
 
+	// Clean up any leftover UI elements from a previous instance (e.g. extension toggled off/on)
+	document.querySelectorAll('[class*="ut-"]').forEach(el => el.remove());
+	const oldStyles = document.getElementById('ut-styles');
+	if (oldStyles) oldStyles.remove();
+
 	await injectStyles();
 	CONFIG = await sendBackgroundMessage({ type: 'getConfig' });
 	await Log("Config received...");
