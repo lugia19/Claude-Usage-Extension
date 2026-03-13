@@ -27,11 +27,12 @@ const CONFIG = {
 		},
 		"claude_pro": {},
 		// Genuinely mostly just vibes here, this is just a first draft
-		// Next update will do telemetry to refine these values
+
+		// V5.2 will do telemetry to refine these values
 		"claude_max_5x": {
-			"session": 5 * 10 ** 6,
-			"weekly": 50 * 10 ** 6,
-			"sonnetWeekly": 30 * 10 ** 6
+			"session": 7.5 * 10 ** 6,
+			"weekly": 75 * 10 ** 6,	// 10 sessions
+			"sonnetWeekly": 45 * 10 ** 6 // Same as weekly but compensated for sonnet
 		},
 		"claude_max_20x": {}
 	}
@@ -79,7 +80,7 @@ function fillEstimatedCaps(caps) {
 CONFIG.ESTIMATED_CAPS = fillEstimatedCaps(CONFIG.ESTIMATED_CAPS);
 console.log("Final estimated caps:", CONFIG.ESTIMATED_CAPS);
 
-const isElectron = chrome.action === undefined;
+const isElectron = chrome.action === undefined || navigator.userAgent.includes("Electron");
 const FORCE_DEBUG = true; // Set to true to force debug mode
 
 setStorageValue('force_debug', FORCE_DEBUG);

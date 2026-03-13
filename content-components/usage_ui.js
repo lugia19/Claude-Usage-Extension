@@ -395,9 +395,15 @@ class UsageUI {
 		const sidebarContainers = await findSidebarContainers();
 		if (!sidebarContainers) return false;
 
-		const { container, starredSection } = sidebarContainers;
+		const { container, starredSection, recentsSection } = sidebarContainers;
 		if (!container.contains(this.elements.sidebar.container)) {
-			container.insertBefore(this.elements.sidebar.container, starredSection);
+			if (starredSection) {
+				container.insertBefore(this.elements.sidebar.container, starredSection);
+			} else if (recentsSection) {
+				container.insertBefore(this.elements.sidebar.container, recentsSection);
+			} else {
+				container.appendChild(this.elements.sidebar.container);
+			}
 		}
 		return true;
 	}

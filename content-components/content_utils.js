@@ -7,8 +7,6 @@ const SUCCESS_GREEN = "#22c55e";
 
 const SELECTORS = {
 	MODEL_PICKER: '[data-testid="model-selector-dropdown"]',
-	USER_MENU_BUTTON: 'button[data-testid="user-menu-button"]',
-	SIDEBAR_NAV: 'nav.flex',
 	CHAT_MENU: '[data-testid="chat-menu-trigger"]',
 	MODEL_SELECTOR: '[data-testid="model-selector-dropdown"]',
 	INIT_LOGIN_SCREEN: 'button[data-testid="login-with-google"]',
@@ -339,16 +337,58 @@ function setupTooltip(element, tooltip, options = {}) {
 // Helper function to find sidebar containers
 async function findSidebarContainers() {
 	// First find the nav element
-	const sidebarNav = document.querySelector(SELECTORS.SIDEBAR_NAV);
+	const sidebarNav = document.querySelector('nav.flex');
 	if (!sidebarNav) {
+		// Check for the Claude Code standalone sidebar (no nav element)
+		const codeLink = document.querySelector('a[href="/code"]');
+		if (codeLink) {
+			// Walk up to the sidebar root, then find the scrollable sessions area
+			const sidebarRoot = codeLink.closest('.flex.flex-col.h-full.bg-bg-100');
+			if (sidebarRoot) {
+				const scrollArea = sidebarRoot.querySelector('.flex-1.overflow-x-hidden');
+				const sessionList = scrollArea?.querySelector('.flex.flex-col.gap-px.px-3');
+				if (sessionList) {
+					return {
+						container: sessionList.parentElement, // the .pb-4 wrapper
+						starredSection: sessionList,
+						recentsSection: sessionList
+					};
+				}
+			}
+			await Log("warn", 'Found Claude Code sidebar but could not locate session list');
+			return null;
+		}
+
 		await Log("error", 'Could not find sidebar nav');
 		return null;
+	}
+
+	// This is for claude code on the desktop client and webUI, which has a different UI.
+	if (window.location.pathname.includes('claude-code-desktop') || window.location.pathname.includes('/code')) {
+		const container = sidebarNav.querySelector('.flex-grow.overflow-y-auto')
+		const mainsection = container?.querySelector('.px-1');
+		if (!mainsection) {
+			await Log("warn", 'Could not find main section in sidebar for code interface');
+			return null;
+		}
+		// Just insert it before the only section regardless of starred/recents since they don't exist in the same way in the code interface
+		return {
+			container: container,
+			starredSection: mainsection,
+			recentsSection: mainsection
+		};
 	}
 
 	// Look for the main container that holds all sections
 	const containerWrapper = sidebarNav.querySelector('.flex.flex-grow.flex-col.overflow-y-auto')
 	const containers = containerWrapper?.querySelectorAll('.flex-1.relative');
-	const mainContainer = containers[containers.length - 1].querySelector('.px-2.mt-4');
+	if (!containers) {
+		await Log("warn", 'Could not find any sidebar containers');
+		return null;
+	}
+
+	let mainContainer = containers[containers.length - 1].querySelector('.px-2.mt-4');
+	if (!mainContainer) mainContainer = containers[containers.length - 1].querySelector('.px-2.pt-2');
 	if (!mainContainer) {
 		await Log("error", 'Could not find main container in sidebar');
 		return null;
@@ -356,9 +396,6 @@ async function findSidebarContainers() {
 
 	// Look for the Starred section
 	const starredSection = await waitForElement(mainContainer, 'div.flex.flex-col.mb-4', 5000);
-	if (!starredSection) {
-		await Log("error", 'Could not find Starred section.');
-	}
 
 	// Check if the Recents section exists as the next sibling
 	let recentsSection = null;
@@ -370,7 +407,6 @@ async function findSidebarContainers() {
 
 	if (!recentsSection) {
 		await Log("error", 'Could not find any injection site');
-		return null;
 	}
 
 	// Return the parent container so we can insert our UI between Starred and Recents
@@ -508,7 +544,9 @@ async function initExtension() {
 	// Wait for login
 	const LOGIN_CHECK_DELAY = 10000;
 	while (true) {
-		const userMenuButton = await waitForElement(document, SELECTORS.USER_MENU_BUTTON, 6000);
+		let userMenuButton = await waitForElement(document, 'button[data-testid="user-menu-button"]', 6000);
+		if (!userMenuButton) userMenuButton = document.querySelector('button[data-testid="code-user-menu-button"]');
+
 		if (userMenuButton) {
 			if (userMenuButton.getAttribute('data-script-loaded')) {
 				await Log('Script already running, stopping duplicate');

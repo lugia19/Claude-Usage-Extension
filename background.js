@@ -35,6 +35,8 @@ const pendingTasks = [];
 const LOCK_TIMEOUT = 30000;  // 30 seconds - if a task takes longer, something's wrong
 let pendingRequests;
 let scheduledNotifications;
+let electronPollingInterval = null;
+let electronPollInFlight = false;
 
 let isInitialized = false;
 let functionsPendingUntilInitialization = [];
@@ -733,6 +735,19 @@ async function processNextTask() {
 }
 //#endregion
 
+async function electronUsagePoll() {
+	if (electronPollInFlight) return;
+	electronPollInFlight = true;
+	try {
+		await Log("Electron usage poll - fetching fresh usage data");
+		await updateAllTabsWithUsage();
+	} catch (error) {
+		await Log("warn", "Electron usage poll failed:", error);
+	} finally {
+		electronPollInFlight = false;
+	}
+}
+
 //#region Variable fill in and initialization
 pendingRequests = new StoredMap("pendingRequests"); // conversationId -> {userId, tabId}
 scheduledNotifications = new StoredMap('scheduledNotifications');
@@ -745,4 +760,10 @@ for (const handler of functionsPendingUntilInitialization) {
 }
 functionsPendingUntilInitialization = [];
 Log("Done initializing.")
+
+if (isElectron) {
+	const ELECTRON_POLL_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+	electronPollingInterval = setInterval(electronUsagePoll, ELECTRON_POLL_INTERVAL_MS);
+	Log("Electron usage polling started with interval:", ELECTRON_POLL_INTERVAL_MS, "ms");
+}
 //#endregion
