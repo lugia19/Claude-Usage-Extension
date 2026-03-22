@@ -1,3 +1,4 @@
+Fix sub tier detection
 Support claude code web
 Improve extra usage cost reporting
 Improve desktop client support
