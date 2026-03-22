@@ -226,9 +226,7 @@ async function updateAllTabsWithUsage(usageData = null) {
 		if (!data) {
 			const orgId = await requestActiveOrgId(tab);
 			const api = new ClaudeAPI(tab.cookieStoreId, orgId);
-			const usageLimitsResponse = await api.getUsageLimits();
-			const subscriptionTier = await api.getSubscriptionTier();
-			data = UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier);
+			data = await api.getUsageData();
 		}
 
 		sendTabMessage(tab.id, {
@@ -322,9 +320,7 @@ async function requestData(message, sender, orgId) {
 	await Log(`Cache miss for conversation: ${conversationId}`);
 	const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
 
-	const usageLimitsResponse = await api.getUsageLimits();
-	const subscriptionTier = await api.getSubscriptionTier();
-	const usageData = UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier);
+	const usageData = await api.getUsageData();
 
 	await scheduleResetNotifications(orgId, usageData);
 
@@ -428,9 +424,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	const model = pendingRequest?.model || "Sonnet";
 
 	// Fetch current usage limits from endpoint
-	const usageLimitsResponse = await api.getUsageLimits();
-	const subscriptionTier = await api.getSubscriptionTier();
-	const usageData = UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier);
+	const usageData = await api.getUsageData();
 
 	// Fetch conversation data
 	const conversation = await api.getConversation(conversationId);
@@ -650,9 +644,7 @@ async function onBeforeRequestHandler(details) {
 		let previousUsage = null;
 		try {
 			const api = new ClaudeAPI(details.cookieStoreId, orgId);
-			const currentUsage = await api.getUsageLimits();
-			const subscriptionTier = await api.getSubscriptionTier();
-			const usageData = UsageData.fromAPIResponse(currentUsage, subscriptionTier);
+			const usageData = await api.getUsageData();
 			previousUsage = usageData.toJSON();
 		} catch (error) {
 			await Log("warn", "Failed to fetch pre-message usage snapshot:", error);

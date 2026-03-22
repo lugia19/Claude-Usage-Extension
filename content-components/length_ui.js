@@ -67,9 +67,13 @@ class LengthUI {
 			this.pendingUpdates.usage = null;
 		}
 		if (this.pendingUpdates.conversation) {
-			this.state.conversationData = ConversationData.fromJSON(this.pendingUpdates.conversation);
+			const currentConvoId = getConversationId();
+			if (!this.pendingUpdates.conversation.conversationId || !currentConvoId ||
+				this.pendingUpdates.conversation.conversationId === currentConvoId) {
+				this.state.conversationData = ConversationData.fromJSON(this.pendingUpdates.conversation);
+				await this.renderAll();
+			}
 			this.pendingUpdates.conversation = null;
-			await this.renderAll();
 		}
 
 		this.startUpdateLoop();
@@ -261,7 +265,13 @@ class LengthUI {
 		const weeklyMaxed = weeklyLimit?.percentage >= 100;
 
 		if (sessionMaxed || weeklyMaxed) {
-			const dollars = weightedCost / 1_000_000;
+			// During extra usage, cache reads cost 10% of input (not free)
+			// Interpolate between cached (free) and uncached (full price) costs
+			// This is technically not entirely accurate, but it's accurate enough and doesn't require reworking half the codebase
+			const weight = CONFIG.MODEL_WEIGHTS[currentModel] || CONFIG.MODEL_WEIGHTS["Sonnet"];
+			const interpolatedFutureCost = conversationData.futureCost +
+				CONFIG.EXTRA_USAGE_CACHING_MULTIPLIER * (conversationData.uncachedFutureCost - conversationData.futureCost);
+			const dollars = Math.round(interpolatedFutureCost * weight) / 1_000_000;
 			cost.innerHTML = `Cost: <span style="color: ${costColor}">$${dollars.toFixed(2)}</span>`;
 		} else {
 			cost.innerHTML = `Cost: <span style="color: ${costColor}">${weightedCost.toLocaleString()}</span> credits`;
@@ -340,14 +350,32 @@ class LengthUI {
 		const messageCost = conversationData.getWeightedFutureCost(currentModel);
 		const limiting = usageData.getLimitingFactor(messageCost);
 
-		if (!limiting) {
-			estimate.innerHTML = `${msgPrefix}<span>N/A</span>`;
+		// If regular limits are maxed but extra usage is available, estimate from dollars
+		if ((!limiting || limiting.messagesLeft <= 0) && usageData.hasExtraUsage()) {
+			const weight = CONFIG.MODEL_WEIGHTS[currentModel] || CONFIG.MODEL_WEIGHTS["Sonnet"];
+			const interpolatedFutureCost = conversationData.futureCost +
+				CONFIG.EXTRA_USAGE_CACHING_MULTIPLIER * (conversationData.uncachedFutureCost - conversationData.futureCost);
+			const costPerMessageDollars = Math.round(interpolatedFutureCost * weight) / 1_000_000;
+
+			if (costPerMessageDollars > 0) {
+				const remainingDollars = usageData.getExtraUsageRemaining() / 100;
+				const messagesLeft = remainingDollars / costPerMessageDollars;
+				const estimateValue = messagesLeft.toFixed(1);
+				const color = parseFloat(estimateValue) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
+				estimate.innerHTML = `${msgPrefix}<span style="color: ${color}">${estimateValue}</span>`;
+				return;
+			}
+		}
+
+		// Regular limits estimate
+		if (limiting && limiting.messagesLeft > 0) {
+			const estimateValue = limiting.messagesLeft.toFixed(1);
+			const color = parseFloat(estimateValue) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
+			estimate.innerHTML = `${msgPrefix}<span style="color: ${color}">${estimateValue}</span>`;
 			return;
 		}
 
-		const estimateValue = limiting.messagesLeft.toFixed(1);
-		const color = parseFloat(estimateValue) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
-		estimate.innerHTML = `${msgPrefix}<span style="color: ${color}">${estimateValue}</span>`;
+		estimate.innerHTML = `${msgPrefix}<span>N/A</span>`;
 	}
 
 	// ========== MESSAGE HANDLERS ==========
@@ -360,6 +388,10 @@ class LengthUI {
 		}
 
 		this.state.usageData = UsageData.fromJSON(usageDataJSON);
+		// Re-render cost display too — it depends on usageData for the credits/dollars switch
+		if (this.state.conversationData) {
+			this.renderCostAndLength();
+		}
 		this.renderEstimate();
 	}
 
@@ -367,6 +399,14 @@ class LengthUI {
 		if (!this.uiReady) {
 			Log('LengthUI: Not ready, queueing conversation update');
 			this.pendingUpdates.conversation = conversationDataJSON;
+			return;
+		}
+
+		// Ignore updates for a different conversation (stale responses from rapid switching)
+		const currentConvoId = getConversationId();
+		if (conversationDataJSON.conversationId && currentConvoId &&
+			conversationDataJSON.conversationId !== currentConvoId) {
+			Log('LengthUI: Ignoring stale conversation update for', conversationDataJSON.conversationId);
 			return;
 		}
 

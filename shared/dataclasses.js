@@ -13,12 +13,21 @@ export class UsageData {
 			opusWeekly: data.limits?.opusWeekly || null       // seven_day_opus (Max only)
 		};
 		this.subscriptionTier = data.subscriptionTier || 'claude_free';
+		this.extraUsage = data.extraUsage || null;  // { isEnabled, monthlyLimit, usedCredits } (cents)
+		this.creditBalance = data.creditBalance ?? null;  // cents (from /credits)
 	}
 
-	static fromAPIResponse(apiResponse, subscriptionTier) {
+	static fromAPIResponse(apiResponse, subscriptionTier, creditsResponse = null) {
+		// DEBUG: Force all limits to 100% to test extra usage display
 		const parseLimit = (obj) => obj ? {
 			percentage: obj.utilization,
 			resetsAt: new Date(obj.resets_at).getTime()
+		} : null;
+
+		const extraUsage = apiResponse.extra_usage?.is_enabled ? {
+			isEnabled: true,
+			monthlyLimit: apiResponse.extra_usage.monthly_limit,
+			usedCredits: apiResponse.extra_usage.used_credits || 0
 		} : null;
 
 		return new UsageData({
@@ -28,7 +37,9 @@ export class UsageData {
 				sonnetWeekly: parseLimit(apiResponse.seven_day_sonnet),
 				opusWeekly: parseLimit(apiResponse.seven_day_opus)
 			},
-			subscriptionTier
+			subscriptionTier,
+			extraUsage,
+			creditBalance: creditsResponse?.amount ?? null
 		});
 	}
 
@@ -109,10 +120,32 @@ export class UsageData {
 		};
 	}
 
+	// Get effective extra usage remaining (cents)
+	getExtraUsageRemaining() {
+		if (!this.extraUsage?.isEnabled) return null;
+		const monthlyRemaining = this.extraUsage.monthlyLimit - this.extraUsage.usedCredits;
+		if (this.creditBalance === null) return monthlyRemaining;
+		return Math.min(monthlyRemaining, this.creditBalance);
+	}
+
+	// Get effective extra usage total (used + remaining) for bar display
+	getExtraUsageEffectiveTotal() {
+		const remaining = this.getExtraUsageRemaining();
+		if (remaining === null) return null;
+		return this.extraUsage.usedCredits + remaining;
+	}
+
+	// Is extra usage active and available?
+	hasExtraUsage() {
+		return this.extraUsage?.isEnabled && this.getExtraUsageRemaining() > 0;
+	}
+
 	toJSON() {
 		return {
 			limits: this.limits,
-			subscriptionTier: this.subscriptionTier
+			subscriptionTier: this.subscriptionTier,
+			extraUsage: this.extraUsage,
+			creditBalance: this.creditBalance
 		};
 	}
 

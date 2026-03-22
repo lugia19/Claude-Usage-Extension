@@ -59,6 +59,23 @@ class ClaudeAPI {
 		return this.getRequest(`/organizations/${this.orgId}/usage`);
 	}
 
+	// Fetch credit balance
+	async getCredits() {
+		const result = await this.getRequest(`/organizations/${this.orgId}/prepaid/credits`);
+		return result;
+	}
+
+	// Fetch usage limits, subscription tier, and credits, and return a UsageData object
+	async getUsageData() {
+		const usageLimitsResponse = await this.getUsageLimits();
+		const subscriptionTier = await this.getSubscriptionTier();
+		let creditsResponse = null;
+		if (usageLimitsResponse.extra_usage?.is_enabled) {
+			creditsResponse = await this.getCredits();
+		}
+		return UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier, creditsResponse);
+	}
+
 	// Fetch memory content
 	async getMemory() {
 		return this.getRequest(`/organizations/${this.orgId}/memory`);
@@ -130,22 +147,18 @@ class ClaudeAPI {
 		let subscriptionTier = await subscriptionTiersCache.get(this.orgId);
 		if (subscriptionTier && !skipCache) return subscriptionTier;
 
-		const statsigData = await this.getRequest(`/bootstrap/${this.orgId}/statsig`);
-		const identifier = statsigData.user?.custom?.orgType;
-		await Log("User identifier:", identifier);
+		const appStartData = await this.getRequest(`/bootstrap/${this.orgId}/app_start?statsig_hashing_algorithm=djb2`);
+		const user = appStartData.org_growthbook?.user;
+		await Log("User growthbook data:", user);
 
-		if (statsigData.user?.custom?.isRaven) {
+		if (user?.isMax) {
+			subscriptionTier = user.maxTier === "20x" ? "claude_max_20x" : "claude_max_5x";
+		} else if (user?.isRaven) {
 			subscriptionTier = "claude_team";
-		} else if (identifier === "claude_max") {
-			const orgData = await this.getRequest(`/organizations/${this.orgId}`);
-			await Log("Org data for tier check:", orgData);
-			if (orgData?.rate_limit_tier === "default_claude_max_20x") {
-				subscriptionTier = "claude_max_20x";
-			} else {
-				subscriptionTier = "claude_max_5x";
-			}
+		} else if (user?.isPro) {
+			subscriptionTier = "claude_pro";
 		} else {
-			subscriptionTier = identifier;
+			subscriptionTier = "claude_free";
 		}
 
 		await subscriptionTiersCache.set(this.orgId, subscriptionTier, 24 * 60 * 60 * 1000);

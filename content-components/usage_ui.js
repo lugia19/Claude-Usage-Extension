@@ -64,7 +64,8 @@ class UsageSection {
 			session: 'Session (5h):',
 			weekly: 'Weekly:',
 			sonnetWeekly: 'Sonnet Weekly:',
-			opusWeekly: 'Opus Weekly:'
+			opusWeekly: 'Opus Weekly:',
+			extraUsage: 'Extra Usage:'
 		};
 		return labels[limitKey] || limitKey;
 	}
@@ -106,6 +107,36 @@ class UsageSection {
 			percentage.style.color = color;
 
 			resetTime.innerHTML = this.formatResetTime(limit.resetsAt);
+		}
+
+		// Extra usage bar (shown when any limit is maxed and extra usage is available)
+		const hasMaxedLimit = activeLimits.some(l => l.percentage >= 100);
+		if (hasMaxedLimit && usageData.hasExtraUsage()) {
+			seenKeys.add('extraUsage');
+			let barElements = this.limitBars.get('extraUsage');
+
+			if (!barElements) {
+				barElements = this.createLimitBar('extraUsage');
+				this.limitBars.set('extraUsage', barElements);
+				barsContainer.appendChild(barElements.row);
+			}
+
+			const { percentage, resetTime, progressBar } = barElements;
+			const effectiveTotal = usageData.getExtraUsageEffectiveTotal();
+			const used = usageData.extraUsage.usedCredits;
+			const pct = effectiveTotal > 0 ? (used / effectiveTotal) * 100 : 0;
+
+			progressBar.updateProgress(pct, 100);
+
+			const usedDollars = (used / 100).toFixed(2);
+			const totalDollars = (effectiveTotal / 100).toFixed(2);
+			progressBar.tooltip.textContent = `$${usedDollars} / $${totalDollars} used`;
+
+			const color = pct >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
+			percentage.textContent = `${pct.toFixed(0)}%`;
+			percentage.style.color = color;
+
+			resetTime.innerHTML = '';
 		}
 
 		// Remove bars for limits no longer active
@@ -444,7 +475,33 @@ class UsageUI {
 		const session = usageData.limits.session;
 		if (!session) return;
 
-		// Session percentage
+		const sessionMaxed = session.percentage >= 100;
+
+		// When session is maxed and extra usage is available, show extra usage instead
+		if (sessionMaxed && usageData.hasExtraUsage()) {
+			const effectiveTotal = usageData.getExtraUsageEffectiveTotal();
+			const used = usageData.extraUsage.usedCredits;
+			const pct = effectiveTotal > 0 ? (used / effectiveTotal) * 100 : 0;
+
+			const color = pct >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
+			usageDisplay.innerHTML = `Extra: <span style="color: ${color}">${pct.toFixed(0)}%</span>`;
+
+			if (!isMobileView() && progressBar) {
+				progressBar.updateProgress(pct, 100);
+
+				const usedDollars = (used / 100).toFixed(2);
+				const totalDollars = (effectiveTotal / 100).toFixed(2);
+				progressBar.tooltip.textContent = `$${usedDollars} / $${totalDollars} used`;
+				progressBar.clearMarker();
+			}
+
+			// Show session reset time (still relevant — when session resets, user goes back to included usage)
+			const resetInfo = usageData.getSessionResetInfo();
+			resetDisplay.innerHTML = getResetTimeHTML(resetInfo);
+			return;
+		}
+
+		// Normal session display
 		const color = session.percentage >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
 		usageDisplay.innerHTML = `Session: <span style="color: ${color}">${session.percentage.toFixed(0)}%</span>`;
 

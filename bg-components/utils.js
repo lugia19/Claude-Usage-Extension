@@ -19,6 +19,7 @@ const CONFIG = {
 	},
 	"BASE_SYSTEM_PROMPT_LENGTH": 3200,
 	"CACHING_MULTIPLIER": 0, // Seems to be free.
+	"EXTRA_USAGE_CACHING_MULTIPLIER": 0.1, // Cache reads cost 10% of input during extra usage
 	"TOKEN_CACHING_DURATION_MS": 5 * 60 * 1000, // 5 minutes
 	"ESTIMATED_CAPS": {
 		// I have no idea. This is very napkin math.
