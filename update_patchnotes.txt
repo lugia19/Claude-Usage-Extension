@@ -1,4 +1,1 @@
-Fix sub tier detection
-Support claude code web
-Improve extra usage cost reporting
-Improve desktop client support
+Fix intermittent notification spam on usage limit reset (hopefully)

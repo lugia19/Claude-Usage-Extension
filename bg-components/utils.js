@@ -164,7 +164,7 @@ async function containerFetch(url, options = {}, cookieStoreId = null) {
 }
 
 async function addContainerFetchListener() {
-	if (isElectron) return;
+	if (isElectron || !chrome.cookies) return;
 	const stores = await browser.cookies.getAllCookieStores();
 	const isFirefoxContainers = stores[0]?.id === "firefox-default";
 

@@ -573,6 +573,9 @@ async function scheduleResetNotifications(orgId, usageData) {
 	const maxedLimits = usageData.getMaxedLimits();
 
 	for (const limit of maxedLimits) {
+		// Skip limits whose reset time has already passed — avoids negative TTL bug
+		if (limit.resetsAt <= Date.now()) continue;
+
 		const timestampKey = limit.resetsAt.toString();
 
 		// In-memory guard against concurrent calls

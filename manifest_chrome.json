@@ -34,7 +34,6 @@
 		"storage",
 		"alarms",
 		"webRequest",
-		"cookies",
 		"tabs",
 		"contextMenus",
 		"notifications"
