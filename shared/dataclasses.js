@@ -3,6 +3,15 @@
 
 import { CONFIG } from '../bg-components/utils.js';
 
+// Check if current time is during Anthropic's peak hours (weekdays 1pm-7pm GMT)
+export function isPeakHours() {
+	const now = new Date();
+	const day = now.getUTCDay(); // 0=Sun, 6=Sat
+	const hour = now.getUTCHours();
+	if (day === 0 || day === 6) return false;
+	return hour >= 13 && hour < 19;
+}
+
 export class UsageData {
 	constructor(data = {}) {
 		// Each limit: { percentage, resetsAt } or null
@@ -48,8 +57,13 @@ export class UsageData {
 		const limit = this.limits[limitKey];
 		if (!limit) return null;
 
-		const cap = CONFIG.ESTIMATED_CAPS?.[this.subscriptionTier]?.[limitKey];
+		let cap = CONFIG.ESTIMATED_CAPS?.[this.subscriptionTier]?.[limitKey];
 		if (!cap) return null;
+
+		// During peak hours, session cap is effectively lower
+		if (limitKey === 'session' && isPeakHours()) {
+			cap = cap / CONFIG.PEAK_SESSION_MULTIPLIER;
+		}
 
 		return ((100 - limit.percentage) / 100) * cap;
 	}
