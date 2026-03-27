@@ -149,7 +149,6 @@ class ClaudeAPI {
 
 		const appStartData = await this.getRequest(`/bootstrap/${this.orgId}/app_start?statsig_hashing_algorithm=djb2`);
 		const user = appStartData.org_growthbook?.user;
-		await Log("User growthbook data:", user);
 
 		if (user?.isMax) {
 			subscriptionTier = user.maxTier === "20x" ? "claude_max_20x" : "claude_max_5x";
