@@ -1,4 +1,4 @@
-/* global CONFIG, Log, ProgressBar, sendBackgroundMessage, waitForElement,
+/* global CONFIG, Log, ProgressBar, sendBackgroundMessage,
    setupTooltip, getResetTimeHTML, sleep, isMobileView, isCodePage, UsageData, isPeakHours,
    RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS */
 'use strict';
@@ -469,17 +469,17 @@ class UsageUI {
 			return false;
 		}
 
-		if (!mainContainer.contains(this.elements.sidebar.container)) {
-			const starredSection = await waitForElement(mainContainer, 'div.flex.flex-col.mb-4', 5000);
-			const insertBefore = starredSection
-				? starredSection.nextElementSibling || starredSection
-				: mainContainer.firstChild;
+		const starredSection = mainContainer.querySelector('div.flex.flex-col.mb-4');
+		// Account for pref-switcher extension which positions itself after us and before starred
+		const prefSwitcher = mainContainer.querySelector('.preset-switcher-section');
+		const insertBefore = prefSwitcher || starredSection || mainContainer.firstChild;
 
-			if (insertBefore) {
-				mainContainer.insertBefore(this.elements.sidebar.container, insertBefore);
-			} else {
-				mainContainer.appendChild(this.elements.sidebar.container);
-			}
+		// (Re)position if needed — handles late-appearing starred section
+		const sidebar = this.elements.sidebar.container;
+		if (insertBefore && sidebar.nextElementSibling !== insertBefore) {
+			mainContainer.insertBefore(sidebar, insertBefore);
+		} else if (!insertBefore && !mainContainer.contains(sidebar)) {
+			mainContainer.appendChild(sidebar);
 		}
 
 		this.elements.sidebar.container.classList.remove('px-2');
