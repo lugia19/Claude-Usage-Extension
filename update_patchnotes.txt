@@ -1,1 +1,2 @@
-Fix intermittent notification spam on usage limit reset (hopefully)
+Fully fix notification spam
+Improve support for claude code web
