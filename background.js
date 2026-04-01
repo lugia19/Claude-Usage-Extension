@@ -21,10 +21,12 @@ const INTERCEPT_PATTERNS = {
 	},
 	onCompleted: {
 		urls: [
-			"*://claude.ai/api/organizations/*/chat_conversations/*"
+			"*://claude.ai/api/organizations/*/chat_conversations/*",
+			"*://claude.ai/v1/sessions/*/events"
 		],
 		regexes: [
-			"^https?://claude\\.ai/api/organizations/[^/]*/chat_conversations/[^/]*$"
+			"^https?://claude\\.ai/api/organizations/[^/]*/chat_conversations/[^/]*$",
+			"^https?://claude\\.ai/v1/sessions/[^/]*/events$"
 		]
 	}
 };
@@ -699,6 +701,7 @@ async function onBeforeRequestHandler(details) {
 		const api = new ClaudeAPI(details.cookieStoreId, orgId);
 		await api.getSubscriptionTier(true);
 	}
+
 }
 
 async function onCompletedHandler(details) {
@@ -721,6 +724,20 @@ async function onCompletedHandler(details) {
 			}
 		});
 
+		processNextTask();
+	}
+
+	// Claude Code session events — refresh usage
+	if (details.url.includes("/v1/sessions/") && details.url.includes("/events")) {
+		pendingTasks.push(async () => {
+			const orgId = await requestActiveOrgId(details.tabId);
+			if (!orgId) return;
+			await tokenStorageManager.addOrgId(orgId);
+			const api = new ClaudeAPI(details.cookieStoreId, orgId);
+			const usageData = await api.getUsageData();
+			await updateAllTabsWithUsage(usageData);
+			await scheduleResetNotifications(orgId, usageData);
+		});
 		processNextTask();
 	}
 }
