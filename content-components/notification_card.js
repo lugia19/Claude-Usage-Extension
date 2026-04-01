@@ -377,11 +377,35 @@ class SettingsCard extends FloatingCard {
 			location.reload();
 		});
 
+		// Reset notification toggle
+		const toggleContainer = document.createElement('div');
+		toggleContainer.className = 'ut-row';
+		toggleContainer.style.alignItems = 'start';
+		toggleContainer.style.gap = '6px';
+		toggleContainer.style.marginBottom = '8px';
+
+		const checkbox = document.createElement('input');
+		checkbox.type = 'checkbox';
+		checkbox.id = 'ut-reset-notif-toggle';
+		checkbox.checked = await sendBackgroundMessage({ type: 'getResetNotifEnabled' }) || false;
+		checkbox.addEventListener('change', () => {
+			sendBackgroundMessage({ type: 'setResetNotifEnabled', value: checkbox.checked });
+		});
+
+		const toggleLabel = document.createElement('label');
+		toggleLabel.htmlFor = 'ut-reset-notif-toggle';
+		toggleLabel.className = 'text-sm';
+		toggleLabel.innerHTML = 'Usage reset notifications<br><span style="font-size: 0.85em; opacity: 0.7;">(may spam due to a bug)</span>';
+
+		toggleContainer.appendChild(checkbox);
+		toggleContainer.appendChild(toggleLabel);
+
 		// Assemble
 		this.element.appendChild(label);
 		this.element.appendChild(input);
 		buttonContainer.appendChild(saveButton);
 		buttonContainer.appendChild(debugButton);
+		this.element.appendChild(toggleContainer);
 		this.element.appendChild(buttonContainer);
 
 		this.addCloseButton();

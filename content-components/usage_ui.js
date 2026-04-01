@@ -1,5 +1,5 @@
-/* global CONFIG, Log, ProgressBar, findSidebarContainers, sendBackgroundMessage,
-   setupTooltip, getResetTimeHTML, sleep, isMobileView, UsageData, isPeakHours,
+/* global CONFIG, Log, ProgressBar, sendBackgroundMessage, waitForElement,
+   setupTooltip, getResetTimeHTML, sleep, isMobileView, isCodePage, UsageData, isPeakHours,
    RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS */
 'use strict';
 
@@ -444,23 +444,99 @@ class UsageUI {
 	// ========== MOUNT (attach to page) ==========
 
 	async mountSidebar() {
-		const sidebarContainers = await findSidebarContainers();
-		if (!sidebarContainers) return false;
+		if (isCodePage()) return this.mountSidebarCode();
+		return this.mountSidebarRegular();
+	}
 
-		const { container, starredSection, recentsSection } = sidebarContainers;
-		if (!container.contains(this.elements.sidebar.container)) {
-			if (starredSection) {
-				container.insertBefore(this.elements.sidebar.container, starredSection);
-			} else if (recentsSection) {
-				container.insertBefore(this.elements.sidebar.container, recentsSection);
+	async mountSidebarRegular() {
+		const sidebarNav = document.querySelector('nav.flex');
+		if (!sidebarNav) {
+			await Log("error", 'Could not find sidebar nav');
+			return false;
+		}
+
+		const containerWrapper = sidebarNav.querySelector('.flex.flex-grow.flex-col.overflow-y-auto');
+		const containers = containerWrapper?.querySelectorAll('.flex-1.relative');
+		if (!containers) {
+			await Log("warn", 'Could not find any sidebar containers');
+			return false;
+		}
+
+		let mainContainer = containers[containers.length - 1].querySelector('.px-2.mt-4');
+		if (!mainContainer) mainContainer = containers[containers.length - 1].querySelector('.px-2.pt-2');
+		if (!mainContainer) {
+			await Log("error", 'Could not find main container in sidebar');
+			return false;
+		}
+
+		if (!mainContainer.contains(this.elements.sidebar.container)) {
+			const starredSection = await waitForElement(mainContainer, 'div.flex.flex-col.mb-4', 5000);
+			const insertBefore = starredSection
+				? starredSection.nextElementSibling || starredSection
+				: mainContainer.firstChild;
+
+			if (insertBefore) {
+				mainContainer.insertBefore(this.elements.sidebar.container, insertBefore);
 			} else {
-				container.appendChild(this.elements.sidebar.container);
+				mainContainer.appendChild(this.elements.sidebar.container);
 			}
+		}
+
+		this.elements.sidebar.container.classList.remove('px-2');
+		return true;
+	}
+
+	async mountSidebarCode() {
+		const sidebarNav = document.querySelector('nav.flex');
+		const sidebar = this.elements.sidebar.container;
+		sidebar.classList.add('px-2');
+
+		if (sidebarNav) {
+			// Desktop client / webUI with nav element
+			const scrollArea = sidebarNav.querySelector('.flex-grow.overflow-y-auto');
+			if (!scrollArea) {
+				await Log("warn", 'Could not find scroll area in code sidebar (nav path)');
+				return false;
+			}
+			if (!scrollArea.parentElement.contains(sidebar)) {
+				scrollArea.parentElement.insertBefore(sidebar, scrollArea);
+			}
+			return true;
+		}
+
+		// Standalone code sidebar (no nav element)
+		const codeLink = document.querySelector('a[href="/code"]');
+		if (!codeLink) {
+			await Log("error", 'Could not find sidebar nav or code link');
+			return false;
+		}
+
+		const sidebarRoot = codeLink.closest('.flex.flex-col.h-full.bg-bg-100');
+		if (!sidebarRoot) {
+			await Log("warn", 'Found code link but could not find sidebar root');
+			return false;
+		}
+
+		const scrollArea = sidebarRoot.querySelector('.overflow-y-auto.overflow-x-hidden');
+		if (!scrollArea) {
+			await Log("warn", 'Found code sidebar but could not locate scroll area');
+			return false;
+		}
+
+		// Insert above the "All projects" header
+		const outerWrapper = scrollArea.parentElement.parentElement;
+		if (!outerWrapper.contains(sidebar)) {
+			outerWrapper.insertBefore(sidebar, outerWrapper.firstElementChild);
 		}
 		return true;
 	}
 
 	mountChatArea() {
+		if (isCodePage()) return this.mountChatAreaCode();
+		return this.mountChatAreaRegular();
+	}
+
+	mountChatAreaRegular() {
 		const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
 		if (!modelSelector) return false;
 
@@ -471,6 +547,30 @@ class UsageUI {
 		if (parentContainer.nextElementSibling !== this.elements.chat.statLine) {
 			parentContainer.after(this.elements.chat.statLine);
 		}
+
+		this.elements.chat.statLine.style.paddingLeft = '6px';
+		this.elements.chat.statLine.style.paddingRight = '';
+		this.elements.chat.statLine.style.paddingBottom = '';
+
+		return true;
+	}
+
+	mountChatAreaCode() {
+		const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
+		if (!modelSelector) return false;
+
+		// Find the toolbar row reliably regardless of wrapper depth
+		const toolbar = modelSelector.closest('.flex.items-center.p-2');
+		if (!toolbar) return false;
+
+		if (toolbar.nextElementSibling !== this.elements.chat.statLine) {
+			toolbar.after(this.elements.chat.statLine);
+		}
+
+		this.elements.chat.statLine.style.paddingLeft = '8px';
+		this.elements.chat.statLine.style.paddingRight = '8px';
+		this.elements.chat.statLine.style.paddingBottom = '4px';
+
 		return true;
 	}
 

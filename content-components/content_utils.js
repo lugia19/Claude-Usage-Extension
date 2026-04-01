@@ -191,6 +191,10 @@ function isMobileView() {
 	return window.innerHeight > window.innerWidth;
 }
 
+function isCodePage() {
+	return window.location.pathname.includes('claude-code-desktop') || window.location.pathname.includes('/code');
+}
+
 async function setupRequestInterception(patterns) {
 	// Set up event listeners in content script context
 	window.addEventListener('interceptedRequest', async (event) => {
@@ -332,89 +336,6 @@ function setupTooltip(element, tooltip, options = {}) {
 			}
 		});
 	}
-}
-
-// Helper function to find sidebar containers
-async function findSidebarContainers() {
-	// First find the nav element
-	const sidebarNav = document.querySelector('nav.flex');
-	if (!sidebarNav) {
-		// Check for the Claude Code standalone sidebar (no nav element)
-		const codeLink = document.querySelector('a[href="/code"]');
-		if (codeLink) {
-			// Walk up to the sidebar root, then find the scrollable sessions area
-			const sidebarRoot = codeLink.closest('.flex.flex-col.h-full.bg-bg-100');
-			if (sidebarRoot) {
-				const scrollArea = sidebarRoot.querySelector('.flex-1.overflow-x-hidden');
-				const sessionList = scrollArea?.querySelector('.flex.flex-col.gap-px.px-3');
-				if (sessionList) {
-					return {
-						container: sessionList.parentElement, // the .pb-4 wrapper
-						starredSection: sessionList,
-						recentsSection: sessionList
-					};
-				}
-			}
-			await Log("warn", 'Found Claude Code sidebar but could not locate session list');
-			return null;
-		}
-
-		await Log("error", 'Could not find sidebar nav');
-		return null;
-	}
-
-	// This is for claude code on the desktop client and webUI, which has a different UI.
-	if (window.location.pathname.includes('claude-code-desktop') || window.location.pathname.includes('/code')) {
-		const container = sidebarNav.querySelector('.flex-grow.overflow-y-auto')
-		const mainsection = container?.querySelector('.px-1');
-		if (!mainsection) {
-			await Log("warn", 'Could not find main section in sidebar for code interface');
-			return null;
-		}
-		// Just insert it before the only section regardless of starred/recents since they don't exist in the same way in the code interface
-		return {
-			container: container,
-			starredSection: mainsection,
-			recentsSection: mainsection
-		};
-	}
-
-	// Look for the main container that holds all sections
-	const containerWrapper = sidebarNav.querySelector('.flex.flex-grow.flex-col.overflow-y-auto')
-	const containers = containerWrapper?.querySelectorAll('.flex-1.relative');
-	if (!containers) {
-		await Log("warn", 'Could not find any sidebar containers');
-		return null;
-	}
-
-	let mainContainer = containers[containers.length - 1].querySelector('.px-2.mt-4');
-	if (!mainContainer) mainContainer = containers[containers.length - 1].querySelector('.px-2.pt-2');
-	if (!mainContainer) {
-		await Log("error", 'Could not find main container in sidebar');
-		return null;
-	}
-
-	// Look for the Starred section
-	const starredSection = await waitForElement(mainContainer, 'div.flex.flex-col.mb-4', 5000);
-
-	// Check if the Recents section exists as the next sibling
-	let recentsSection = null;
-	if (starredSection) {
-		recentsSection = starredSection.nextElementSibling;
-	} else {
-		recentsSection = mainContainer.firstChild;
-	}
-
-	if (!recentsSection) {
-		await Log("error", 'Could not find any injection site');
-	}
-
-	// Return the parent container so we can insert our UI between Starred and Recents
-	return {
-		container: mainContainer,
-		starredSection: starredSection,
-		recentsSection: recentsSection
-	};
 }
 
 // Progress bar component

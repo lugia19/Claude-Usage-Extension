@@ -1,5 +1,5 @@
 /* global CONFIG, Log, setupTooltip, getResetTimeHTML, sleep, sendBackgroundMessage,
-   isMobileView, UsageData, ConversationData, getConversationId, getCurrentModel,
+   isMobileView, isCodePage, UsageData, ConversationData, getConversationId, getCurrentModel,
    RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS */
 'use strict';
 
@@ -209,6 +209,13 @@ class LengthUI {
 		const statRightContainer = document.getElementById('ut-stat-right');
 		if (!statRightContainer) return false;
 
+		if (isCodePage()) {
+			if (statRightContainer.contains(this.elements.statLine.estimate)) {
+				this.elements.statLine.estimate.remove();
+			}
+			return true;
+		}
+
 		if (!statRightContainer.contains(this.elements.statLine.estimate)) {
 			statRightContainer.appendChild(this.elements.statLine.estimate);
 		}
@@ -338,6 +345,12 @@ class LengthUI {
 
 	renderEstimate() {
 		const { estimate } = this.elements.statLine;
+
+		if (isCodePage()) {
+			estimate.innerHTML = '';
+			return;
+		}
+
 		const { usageData, conversationData, currentModel } = this.state;
 
 		const msgPrefix = isMobileView() ? 'Msgs Left: ' : 'Messages left: ';
