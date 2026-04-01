@@ -4,7 +4,7 @@ import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addCont
 import { tokenStorageManager, tokenCounter } from './bg-components/tokenManagement.js';
 import { ClaudeAPI, ConversationAPI } from './bg-components/claude-api.js';
 import { UsageData } from './shared/dataclasses.js';
-import { scheduleAlarm, createNotification } from './bg-components/electron-compat.js';
+import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
 
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
@@ -114,18 +114,63 @@ if (!isElectron) {
 }
 
 //Alarm listeners
-const handledAlarms = new Set();
 
 async function handleAlarm(alarmName) {
-	if (handledAlarms.has(alarmName)) {
-		await Log("warn", "Alarm already handled, skipping:", alarmName);
-		return;
-	}
-	handledAlarms.add(alarmName);
-
 	await Log("Alarm triggered:", alarmName);
 
-	if (alarmName.startsWith('notifyReset_')) {
+	if (alarmName === 'checkResetNotifications') {
+		await checkResetNotifications();
+	}
+}
+
+async function checkResetNotifications() {
+	const enabled = await getStorageValue('resetNotifEnabled', false);
+	if (!enabled) return;
+
+	const entries = await scheduledNotifications.entries();
+	if (!entries || entries.length === 0) return;
+
+	const now = Date.now();
+	let shouldNotify = false;
+
+	for (const [timestampKey, orgId] of entries) {
+		const resetTime = parseInt(timestampKey);
+		if (resetTime > now) continue;
+
+		// Skip if reset happened more than 10 minutes ago (stale entry)
+		if (now - resetTime > 10 * 60 * 1000) {
+			await scheduledNotifications.delete(timestampKey);
+			continue;
+		}
+
+		// Reset time has passed — check if session usage is at 0%
+		try {
+			const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
+			if (tabs.length === 0) {
+				// No tabs open, remove the entry and skip
+				await scheduledNotifications.delete(timestampKey);
+				continue;
+			}
+
+			const tab = tabs[0];
+			const tabOrgId = await requestActiveOrgId(tab);
+			const api = new ClaudeAPI(tab.cookieStoreId, tabOrgId);
+			const usageData = await api.getUsageData();
+
+			// Only notify if session usage is at 0% (user hasn't started chatting again)
+			const sessionLimit = usageData.limits.session;
+			if (!sessionLimit || sessionLimit.percentage === 0) {
+				shouldNotify = true;
+			}
+		} catch (error) {
+			await Log("warn", "Error checking reset status:", error);
+		}
+
+		// Remove processed entry regardless
+		await scheduledNotifications.delete(timestampKey);
+	}
+
+	if (shouldNotify) {
 		try {
 			await createNotification({
 				type: 'basic',
@@ -133,9 +178,9 @@ async function handleAlarm(alarmName) {
 				title: 'Claude Usage Reset',
 				message: 'Your Claude usage limit has been reset!'
 			});
-			await Log(`Notification sent for: ${alarmName}`);
+			await Log("Reset notification sent");
 		} catch (error) {
-			await Log("error", "Failed to create notification:", error);
+			await Log("error", "Failed to create reset notification:", error);
 		}
 	}
 }
@@ -277,6 +322,9 @@ messageRegistry.register('setAPIKey', async (message) => {
 	}
 });
 
+messageRegistry.register('getResetNotifEnabled', () => getStorageValue('resetNotifEnabled', false));
+messageRegistry.register('setResetNotifEnabled', (message) => setStorageValue('resetNotifEnabled', message.value));
+
 messageRegistry.register('isElectron', () => isElectron);
 messageRegistry.register('getMonkeypatchPatterns', () => isElectron ? INTERCEPT_PATTERNS : false);
 
@@ -295,8 +343,18 @@ messageRegistry.register(openDebugPage);
 async function requestData(message, sender, orgId) {
 	const { conversationId } = message;
 
-	// Check cache first
+	const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
+
+	// Always fetch and send fresh usage data
+	const usageData = await api.getUsageData();
+	await scheduleResetNotifications(orgId, usageData);
+	await sendTabMessage(sender.tab.id, {
+		type: 'updateUsage',
+		data: { usageData: usageData.toJSON() }
+	});
+
 	if (conversationId) {
+		// Check conversation cache
 		const cached = await conversationCache.get(conversationId);
 		if (cached) {
 			await Log(`Cache hit for conversation: ${conversationId}`);
@@ -312,35 +370,20 @@ async function requestData(message, sender, orgId) {
 				type: 'updateConversationData',
 				data: { conversationData: cached }
 			});
-			return true;
-		}
-	}
+		} else {
+			await Log(`Cache miss for conversation: ${conversationId}`);
+			const conversation = await api.getConversation(conversationId);
+			const conversationData = await conversation.getInfo(false);
+			const profileTokens = await api.getProfileTokens();
 
-	// Cache miss — full processing
-	await Log(`Cache miss for conversation: ${conversationId}`);
-	const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
+			if (conversationData) {
+				conversationData.length += profileTokens;
+				conversationData.cost += profileTokens * CONFIG.CACHING_MULTIPLIER;
+				conversationData.uncachedCost += profileTokens * CONFIG.CACHING_MULTIPLIER;
 
-	const usageData = await api.getUsageData();
-
-	await scheduleResetNotifications(orgId, usageData);
-
-	await sendTabMessage(sender.tab.id, {
-		type: 'updateUsage',
-		data: { usageData: usageData.toJSON() }
-	});
-
-	if (conversationId) {
-		const conversation = await api.getConversation(conversationId);
-		const conversationData = await conversation.getInfo(false);
-		const profileTokens = await api.getProfileTokens();
-
-		if (conversationData) {
-			conversationData.length += profileTokens;
-			conversationData.cost += profileTokens * CONFIG.CACHING_MULTIPLIER;
-			conversationData.uncachedCost += profileTokens * CONFIG.CACHING_MULTIPLIER;
-
-			await conversationCache.set(conversationId, conversationData.toJSON(), CONVERSATION_CACHE_TTL);
-			await updateTabWithConversationData(sender.tab.id, conversationData);
+				await conversationCache.set(conversationId, conversationData.toJSON(), CONVERSATION_CACHE_TTL);
+				await updateTabWithConversationData(sender.tab.id, conversationData);
+			}
 		}
 	}
 
@@ -566,37 +609,21 @@ async function logUsageDelta(orgId, previousUsage, currentUsage, conversationLen
 	}
 }
 
-// This just exists to avoid a possible race condition where multiple messages in quick succession could trigger multiple notifications for the same limit reset
-const pendingSchedules = new Set();
-
 async function scheduleResetNotifications(orgId, usageData) {
 	const maxedLimits = usageData.getMaxedLimits();
 
 	for (const limit of maxedLimits) {
-		// Skip limits whose reset time has already passed — avoids negative TTL bug
+		// Skip limits whose reset time has already passed
 		if (limit.resetsAt <= Date.now()) continue;
 
 		const timestampKey = limit.resetsAt.toString();
 
-		// In-memory guard against concurrent calls
-		if (pendingSchedules.has(timestampKey)) continue;
-		pendingSchedules.add(timestampKey);
+		if (await scheduledNotifications.has(timestampKey)) continue;
 
-		try {
-			if (await scheduledNotifications.has(timestampKey)) {
-				continue;
-			}
+		const expiryTime = limit.resetsAt + (60 * 60 * 1000) - Date.now();
+		await scheduledNotifications.set(timestampKey, orgId, expiryTime);
 
-			const alarmName = `notifyReset_${orgId}_${limit.key}_${timestampKey}`;
-			await scheduleAlarm(alarmName, { when: limit.resetsAt });
-
-			const expiryTime = limit.resetsAt + (60 * 60 * 1000) - Date.now();
-			await scheduledNotifications.set(timestampKey, alarmName, expiryTime);
-
-			await Log(`Scheduled notification: ${alarmName} for ${new Date(limit.resetsAt).toISOString()}`);
-		} finally {
-			setTimeout(() => pendingSchedules.delete(timestampKey), 5000);
-		}
+		await Log(`Stored pending reset: ${limit.key} for ${new Date(limit.resetsAt).toISOString()}`);
 	}
 }
 
@@ -748,6 +775,14 @@ pendingRequests = new StoredMap("pendingRequests"); // conversationId -> {userId
 scheduledNotifications = new StoredMap('scheduledNotifications');
 const conversationCache = new StoredMap("conversationCache");	// This is for convo stats
 const CONVERSATION_CACHE_TTL = 60 * 60 * 1000; // 60 minutes
+
+// Set up repeating alarm for reset notification polling (every 3 minutes)
+getAlarm('checkResetNotifications').then(existing => {
+	if (!existing) {
+		scheduleAlarm('checkResetNotifications', { periodInMinutes: 3 });
+		Log("Created repeating checkResetNotifications alarm");
+	}
+});
 
 isInitialized = true;
 for (const handler of functionsPendingUntilInitialization) {
