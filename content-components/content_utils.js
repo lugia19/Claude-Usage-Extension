@@ -473,6 +473,19 @@ function getSidebarRegularAnchor() {
 	};
 }
 
+function getSidebarDesktopAnchor() {
+	const sidebarBody = document.querySelector('.dframe-sidebar-body');
+	if (!sidebarBody) return null;
+
+	const navScroll = sidebarBody.querySelector('.dframe-nav-scroll');
+	if (!navScroll) return null;
+
+	return {
+		parent: navScroll.parentElement,
+		referenceNode: navScroll,
+	};
+}
+
 function getChatAreaRegularAnchor() {
 	const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
 	if (!modelSelector) return null;
@@ -486,49 +499,92 @@ function getChatAreaRegularAnchor() {
 	};
 }
 
+function getChatAreaCoworkHomeAnchor() {
+	// Model selector is in a separate bottom bar, so find the toolbar via chat input
+	const chatInput = document.querySelector('[data-testid="chat-input"]');
+	if (!chatInput) return null;
+
+	const inputContainer = chatInput.closest('.flex.flex-col.gap-3');
+	if (!inputContainer) return null;
+
+	const toolbarRow = inputContainer.querySelector('.flex.w-full.items-center');
+	if (!toolbarRow) return null;
+
+	return {
+		insertAfter: toolbarRow,
+		styles: { paddingLeft: '6px', paddingRight: '', paddingBottom: '' },
+	};
+}
+
+function getTitleAreaAnchor() {
+	const chatMenu = document.querySelector(SELECTORS.CHAT_MENU);
+	if (!chatMenu) return null;
+
+	const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
+	if (!titleLine) return null;
+
+	const headerRow = titleLine.parentElement;
+
+	if (isMobileView()) {
+		if (!headerRow) return null;
+		headerRow.classList.add('flex-wrap');
+
+		const headerPadding = parseFloat(getComputedStyle(headerRow).paddingLeft) || 0;
+		return {
+			parent: headerRow,
+			referenceNode: null,
+			styles: {
+				flexBasis: '100%',
+				marginTop: '-36px',
+				marginLeft: `-${headerPadding}px`,
+				paddingLeft: `${headerPadding + 8}px`,
+			},
+			classes: { add: ['bg-bg-100'], remove: ['!px-2'] },
+		};
+	} else {
+		titleLine.classList.add('flex-wrap');
+
+		const hasProject = !!titleLine.querySelector('a[href^="/project/"]');
+		return {
+			parent: titleLine,
+			referenceNode: null,
+			styles: { flexBasis: '100%' },
+			classes: { toggle: { '!px-2': !hasProject } },
+		};
+	}
+}
+
 const pageLayouts = {
+	// Desktop client layouts (checked first — desktop has dframe-sidebar, not nav.flex)
+	desktopChat: {
+		match() { return !!document.querySelector('aside.dframe-sidebar') && !isCodePage() && !!getConversationId(); },
+		anchors: {
+			sidebar: getSidebarDesktopAnchor,
+			chatArea: getChatAreaRegularAnchor,
+			titleArea: getTitleAreaAnchor,
+		},
+	},
+	desktopCoworkHome: {
+		match() { return !!document.querySelector('aside.dframe-sidebar') && window.location.pathname === '/task/new'; },
+		anchors: {
+			sidebar: getSidebarDesktopAnchor,
+			chatArea: getChatAreaCoworkHomeAnchor,
+		},
+	},
+	desktopHome: {
+		match() { return !!document.querySelector('aside.dframe-sidebar') && !isCodePage() && !getConversationId(); },
+		anchors: {
+			sidebar: getSidebarDesktopAnchor,
+			chatArea: getChatAreaRegularAnchor,
+		},
+	},
+	// Web layouts
 	chat: {
 		match() { return !isCodePage() && !!getConversationId(); },
 		anchors: {
 			sidebar: getSidebarRegularAnchor,
 			chatArea: getChatAreaRegularAnchor,
-			titleArea() {
-				const chatMenu = document.querySelector(SELECTORS.CHAT_MENU);
-				if (!chatMenu) return null;
-
-				const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
-				if (!titleLine) return null;
-
-				const headerRow = titleLine.parentElement;
-
-				if (isMobileView()) {
-					if (!headerRow) return null;
-					headerRow.classList.add('flex-wrap');
-
-					const headerPadding = parseFloat(getComputedStyle(headerRow).paddingLeft) || 0;
-					return {
-						parent: headerRow,
-						referenceNode: null,
-						styles: {
-							flexBasis: '100%',
-							marginTop: '-36px',
-							marginLeft: `-${headerPadding}px`,
-							paddingLeft: `${headerPadding + 8}px`,
-						},
-						classes: { add: ['bg-bg-100'], remove: ['!px-2'] },
-					};
-				} else {
-					titleLine.classList.add('flex-wrap');
-
-					const hasProject = !!titleLine.querySelector('a[href^="/project/"]');
-					return {
-						parent: titleLine,
-						referenceNode: null,
-						styles: { flexBasis: '100%' },
-						classes: { toggle: { '!px-2': !hasProject } },
-					};
-				}
-			},
+			titleArea: getTitleAreaAnchor,
 		},
 	},
 	code: {
@@ -649,26 +705,34 @@ async function initExtension() {
 	CONFIG = await sendBackgroundMessage({ type: 'getConfig' });
 	await Log("Config received...");
 
-	// Wait for login
+	// Wait for page to be ready (sidebar anchor available = logged in and DOM loaded)
 	const LOGIN_CHECK_DELAY = 10000;
 	while (true) {
-		let userMenuButton = await waitForElement(document, 'button[data-testid="user-menu-button"]', 6000);
-		if (!userMenuButton) userMenuButton = document.querySelector('button[data-testid="code-user-menu-button"]');
+		let sidebarAnchor = null;
+		const maxWait = 6000;
+		const interval = 100;
+		let elapsed = 0;
+		while (elapsed < maxWait) {
+			sidebarAnchor = LayoutManager.getAnchor('sidebar');
+			if (sidebarAnchor) break;
+			await sleep(interval);
+			elapsed += interval;
+		}
 
-		if (userMenuButton) {
-			if (userMenuButton.getAttribute('data-script-loaded')) {
+		if (sidebarAnchor) {
+			if (sidebarAnchor.parent.getAttribute('data-script-loaded')) {
 				await Log('Script already running, stopping duplicate');
 				return;
 			}
-			userMenuButton.setAttribute('data-script-loaded', true);
+			sidebarAnchor.parent.setAttribute('data-script-loaded', true);
 			break;
 		}
 
 		const initialLoginScreen = document.querySelector(SELECTORS.INIT_LOGIN_SCREEN);
 		const verificationLoginScreen = document.querySelector(SELECTORS.VERIF_LOGIN_SCREEN);
 		if (!initialLoginScreen && !verificationLoginScreen) {
-			await Log("error", 'Neither user menu button nor any login screen found');
-			return;
+			await Log("warn", 'No sidebar anchor found and no login screen detected, proceeding anyway');
+			break;
 		}
 		await Log('Login screen detected, waiting before retry...');
 		await sleep(LOGIN_CHECK_DELAY);
