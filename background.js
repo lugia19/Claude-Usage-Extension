@@ -58,14 +58,7 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
 	return runOnceInitialized(handleMessageFromContent, [message, sender]);
 });
 
-if (!isElectron) {
-	browser.action.onClicked.addListener(() => {
-		// Always open debug page when clicking the extension icon
-		browser.tabs.create({
-			url: browser.runtime.getURL('debug.html')
-		});
-	});
-}
+
 
 
 if (browser.contextMenus) {

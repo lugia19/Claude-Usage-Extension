@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<style>
+		:root {
+			--bg-primary: #1e1e1e;
+			--bg-secondary: #252526;
+			--text-primary: #d4d4d4;
+			--text-secondary: #9cdcfe;
+			--button-bg: #2d2d2d;
+			--button-hover: #3e3e3e;
+			--button-active: #505050;
+			--border-color: #454545;
+		}
+
+		body {
+			width: 300px;
+			margin: 0;
+			padding: 16px;
+			background-color: var(--bg-primary);
+			color: var(--text-primary);
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+			font-size: 13px;
+			line-height: 1.5;
+		}
+
+		p {
+			margin: 0 0 12px 0;
+		}
+
+		.button-container {
+			display: flex;
+			gap: 8px;
+		}
+
+		button {
+			flex: 1;
+			background: var(--button-bg);
+			color: var(--text-primary);
+			border: 1px solid var(--border-color);
+			padding: 8px 12px;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 13px;
+			transition: background-color 0.2s, transform 0.1s;
+		}
+
+		button:hover {
+			background: var(--button-hover);
+		}
+
+		button:active {
+			background: var(--button-active);
+			transform: translateY(1px);
+		}
+
+		#donate {
+			background: #2c84db;
+			border-color: #2c84db;
+		}
+
+		#donate:hover {
+			background: #3a93e8;
+		}
+
+		#donate:active {
+			background: #2474c4;
+		}
+	</style>
+</head>
+
+<body>
+	<p>If you clicked here because you can't find the usage stats, try reloading the page or authorizing the extension to run on claude.ai &mdash; the usage stats are injected directly into the page.</p>
+	<div class="button-container">
+		<button id="debug">Debug Logs</button>
+		<button id="donate">Donate</button>
+	</div>
+	<script src="lib/browser-polyfill.min.js"></script>
+	<script src="popup.js"></script>
+</body>
+
+</html>

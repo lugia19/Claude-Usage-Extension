@@ -73,7 +73,8 @@
 	},
 	"action": {
 		"default_icon": "icon128.png",
-		"default_title": "Claude Usage Tracker - Open debug page"
+		"default_title": "Claude Usage Tracker",
+		"default_popup": "popup.html"
 	},
 	"incognito": "not_allowed"
 }
