@@ -1,6 +1,6 @@
 /* global CONFIG, Log, setupTooltip, getResetTimeHTML, sleep, sendBackgroundMessage,
    isMobileView, isCodePage, UsageData, ConversationData, getConversationId, getCurrentModel,
-   RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS */
+   RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS, LayoutManager, mountToAnchor */
 'use strict';
 
 // Length UI actor - handles all conversation-related displays
@@ -133,76 +133,9 @@ class LengthUI {
 	// ========== MOUNT (attach to page) ==========
 
 	mountTitleArea() {
-		const chatMenu = document.querySelector(SELECTORS.CHAT_MENU);
-		if (!chatMenu) return false;
-
-		const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
-		if (!titleLine) return false;
-
-		const container = this.elements.titleArea.container;
-		const mobile = isMobileView();
-		const headerRow = titleLine.parentElement;
-
-		if (mobile) {
-			// On mobile, mount as sibling to titleLine to avoid layout issues
-			if (!headerRow) return false;
-
-			// Remove from titleLine if it was there (e.g., window resized)
-			if (titleLine.contains(container)) {
-				container.remove();
-			}
-
-			// Enable flex-wrap on parent so stats go to new line
-			headerRow.classList.add('flex-wrap');
-
-			if (!headerRow.contains(container)) {
-				headerRow.appendChild(container);
-			}
-
-			// Full width on mobile, reduce vertical gap
-			container.style.flexBasis = '100%';
-			container.style.marginTop = '-36px'; // Counteract the parent's gap
-			// Extend background to left edge by pulling out of parent padding
-			const headerPadding = parseFloat(getComputedStyle(headerRow).paddingLeft) || 0;
-			container.style.marginLeft = `-${headerPadding}px`;
-			container.style.paddingLeft = `${headerPadding + 8}px`; // Keep text aligned with title
-			container.classList.remove('!px-2');
-			container.classList.add('bg-bg-100'); // Match header background
-		} else {
-			// On desktop, mount inside titleLine as before
-			// Remove from headerRow if it was there (e.g., window resized)
-			if (headerRow && headerRow.contains(container) && !titleLine.contains(container)) {
-				container.remove();
-			}
-
-			this.prepareLayoutForTitleArea(titleLine, chatMenu);
-
-			if (!titleLine.contains(container)) {
-				titleLine.appendChild(container);
-			}
-
-			container.style.flexBasis = '100%';
-
-			// Adjust padding based on whether there's a project
-			const hasProject = !!titleLine.querySelector('a[href^="/project/"]');
-			container.classList.toggle('!px-2', !hasProject);
-		}
-
-		return true;
-	}
-
-	prepareLayoutForTitleArea(titleLine, chatMenu) {
-		// Adjust header height on mobile
-		let header = titleLine;
-		while (header && !header.tagName.toLowerCase().includes('header')) {
-			header = header.parentElement;
-		}
-		if (header && header.classList.contains('h-12') && isMobileView()) {
-			header.classList.remove('h-12');
-		}
-
-		// Enable flex wrap so our element can go to a new line
-		titleLine.classList.add('flex-wrap');
+		const anchor = LayoutManager.getAnchor('titleArea');
+		if (!anchor) return false;
+		return mountToAnchor(this.elements.titleArea.container, anchor);
 	}
 
 	mountStatLine() {

@@ -445,6 +445,193 @@ async function injectStyles() {
 	}
 }
 
+// ========== PAGE LAYOUTS ==========
+// Centralized layout detection and anchor resolution.
+// Each layout has match() to detect the page and anchors to find DOM insertion points.
+// Checked in order; first match() wins.
+
+function getSidebarRegularAnchor() {
+	const sidebarNav = document.querySelector('nav.flex');
+	if (!sidebarNav) return null;
+
+	const containerWrapper = sidebarNav.querySelector('.flex.flex-grow.flex-col.overflow-y-auto');
+	const containers = containerWrapper?.querySelectorAll('.flex-1.relative');
+	if (!containers) return null;
+
+	let mainContainer = containers[containers.length - 1].querySelector('.px-2.mt-4');
+	if (!mainContainer) mainContainer = containers[containers.length - 1].querySelector('.px-2.pt-2');
+	if (!mainContainer) return null;
+
+	const starredSection = mainContainer.querySelector('div.flex.flex-col.mb-4');
+	const prefSwitcher = mainContainer.querySelector('.preset-switcher-section');
+	const referenceNode = prefSwitcher || starredSection || mainContainer.firstChild || null;
+
+	return {
+		parent: mainContainer,
+		referenceNode,
+		classes: { remove: ['px-2'] },
+	};
+}
+
+function getChatAreaRegularAnchor() {
+	const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
+	if (!modelSelector) return null;
+
+	const toolbarRow = modelSelector.closest('.flex.w-full.items-center');
+	if (!toolbarRow) return null;
+
+	return {
+		insertAfter: toolbarRow,
+		styles: { paddingLeft: '6px', paddingRight: '', paddingBottom: '' },
+	};
+}
+
+const pageLayouts = {
+	chat: {
+		match() { return !isCodePage() && !!getConversationId(); },
+		anchors: {
+			sidebar: getSidebarRegularAnchor,
+			chatArea: getChatAreaRegularAnchor,
+			titleArea() {
+				const chatMenu = document.querySelector(SELECTORS.CHAT_MENU);
+				if (!chatMenu) return null;
+
+				const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
+				if (!titleLine) return null;
+
+				const headerRow = titleLine.parentElement;
+
+				if (isMobileView()) {
+					if (!headerRow) return null;
+					headerRow.classList.add('flex-wrap');
+
+					const headerPadding = parseFloat(getComputedStyle(headerRow).paddingLeft) || 0;
+					return {
+						parent: headerRow,
+						referenceNode: null,
+						styles: {
+							flexBasis: '100%',
+							marginTop: '-36px',
+							marginLeft: `-${headerPadding}px`,
+							paddingLeft: `${headerPadding + 8}px`,
+						},
+						classes: { add: ['bg-bg-100'], remove: ['!px-2'] },
+					};
+				} else {
+					titleLine.classList.add('flex-wrap');
+
+					const hasProject = !!titleLine.querySelector('a[href^="/project/"]');
+					return {
+						parent: titleLine,
+						referenceNode: null,
+						styles: { flexBasis: '100%' },
+						classes: { toggle: { '!px-2': !hasProject } },
+					};
+				}
+			},
+		},
+	},
+	code: {
+		match() { return isCodePage(); },
+		anchors: {
+			sidebar() {
+				const sidebarNav = document.querySelector('nav.flex');
+
+				if (sidebarNav) {
+					const scrollArea = sidebarNav.querySelector('.flex-grow.overflow-y-auto');
+					if (!scrollArea) return null;
+					return {
+						parent: scrollArea.parentElement,
+						referenceNode: scrollArea,
+						classes: { add: ['px-2'] },
+					};
+				}
+
+				// Standalone code sidebar (no nav element)
+				const codeLink = document.querySelector('a[href="/code"]');
+				if (!codeLink) return null;
+
+				const sidebarRoot = codeLink.closest('.flex.flex-col.h-full.bg-bg-100');
+				if (!sidebarRoot) return null;
+
+				const scrollArea = sidebarRoot.querySelector('.overflow-y-auto.overflow-x-hidden');
+				if (!scrollArea) return null;
+
+				const outerWrapper = scrollArea.parentElement.parentElement;
+				return {
+					parent: outerWrapper,
+					referenceNode: outerWrapper.firstElementChild,
+					classes: { add: ['px-2'] },
+				};
+			},
+			chatArea() {
+				const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
+				if (!modelSelector) return null;
+
+				const toolbar = modelSelector.closest('.flex.items-center.p-2');
+				if (!toolbar) return null;
+
+				return {
+					insertAfter: toolbar,
+					styles: { paddingLeft: '8px', paddingRight: '8px', paddingBottom: '4px' },
+				};
+			},
+		},
+	},
+	home: {
+		match() { return !isCodePage() && !getConversationId(); },
+		anchors: {
+			sidebar: getSidebarRegularAnchor,
+			chatArea: getChatAreaRegularAnchor,
+		},
+	},
+};
+
+const LayoutManager = {
+	detectLayout() {
+		for (const [name, layout] of Object.entries(pageLayouts)) {
+			if (layout.match()) return { name, ...layout };
+		}
+		return null;
+	},
+	getAnchor(anchorName) {
+		const layout = this.detectLayout();
+		const anchorFn = layout?.anchors?.[anchorName];
+		if (!anchorFn) return null;
+		return anchorFn();
+	},
+};
+
+function mountToAnchor(element, anchor) {
+	let needsInsert;
+	if (anchor.insertAfter) {
+		needsInsert = anchor.insertAfter.nextElementSibling !== element;
+	} else if (anchor.referenceNode) {
+		needsInsert = element.nextElementSibling !== anchor.referenceNode
+			|| element.parentElement !== anchor.parent;
+	} else {
+		needsInsert = element.parentElement !== anchor.parent;
+	}
+
+	if (needsInsert) {
+		if (anchor.insertAfter) {
+			anchor.insertAfter.after(element);
+		} else {
+			anchor.parent.insertBefore(element, anchor.referenceNode || null);
+		}
+	}
+
+	if (anchor.styles) Object.assign(element.style, anchor.styles);
+	if (anchor.classes?.add) element.classList.add(...anchor.classes.add);
+	if (anchor.classes?.remove) element.classList.remove(...anchor.classes.remove);
+	if (anchor.classes?.toggle) {
+		for (const [cls, force] of Object.entries(anchor.classes.toggle)) {
+			element.classList.toggle(cls, force);
+		}
+	}
+	return true;
+}
+
 // Main initialization
 async function initExtension() {
 	if (window.claudeTrackerInstance) {
