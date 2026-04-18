@@ -1,2 +1,3 @@
-Fully fix notification spam
-Improve support for claude code web
+Make caching per-model to support mid-conversation switching
+Fix usage bar display
+Fixes for the desktop client

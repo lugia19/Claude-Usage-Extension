@@ -415,7 +415,7 @@ class SettingsCard extends FloatingCard {
 		const toggleLabel = document.createElement('label');
 		toggleLabel.htmlFor = 'ut-reset-notif-toggle';
 		toggleLabel.className = 'text-sm';
-		toggleLabel.innerHTML = 'Usage reset notifications<br><span style="font-size: 0.85em; opacity: 0.7;">(may spam due to a bug)</span>';
+		toggleLabel.innerHTML = 'Usage reset notifications';
 
 		toggleContainer.appendChild(checkbox);
 		toggleContainer.appendChild(toggleLabel);
