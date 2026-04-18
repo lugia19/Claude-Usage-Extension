@@ -637,9 +637,8 @@ class ConversationAPI {
 			projectStats?.use_project_knowledge_search                 // Project retrieval
 		);
 
-		let conversationModelType = undefined;
-		let modelString = "sonnet"
-		if (conversationData.model) modelString = conversationData.model.toLowerCase();
+		let conversationModelType = CONFIG.DEFAULT_MODEL;
+		let modelString = (conversationData.model || CONFIG.DEFAULT_MODEL_VERSION).toLowerCase();
 		for (const modelType of CONFIG.MODELS) {
 			if (modelString.includes(modelType.toLowerCase())) {
 				conversationModelType = modelType;
@@ -675,6 +674,7 @@ class ConversationAPI {
 			futureCost: futureCost,
 			uncachedFutureCost: uncachedFutureCost,
 			model: conversationModelType,
+			modelVersion: conversationData.model || CONFIG.DEFAULT_MODEL_VERSION,
 			costUsedCache: conversationIsCached,
 			conversationIsCachedUntil: conversationIsCachedUntil,
 			projectUuid: conversationData.project_uuid,

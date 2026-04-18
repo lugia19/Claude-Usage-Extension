@@ -3,6 +3,30 @@
 
 const DONATION_TOKEN_THRESHOLDS = [10000000, 50000000, 100000000, 300000000, 1000000000];
 
+function openDebugOverlay() {
+	// Remove existing overlay if present
+	const existing = document.getElementById('ut-debug-overlay');
+	if (existing) { existing.remove(); return; }
+
+	const overlay = document.createElement('div');
+	overlay.id = 'ut-debug-overlay';
+	overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;';
+
+	const closeBtn = document.createElement('button');
+	closeBtn.textContent = '\u00D7';
+	closeBtn.style.cssText = 'position:absolute;top:12px;right:16px;font-size:24px;background:none;border:none;color:#666;cursor:pointer;z-index:1;';
+	closeBtn.addEventListener('click', () => overlay.remove());
+
+	const iframe = document.createElement('iframe');
+	iframe.src = browser.runtime.getURL('debug.html');
+	iframe.style.cssText = 'width:90vw;height:90vh;border:none;border-radius:8px;';
+
+	overlay.appendChild(closeBtn);
+	overlay.appendChild(iframe);
+	overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+	document.body.appendChild(overlay);
+}
+
 // Draggable functionality for cards
 function makeDraggable(element, dragHandle = null) {
 	let isDragging = false;
@@ -349,15 +373,11 @@ class SettingsCard extends FloatingCard {
 
 		// Event listeners
 		debugButton.addEventListener('click', async () => {
-			const result = await sendBackgroundMessage({
-				type: 'openDebugPage'
-			});
-
+			const result = await sendBackgroundMessage({ type: 'openDebugPage' });
 			if (result === 'fallback') {
-				window.location.href = browser.runtime.getURL('debug.html');
-			} else {
-				this.remove();
+				openDebugOverlay();
 			}
+			this.remove();
 		});
 
 		saveButton.addEventListener('click', async () => {

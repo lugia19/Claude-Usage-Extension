@@ -179,7 +179,8 @@ export class ConversationData {
 		this.uncachedCost = data.uncachedCost || 0;       // Without caching
 		this.futureCost = data.futureCost || 0; // Estimated cost of future messages
 		this.uncachedFutureCost = data.uncachedFutureCost || 0; // Estimated future cost without caching
-		this.model = data.model || 'Sonnet';
+		this.model = data.model || CONFIG.DEFAULT_MODEL;
+		this.modelVersion = data.modelVersion || CONFIG.DEFAULT_MODEL_VERSION;
 
 		// Cache status
 		this.costUsedCache = data.costUsedCache || false;	//Currently unused, since now we show future_cost rather than past cost
@@ -194,8 +195,9 @@ export class ConversationData {
 	}
 
 	// Add helper method to check if currently cached
-	isCurrentlyCached() {
-		return this.conversationIsCachedUntil && this.conversationIsCachedUntil > Date.now();
+	isCurrentlyCached(currentModelVersion) {
+		return this.conversationIsCachedUntil && this.conversationIsCachedUntil > Date.now()
+			&& (!currentModelVersion || this.modelVersion === currentModelVersion);
 	}
 
 	// Add method to get time until cache expires
@@ -218,15 +220,16 @@ export class ConversationData {
 	getWeightedCost(modelOverride) {
 		let model = this.model;
 		if (modelOverride) model = modelOverride;
-		const weight = CONFIG.MODEL_WEIGHTS[model] || CONFIG.MODEL_WEIGHTS["Sonnet"];
+		const weight = CONFIG.MODEL_WEIGHTS[model] || CONFIG.MODEL_WEIGHTS[CONFIG.DEFAULT_MODEL];
 		return Math.round(this.cost * weight);
 	}
 
-	getWeightedFutureCost(modelOverride) {
+	getWeightedFutureCost(modelOverride, modelVersionOverride) {
 		let model = this.model;
 		if (modelOverride) model = modelOverride;
-		const weight = CONFIG.MODEL_WEIGHTS[model] || CONFIG.MODEL_WEIGHTS["Sonnet"];
-		return Math.round(this.futureCost * weight);
+		const weight = CONFIG.MODEL_WEIGHTS[model] || CONFIG.MODEL_WEIGHTS[CONFIG.DEFAULT_MODEL];
+		const baseCost = this.isCurrentlyCached(modelVersionOverride) ? this.futureCost : this.uncachedFutureCost;
+		return Math.round(baseCost * weight);
 	}
 
 	// Check if conversation is expensive
@@ -249,6 +252,7 @@ export class ConversationData {
 			futureCost: this.futureCost,
 			uncachedFutureCost: this.uncachedFutureCost,
 			model: this.model,
+			modelVersion: this.modelVersion,
 			costUsedCache: this.costUsedCache,
 			conversationIsCachedUntil: this.conversationIsCachedUntil,
 			projectUuid: this.projectUuid,

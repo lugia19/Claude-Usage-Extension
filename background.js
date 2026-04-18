@@ -331,10 +331,8 @@ messageRegistry.register('isElectron', () => isElectron);
 messageRegistry.register('getMonkeypatchPatterns', () => isElectron ? INTERCEPT_PATTERNS : false);
 
 async function openDebugPage() {
-	if (browser.tabs?.create) {
-		browser.tabs.create({
-			url: browser.runtime.getURL('debug.html')
-		});
+	if (!isElectron) {
+		browser.tabs.create({ url: browser.runtime.getURL('debug.html') });
 		return true;
 	}
 	return 'fallback';
@@ -466,7 +464,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 
 	const pendingRequest = await pendingRequests.get(responseKey);
 	const isNewMessage = pendingRequest !== undefined;
-	const model = pendingRequest?.model || "Sonnet";
+	const model = pendingRequest?.model || CONFIG.DEFAULT_MODEL;
 
 	// Fetch current usage limits from endpoint
 	const usageData = await api.getUsageData();
@@ -505,6 +503,13 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 
 	conversationData.length += profileTokens;
 	conversationData.model = model;
+	await Log('processResponse: modelVersion -',
+		'from API:', conversationData.modelVersion,
+		'| from pendingRequest:', pendingRequest?.modelVersion);
+	if (pendingRequest?.modelVersion) {
+		conversationData.modelVersion = pendingRequest.modelVersion;
+	}
+	await Log('processResponse: modelVersion final:', conversationData.modelVersion);
 
 	// If new message: log delta and update total tokens
 	if (isNewMessage && pendingRequest.previousUsage) {
@@ -645,7 +650,7 @@ async function onBeforeRequestHandler(details) {
 		await tokenStorageManager.addOrgId(orgId);
 		const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1];
 
-		let model = "Sonnet"; // Default model
+		let model = CONFIG.DEFAULT_MODEL;
 		if (requestBodyJSON?.model) {
 			const modelString = requestBodyJSON.model.toLowerCase();
 			for (const modelType of CONFIG.MODELS) {
@@ -683,12 +688,14 @@ async function onBeforeRequestHandler(details) {
 		}
 
 		// Store pending request with all data
+		await Log('onBeforeRequest: storing modelVersion:', requestBodyJSON?.model, '| class:', model);
 		await pendingRequests.set(key, {
 			orgId: orgId,
 			conversationId: conversationId,
 			tabId: details.tabId,
 			styleId: styleId,
 			model: model,
+			modelVersion: requestBodyJSON?.model || CONFIG.DEFAULT_MODEL_VERSION,
 			requestTimestamp: Date.now(),
 			toolDefinitions: toolDefs,
 			previousUsage: previousUsage

@@ -168,7 +168,7 @@ class TokenCounter {
 			},
 			body: JSON.stringify({
 				messages,
-				model: "claude-sonnet-4-5"
+				model: "claude-sonnet-4-6"
 			})
 		});
 
@@ -210,7 +210,7 @@ class TokenCounter {
 			},
 			body: JSON.stringify({
 				messages,
-				model: "claude-sonnet-4-5"
+				model: "claude-sonnet-4-6"
 			})
 		});
 

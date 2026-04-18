@@ -169,21 +169,26 @@ async function waitForElement(target, selector, maxTime = 1000) {
 
 async function getCurrentModel(maxWait = 3000) {
 	const modelSelector = await waitForElement(document, SELECTORS.MODEL_PICKER, maxWait);
-	if (!modelSelector) return undefined;
+	if (!modelSelector) return CONFIG.DEFAULT_MODEL;
 
-	let fullModelName = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim() || 'default';
-	if (!fullModelName || fullModelName === 'default') return undefined;
+	const fullModelName = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim()?.toLowerCase();
+	if (!fullModelName) return CONFIG.DEFAULT_MODEL;
 
-	fullModelName = fullModelName.toLowerCase();
-	const modelTypes = CONFIG.MODELS
-
-	for (const modelType of modelTypes) {
+	for (const modelType of CONFIG.MODELS) {
 		if (fullModelName.includes(modelType.toLowerCase())) {
 			return modelType;
 		}
 	}
-	await Log("Could not find matching model, returning undefined")
-	return undefined;
+	await Log("Could not find matching model, returning default")
+	return CONFIG.DEFAULT_MODEL;
+}
+
+async function getCurrentModelVersion(maxWait = 3000) {
+	const modelSelector = await waitForElement(document, SELECTORS.MODEL_PICKER, maxWait);
+	if (!modelSelector) return CONFIG.DEFAULT_MODEL_VERSION;
+	const text = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim();
+	if (!text) return CONFIG.DEFAULT_MODEL_VERSION;
+	return CONFIG.MODEL_VERSION_MAP[text.toLowerCase()] || CONFIG.DEFAULT_MODEL_VERSION;
 }
 
 function isMobileView() {
@@ -405,8 +410,7 @@ class ProgressBar {
 // Message handlers for background script requests
 browser.runtime.onMessage.addListener(async (message) => {
 	if (message.type === 'getActiveModel') {
-		const currModel = await getCurrentModel();
-		return currModel || "Sonnet";
+		return await getCurrentModel();
 	}
 	if (message.action === "getOrgID") {
 		const orgId = document.cookie

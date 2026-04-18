@@ -145,7 +145,12 @@ if (!chrome.tabs?.create) {
 	const returnButton = document.getElementById('returnToClaude');
 	returnButton.style.display = 'inline-block';
 	returnButton.addEventListener('click', () => {
-		window.location.href = 'https://claude.ai';
+		// If in iframe overlay, close it; otherwise navigate back
+		if (window.parent !== window) {
+			window.parent.document.getElementById('ut-debug-overlay')?.remove();
+		} else {
+			window.location.href = 'https://claude.ai';
+		}
 	});
 }
 

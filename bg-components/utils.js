@@ -11,6 +11,17 @@ const CONFIG = {
 		"Sonnet": 3,
 		"Haiku": 1
 	},
+	"DEFAULT_MODEL": "Opus",
+	"MODEL_VERSION_MAP": {
+		// DOM labels (lowercased) → API model IDs
+		"opus 4.7": "claude-opus-4-7",
+		"sonnet 4.6": "claude-sonnet-4-6",
+		"opus 4.6": "claude-opus-4-6",
+		"sonnet 4.5": "claude-sonnet-4-5-20250929",
+		"haiku 4.5": "claude-haiku-4-5-20251001",
+		"opus 3": "claude-3-opus-20240229",
+	},
+	"DEFAULT_MODEL_VERSION": "claude-opus-4-7",
 	"WARNING_THRESHOLD": 0.9,
 	"PEAK_SESSION_MULTIPLIER": 1.5,
 	"WARNING": {
