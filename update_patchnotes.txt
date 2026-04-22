@@ -1,3 +1,2 @@
-Make caching per-model to support mid-conversation switching
-Fix usage bar display
-Fixes for the desktop client
+Fix subscription tier detection
+Fix usage not resetting across all tabs
