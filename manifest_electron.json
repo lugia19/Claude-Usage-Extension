@@ -53,7 +53,8 @@
 				"tracker-styles.css",
 				"injections/rate-limit-watcher.js",
 				"injections/webrequest-polyfill.js",
-				"qol-badge.png"
+				"qol-badge.png",
+				"rate-badge.png"
 			],
 			"matches": [
 				"<all_urls>"
