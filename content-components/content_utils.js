@@ -167,26 +167,7 @@ async function waitForElement(target, selector, maxTime = 1000) {
 	return null;
 }
 
-function getModelFromLocalStorage() {
-	try {
-		const raw = localStorage.getItem('sticky-model-selector');
-		if (raw && typeof raw === 'string' && raw.trim()) return raw.trim();
-	} catch (_) { /* localStorage may be blocked; fall through */ }
-	return null;
-}
-
 async function getCurrentModel(maxWait = 3000) {
-	const stored = getModelFromLocalStorage();
-	if (stored) {
-		const lowered = stored.toLowerCase();
-		for (const modelType of CONFIG.MODELS) {
-			if (lowered.includes(modelType.toLowerCase())) {
-				return modelType;
-			}
-		}
-		await Log("localStorage model did not match a known family, falling back to DOM:", stored);
-	}
-
 	const modelSelector = await waitForElement(document, SELECTORS.MODEL_PICKER, maxWait);
 	if (!modelSelector) return CONFIG.DEFAULT_MODEL;
 
@@ -203,9 +184,6 @@ async function getCurrentModel(maxWait = 3000) {
 }
 
 async function getCurrentModelVersion(maxWait = 3000) {
-	const stored = getModelFromLocalStorage();
-	if (stored) return stored;
-
 	const modelSelector = await waitForElement(document, SELECTORS.MODEL_PICKER, maxWait);
 	if (!modelSelector) return CONFIG.DEFAULT_MODEL_VERSION;
 	const text = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim();

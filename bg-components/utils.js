@@ -17,6 +17,7 @@ const CONFIG = {
 		"opus 4.7": "claude-opus-4-7",
 		"sonnet 4.6": "claude-sonnet-4-6",
 		"opus 4.6": "claude-opus-4-6",
+		"opus 4.5": "claude-opus-4-5-20251101",
 		"sonnet 4.5": "claude-sonnet-4-5-20250929",
 		"haiku 4.5": "claude-haiku-4-5-20251001",
 		"opus 3": "claude-3-opus-20240229",
@@ -39,6 +40,7 @@ const CONFIG = {
 			"session": 375000
 		},
 		"claude_pro": {},
+		"claude_team": {},
 		// Genuinely mostly just vibes here, this is just a first draft
 
 		// V5.2 will do telemetry to refine these values
@@ -55,6 +57,7 @@ function fillEstimatedCaps(caps) {
 	// Multipliers relative to pro (the base tier)
 	const tierMultipliers = {
 		claude_pro: 1,
+		claude_team: 1.25, // Just based off the price, no idea how to differentiate between standard and premium team seats
 		claude_max_5x: 5,
 		claude_max_20x: 20,
 	};
