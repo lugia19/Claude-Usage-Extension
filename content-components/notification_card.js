@@ -608,12 +608,8 @@ class FloatingCardsUI {
 	}
 
 	async checkForRateReminder() {
-		// TODO: restore actual logic after testing
-		const notificationCard = new RateNotificationCard();
-		notificationCard.show();
-		return;
 
-		/*const storage = await browser.storage.local.get(['rateReminderTime', 'rateReminderShown']);
+		const storage = await browser.storage.local.get(['rateReminderTime', 'rateReminderShown']);
 
 		if (!storage.rateReminderTime) {
 			await browser.storage.local.set({ rateReminderTime: Date.now() + 7 * 24 * 60 * 60 * 1000 });
@@ -626,7 +622,7 @@ class FloatingCardsUI {
 		await browser.storage.local.set({ rateReminderShown: true });
 
 		const notificationCard = new RateNotificationCard();
-		notificationCard.show();*/
+		notificationCard.show();
 	}
 }
 
