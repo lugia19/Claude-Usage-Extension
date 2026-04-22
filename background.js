@@ -341,10 +341,7 @@ async function requestData(message, sender, orgId) {
 	// Always fetch and send fresh usage data
 	const usageData = await api.getUsageData();
 	await scheduleResetNotifications(orgId, usageData);
-	await sendTabMessage(sender.tab.id, {
-		type: 'updateUsage',
-		data: { usageData: usageData.toJSON() }
-	});
+	await updateAllTabsWithUsage(usageData);
 
 	if (conversationId) {
 		// Check conversation cache
