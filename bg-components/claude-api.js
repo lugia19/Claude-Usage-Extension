@@ -144,24 +144,51 @@ class ClaudeAPI {
 	}
 
 	async getSubscriptionTier(skipCache = false) {
-		let subscriptionTier = await subscriptionTiersCache.get(this.orgId);
-		if (subscriptionTier && !skipCache) return subscriptionTier;
+		try {
+			let subscriptionTier = await subscriptionTiersCache.get(this.orgId);
+			if (subscriptionTier && !skipCache) return subscriptionTier;
+			const appStartData = await this.getRequest(`/bootstrap/${this.orgId}/app_start?statsig_hashing_algorithm=djb2`);
+			const memberships = appStartData.account?.memberships || [];
+			const org = memberships.find(membership => membership.organization.uuid === this.orgId)?.organization;
+			// Tiers are... really weird now. I'm using a combination of many indicators to try and determine the right one.
 
-		const appStartData = await this.getRequest(`/bootstrap/${this.orgId}/app_start?statsig_hashing_algorithm=djb2`);
-		const user = appStartData.org_growthbook?.user;
+			const hasMaxCapability = org.capabilities.includes("claude_max");
+			const hasProCapability = org.capabilities.includes("claude_pro");
+			const hasRavenType = !!org.raven_type // Just true if it's non-null, Raven = Claude Team
+			const rateLimitTier = org?.rate_limit_tier || "default_claude_ai";
+			// default_claude_ai is free AND pro, because of course it's weird
+			// default_claude_max_5x is max 5x
+			// default_claude_max_20x is max 20x (I think, but unverified as of now, I will just assume that if it's NOT 5x then it's 20x)
 
-		if (user?.isMax) {
-			subscriptionTier = user.maxTier === "20x" ? "claude_max_20x" : "claude_max_5x";
-		} else if (user?.isRaven) {
-			subscriptionTier = "claude_team";
-		} else if (user?.isPro) {
-			subscriptionTier = "claude_pro";
-		} else {
-			subscriptionTier = "claude_free";
+			if (hasRavenType) {
+				subscriptionTier = "claude_team";
+			} else {
+				if (hasMaxCapability) {
+					if (rateLimitTier.contains("5x")) {
+						subscriptionTier = "claude_max_5x";
+					} else {
+						subscriptionTier = "claude_max_20x";
+					}
+				} else if (hasProCapability) {
+					subscriptionTier = "claude_pro";
+				} else if (rateLimitTier === "default_claude_ai") {
+					subscriptionTier = "claude_free";
+				}
+			}
+
+
+			if (!subscriptionTier) {
+				subscriptionTier = "claude_free";
+			}
+
+			await Log("Fetched subscription tier:", subscriptionTier);
+			await subscriptionTiersCache.set(this.orgId, subscriptionTier, 24 * 60 * 60 * 1000);
+			return subscriptionTier;
+		} catch (error) {
+			await Log("error", "Failed to fetch subscription tier, defaulting to free:", error);
+			return "claude_free";
 		}
 
-		await subscriptionTiersCache.set(this.orgId, subscriptionTier, 24 * 60 * 60 * 1000);
-		return subscriptionTier;
 	}
 }
 
