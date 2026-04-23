@@ -159,12 +159,13 @@ class ClaudeAPI {
 			// default_claude_ai is free AND pro, because of course it's weird
 			// default_claude_max_5x is max 5x
 			// default_claude_max_20x is max 20x (I think, but unverified as of now, I will just assume that if it's NOT 5x then it's 20x)
+			console.log("Org capabilities:", org.capabilities);
 
 			if (hasRavenType) {
 				subscriptionTier = "claude_team";
 			} else {
 				if (hasMaxCapability) {
-					if (rateLimitTier.contains("5x")) {
+					if (rateLimitTier.includes("5x")) {
 						subscriptionTier = "claude_max_5x";
 					} else {
 						subscriptionTier = "claude_max_20x";

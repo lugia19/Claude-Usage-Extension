@@ -1,2 +1,1 @@
-Fix subscription tier detection
-Fix usage not resetting across all tabs
+Fix subscription tier detection (again) (this is what I get for coding at 1am)
