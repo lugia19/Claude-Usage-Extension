@@ -73,7 +73,9 @@ class ClaudeAPI {
 		if (usageLimitsResponse.extra_usage?.is_enabled) {
 			creditsResponse = await this.getCredits();
 		}
-		return UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier, creditsResponse);
+		const usageData = UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier, creditsResponse);
+		usageData.orgId = this.orgId;
+		return usageData;
 	}
 
 	// Fetch memory content
@@ -532,7 +534,8 @@ class ConversationAPI {
 				projectUuid: conversationData.project_uuid,
 				settings: conversationData.settings,
 				lastMessageTimestamp: null,
-				lengthIsEstimate: false
+				lengthIsEstimate: false,
+				orgId: this.api.orgId
 			});
 		}
 
@@ -708,7 +711,8 @@ class ConversationAPI {
 			projectUuid: conversationData.project_uuid,
 			settings: conversationData.settings,
 			lastMessageTimestamp: lastMessageTimestamp,
-			lengthIsEstimate: lengthIsEstimate
+			lengthIsEstimate: lengthIsEstimate,
+			orgId: this.api.orgId
 		});
 	}
 }

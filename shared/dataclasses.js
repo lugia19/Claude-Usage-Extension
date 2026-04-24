@@ -24,6 +24,7 @@ export class UsageData {
 		this.subscriptionTier = data.subscriptionTier || 'claude_free';
 		this.extraUsage = data.extraUsage || null;  // { isEnabled, monthlyLimit, usedCredits } (cents)
 		this.creditBalance = data.creditBalance ?? null;  // cents (from /credits)
+		this.orgId = data.orgId || null;
 	}
 
 	static fromAPIResponse(apiResponse, subscriptionTier, creditsResponse = null) {
@@ -159,7 +160,8 @@ export class UsageData {
 			limits: this.limits,
 			subscriptionTier: this.subscriptionTier,
 			extraUsage: this.extraUsage,
-			creditBalance: this.creditBalance
+			creditBalance: this.creditBalance,
+			orgId: this.orgId
 		};
 	}
 
@@ -192,6 +194,7 @@ export class ConversationData {
 		this.settings = data.settings || {};
 		this.lastMessageTimestamp = data.lastMessageTimestamp || null; // Timestamp of the last message in the conversation
 		this.lengthIsEstimate = data.lengthIsEstimate || false; // True if length may be inaccurate due to features
+		this.orgId = data.orgId || null;
 	}
 
 	// Add helper method to check if currently cached
@@ -259,7 +262,8 @@ export class ConversationData {
 			styleId: this.styleId,
 			settings: this.settings,
 			lastMessageTimestamp: this.lastMessageTimestamp,
-			lengthIsEstimate: this.lengthIsEstimate
+			lengthIsEstimate: this.lengthIsEstimate,
+			orgId: this.orgId
 		};
 	}
 

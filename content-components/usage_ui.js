@@ -1,4 +1,4 @@
-/* global CONFIG, Log, ProgressBar, sendBackgroundMessage,
+/* global CONFIG, Log, ProgressBar, sendBackgroundMessage, getActiveOrgId,
    setupTooltip, getResetTimeHTML, sleep, isMobileView, isCodePage, UsageData, isPeakHours,
    RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS, LayoutManager, mountToAnchor */
 'use strict';
@@ -216,6 +216,9 @@ class UsageUI {
 	setupMessageListener() {
 		browser.runtime.onMessage.addListener((message) => {
 			if (message.type === 'updateUsage') {
+				const msgOrgId = message.data.usageData?.orgId;
+				const myOrgId = getActiveOrgId();
+				if (msgOrgId && myOrgId && msgOrgId !== myOrgId) return;
 				this.handleUsageUpdate(message.data.usageData);
 			}
 		});

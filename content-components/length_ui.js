@@ -1,4 +1,4 @@
-/* global CONFIG, Log, setupTooltip, getResetTimeHTML, sleep, sendBackgroundMessage,
+/* global CONFIG, Log, setupTooltip, getResetTimeHTML, sleep, sendBackgroundMessage, getActiveOrgId,
    isMobileView, isCodePage, UsageData, ConversationData, getConversationId, getCurrentModel,
    getCurrentModelVersion, RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS,
    LayoutManager, mountToAnchor */
@@ -39,10 +39,15 @@ class LengthUI {
 
 	setupMessageListeners() {
 		browser.runtime.onMessage.addListener((message) => {
+			const myOrgId = getActiveOrgId();
 			if (message.type === 'updateUsage') {
+				const msgOrgId = message.data.usageData?.orgId;
+				if (msgOrgId && myOrgId && msgOrgId !== myOrgId) return;
 				this.handleUsageUpdate(message.data.usageData);
 			}
 			if (message.type === 'updateConversationData') {
+				const msgOrgId = message.data.conversationData?.orgId;
+				if (msgOrgId && myOrgId && msgOrgId !== myOrgId) return;
 				this.handleConversationUpdate(message.data.conversationData);
 			}
 		});

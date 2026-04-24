@@ -129,10 +129,14 @@ function getConversationId() {
 	return match ? match[1] : null;
 }
 
+function getActiveOrgId() {
+	return document.cookie.split('; ').find(row => row.startsWith('lastActiveOrg='))?.split('=')[1] || null;
+}
+
 async function sendBackgroundMessage(message) {
 	const enrichedMessage = {
 		...message,
-		orgId: document.cookie.split('; ').find(row => row.startsWith('lastActiveOrg='))?.split('=')[1]
+		orgId: getActiveOrgId()
 	};
 	let counter = 10;
 	while (counter > 0) {
@@ -413,11 +417,7 @@ browser.runtime.onMessage.addListener(async (message) => {
 		return await getCurrentModel();
 	}
 	if (message.action === "getOrgID") {
-		const orgId = document.cookie
-			.split('; ')
-			.find(row => row.startsWith('lastActiveOrg='))
-			?.split('=')[1];
-		return Promise.resolve({ orgId });
+		return Promise.resolve({ orgId: getActiveOrgId() });
 	}
 	if (message.action === "getStyleId") {
 		const storedStyle = localStorage.getItem('LSS-claude_personalized_style');

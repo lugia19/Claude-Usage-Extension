@@ -178,6 +178,36 @@ async function containerFetch(url, options = {}, cookieStoreId = null) {
 	return fetch(url, options);
 }
 
+const containerRequestMap = new Map();
+
+async function redirectCookie(setCookieStr, requestUrl, storeId) {
+	const parts = setCookieStr.split(';').map(p => p.trim());
+	const [nameValue, ...attrs] = parts;
+	const eqIdx = nameValue.indexOf('=');
+	const name = nameValue.substring(0, eqIdx);
+	const value = nameValue.substring(eqIdx + 1);
+
+	const cookieDetails = { url: requestUrl, name, value, storeId };
+
+	for (const attr of attrs) {
+		const lower = attr.toLowerCase();
+		if (lower.startsWith('domain=')) cookieDetails.domain = attr.split('=')[1];
+		else if (lower.startsWith('path=')) cookieDetails.path = attr.split('=')[1];
+		else if (lower.startsWith('expires=')) {
+			cookieDetails.expirationDate = Math.floor(new Date(attr.substring(8)).getTime() / 1000);
+		}
+		else if (lower === 'secure') cookieDetails.secure = true;
+		else if (lower === 'httponly') cookieDetails.httpOnly = true;
+		else if (lower.startsWith('samesite=')) {
+			const val = attr.split('=')[1].toLowerCase();
+			cookieDetails.sameSite = val === 'none' ? 'no_restriction' : val;
+		}
+	}
+
+	await Log("Redirecting cookie", name, "to store:", storeId);
+	await browser.cookies.set(cookieDetails);
+}
+
 async function addContainerFetchListener() {
 	if (isElectron || !chrome.cookies) return;
 	const stores = await browser.cookies.getAllCookieStores();
@@ -193,7 +223,7 @@ async function addContainerFetchListener() {
 				)?.value;
 
 				if (containerStore) {
-					//await Log("Processing request for container:", containerStore, "URL:", details.url);
+					containerRequestMap.set(details.requestId, containerStore);
 
 					// Extract domain from URL
 					const url = new URL(details.url);
@@ -204,7 +234,6 @@ async function addContainerFetchListener() {
 						domain: domain,
 						storeId: containerStore
 					});
-					//await Log("Found cookies for domain:", domain, "in container:", containerStore);
 					if (domainCookies.length > 0) {
 						// Create or find the cookie header
 						let cookieHeader = details.requestHeaders.find(h => h.name === 'Cookie');
@@ -228,6 +257,37 @@ async function addContainerFetchListener() {
 			},
 			{ urls: ["<all_urls>"] },
 			["blocking", "requestHeaders"]
+		);
+
+		browser.webRequest.onHeadersReceived.addListener(
+			async (details) => {
+				const containerStore = containerRequestMap.get(details.requestId);
+				if (!containerStore) return;
+				containerRequestMap.delete(details.requestId);
+
+				const setCookieHeaders = details.responseHeaders.filter(
+					h => h.name.toLowerCase() === 'set-cookie'
+				);
+				if (setCookieHeaders.length === 0) return;
+
+				await Log("Redirecting", setCookieHeaders.length, "Set-Cookie header(s) from request", details.requestId, "to container:", containerStore);
+				for (const header of setCookieHeaders) {
+					await redirectCookie(header.value, details.url, containerStore);
+				}
+
+				return {
+					responseHeaders: details.responseHeaders.filter(
+						h => h.name.toLowerCase() !== 'set-cookie'
+					)
+				};
+			},
+			{ urls: ["<all_urls>"] },
+			["blocking", "responseHeaders"]
+		);
+
+		browser.webRequest.onErrorOccurred.addListener(
+			(details) => containerRequestMap.delete(details.requestId),
+			{ urls: ["<all_urls>"] }
 		);
 	}
 }
