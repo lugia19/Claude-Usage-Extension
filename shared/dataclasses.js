@@ -9,7 +9,7 @@ export function isPeakHours() {
 	const day = now.getUTCDay(); // 0=Sun, 6=Sat
 	const hour = now.getUTCHours();
 	if (day === 0 || day === 6) return false;
-	return hour >= 13 && hour < 19;
+	return hour >= 12 && hour < 18;
 }
 
 export class UsageData {

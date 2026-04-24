@@ -1,1 +1,2 @@
-Fix subscription tier detection (again) (this is what I get for coding at 1am)
+Fix for firefox containers in multi-account scenarios
+Tweak peak hours that I'm pretty sure I got wrong due to timezone differences...
