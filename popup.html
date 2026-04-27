@@ -55,26 +55,13 @@
 			transform: translateY(1px);
 		}
 
-		#donate {
-			background: #2c84db;
-			border-color: #2c84db;
-		}
-
-		#donate:hover {
-			background: #3a93e8;
-		}
-
-		#donate:active {
-			background: #2474c4;
-		}
 	</style>
 </head>
 
 <body>
 	<p>If you clicked here because you can't find the usage stats, try reloading the page or authorizing the extension to run on claude.ai &mdash; the usage stats are injected directly into the page.</p>
 	<div class="button-container">
-		<button id="debug">Debug Logs</button>
-		<button id="donate">Donate</button>
+		<button id="debug" type="button">Debug Logs</button>
 	</div>
 	<script src="lib/browser-polyfill.min.js"></script>
 	<script src="popup.js"></script>

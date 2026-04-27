@@ -15,3 +15,10 @@ content-components/ui_dataclasses.js
 *.png
 *.psd
 CLAUDE.md
+
+# graphify: keep report + viz + graph.json; skip local cache and extraction metadata
+graphify-out/cache/
+graphify-out/manifest.json
+graphify-out/cost.json
+graphify-out/.graphify_python
+graphify-out/.graphify_uncached.txt

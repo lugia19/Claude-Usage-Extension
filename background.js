@@ -69,22 +69,12 @@ if (browser.contextMenus) {
 			contexts: ['action']
 		});
 
-		browser.contextMenus.create({
-			id: 'openDonatePage',
-			title: 'Donate',
-			contexts: ['action']
-		});
-
 	});
 
 	browser.contextMenus.onClicked.addListener((info, tab) => {
 		if (info.menuItemId === 'openDebugPage') {
 			browser.tabs.create({
 				url: browser.runtime.getURL('debug.html')
-			});
-		} else if (info.menuItemId === 'openDonatePage') {
-			browser.tabs.create({
-				url: "https://ko-fi.com/lugia19"
 			});
 		}
 	});

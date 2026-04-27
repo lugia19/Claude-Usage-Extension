@@ -19,7 +19,7 @@ class LengthUI {
 
 		// Element references
 		this.elements = {
-			titleArea: null,
+			lengthCost: null,
 			statLine: null,
 			tooltips: null,
 		};
@@ -60,7 +60,7 @@ class LengthUI {
 			await sleep(100);
 		}
 
-		this.elements.titleArea = this.createTitleAreaElements();
+		this.elements.lengthCost = this.createLengthCostElements();
 		this.elements.statLine = this.createStatLineElements();
 		this.elements.tooltips = this.createTooltips();
 		this.attachTooltips();
@@ -88,11 +88,15 @@ class LengthUI {
 
 	// ========== CREATE (pure DOM construction) ==========
 
-	createTitleAreaElements() {
+	createLengthCostElements() {
 		const container = document.createElement('div');
-		container.className = 'text-text-500 text-xs ut-select-none ut-title-stats';
-		container.style.marginTop = '2px';
-		container.style.flexBasis = '100%'; // Force onto its own line
+		container.id = 'ut-chat-length-cost';
+		container.className = 'text-text-500 text-sm ut-select-none ut-title-stats ut-chat-length-cost';
+		container.style.display = 'flex';
+		container.style.flexWrap = 'wrap';
+		container.style.alignItems = 'center';
+		container.style.gap = '0';
+		container.style.rowGap = '4px';
 
 		const length = document.createElement('span');
 		const cost = document.createElement('span');
@@ -103,7 +107,7 @@ class LengthUI {
 
 	createStatLineElements() {
 		const estimate = document.createElement('div');
-		estimate.className = 'text-text-400 text-xs';
+		estimate.className = 'text-text-400 text-sm';
 		estimate.style.cursor = 'help';
 		// No margin-right so it aligns with the send button
 
@@ -131,18 +135,27 @@ class LengthUI {
 	}
 
 	attachTooltips() {
-		setupTooltip(this.elements.titleArea.length, this.elements.tooltips.length);
-		setupTooltip(this.elements.titleArea.cost, this.elements.tooltips.cost);
-		setupTooltip(this.elements.titleArea.cached, this.elements.tooltips.cached);
+		setupTooltip(this.elements.lengthCost.length, this.elements.tooltips.length);
+		setupTooltip(this.elements.lengthCost.cost, this.elements.tooltips.cost);
+		setupTooltip(this.elements.lengthCost.cached, this.elements.tooltips.cached);
 		setupTooltip(this.elements.statLine.estimate, this.elements.tooltips.estimate);
 	}
 
 	// ========== MOUNT (attach to page) ==========
 
-	mountTitleArea() {
-		const anchor = LayoutManager.getAnchor('titleArea');
+	mountLengthCostRow() {
+		const anchor = LayoutManager.getAnchor('chatLengthCost');
 		if (!anchor) return false;
-		return mountToAnchor(this.elements.titleArea.container, anchor);
+		const el = this.elements.lengthCost.container;
+		el.removeAttribute('style');
+		el.style.display = 'flex';
+		el.style.alignItems = 'center';
+		el.style.gap = '0';
+		const ok = mountToAnchor(el, anchor);
+		const narrowHeaderStrip = el.classList.contains('ut-chat-length-cost--before-share');
+		el.style.flexWrap = narrowHeaderStrip ? 'nowrap' : 'wrap';
+		el.style.rowGap = narrowHeaderStrip ? '' : '4px';
+		return ok;
 	}
 
 	mountStatLine() {
@@ -177,13 +190,13 @@ class LengthUI {
 
 	renderCostAndLength() {
 		const { conversationData, currentModel, currentModelVersion } = this.state;
-		const { length, cost, cached, container } = this.elements.titleArea;
+		const { length, cost, cached } = this.elements.lengthCost;
 
 		if (!conversationData) {
 			length.innerHTML = 'Length: <span>N/A</span> tokens';
 			cost.innerHTML = '';
 			cached.innerHTML = '';
-			this.renderTitleContainer();
+			this.renderLengthCostContainer();
 			return;
 		}
 
@@ -239,11 +252,11 @@ class LengthUI {
 			cached.innerHTML = '';
 		}
 
-		this.renderTitleContainer();
+		this.renderLengthCostContainer();
 	}
 
-	renderTitleContainer() {
-		const { length, cost, cached, container } = this.elements.titleArea;
+	renderLengthCostContainer() {
+		const { length, cost, cached, container } = this.elements.lengthCost;
 		container.innerHTML = '';
 
 		let elements;
@@ -253,13 +266,12 @@ class LengthUI {
 			elements = [length, cost, cached].filter(el => el.innerHTML);
 		}
 
-		const separator = ' | ';
-
 		elements.forEach((element, index) => {
 			container.appendChild(element);
 			if (index < elements.length - 1) {
 				const sep = document.createElement('span');
-				sep.innerHTML = separator;
+				sep.className = 'ut-metrics-separator';
+				sep.textContent = '|';
 				container.appendChild(sep);
 			}
 		});
@@ -274,12 +286,12 @@ class LengthUI {
 
 		if (diff <= 0) {
 			this.state.cachedUntilTimestamp = null;
-			this.elements.titleArea.cached.innerHTML = '';
-			this.renderTitleContainer();
+			this.elements.lengthCost.cached.innerHTML = '';
+			this.renderLengthCostContainer();
 			return true; // Cache expired
 		}
 
-		const timeSpan = this.elements.titleArea.cached.querySelector('.ut-cached-time');
+		const timeSpan = this.elements.lengthCost.cached.querySelector('.ut-cached-time');
 		if (timeSpan) {
 			const minutes = Math.ceil(diff / (1000 * 60));
 			timeSpan.textContent = `${minutes}m`;
@@ -390,7 +402,7 @@ class LengthUI {
 						conversationId: this.state.conversationData.conversationId
 					});
 				}
-				this.mountTitleArea();
+				this.mountLengthCostRow();
 				this.mountStatLine();
 			}
 

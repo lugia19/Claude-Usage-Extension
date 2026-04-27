@@ -50,13 +50,11 @@
 				"default-config.json",
 				"lib/browser-polyfill.min.js",
 				"lib/o200k_base.js",
-				"kofi-button.png",
 				"debug.html",
 				"update_patchnotes.txt",
 				"tracker-styles.css",
 				"injections/rate-limit-watcher.js",
 				"injections/webrequest-polyfill.js",
-				"qol-badge.png",
 				"rate-badge.png"
 			],
 			"matches": [

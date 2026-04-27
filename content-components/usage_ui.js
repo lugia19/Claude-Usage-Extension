@@ -23,11 +23,16 @@ class UsageSection {
 
 	createLimitBar(limitKey) {
 		const row = document.createElement('div');
-		row.className = 'ut-limit-row ut-mb-2';
+		row.className = 'ut-limit-row';
 
 		const topLine = document.createElement('div');
-		topLine.className = 'text-text-000 ut-row ut-justify-between ut-mb-1 ut-select-none';
+		topLine.className = 'text-text-000 ut-row ut-justify-between ut-limit-label-row ut-select-none';
 		topLine.style.whiteSpace = 'nowrap';
+		// Session + weekly-type rows: space below label before track
+		if (limitKey === 'session' || limitKey === 'weekly' ||
+			limitKey === 'sonnetWeekly' || limitKey === 'opusWeekly') {
+			topLine.classList.add('pb-1');
+		}
 
 		const leftSide = document.createElement('div');
 		leftSide.className = 'ut-row';
@@ -52,6 +57,9 @@ class UsageSection {
 		topLine.appendChild(resetTime);
 
 		const progressBar = new ProgressBar();
+		if (limitKey === 'session') {
+			progressBar.container.classList.add('pb-2');
+		}
 
 		row.appendChild(topLine);
 		row.appendChild(progressBar.container);
@@ -232,7 +240,7 @@ class UsageUI {
 		}
 
 		this.usageSection = new UsageSection();
-		this.elements.sidebar = await this.createSidebarElements();
+		this.elements.sidebar = this.createSidebarElements();
 		this.elements.chat = this.createChatElements();
 		this.elements.tooltips = this.createTooltips();
 		this.attachTooltips();
@@ -254,9 +262,9 @@ class UsageUI {
 
 	// ========== CREATE (pure DOM construction) ==========
 
-	async createSidebarElements() {
+	createSidebarElements() {
 		const container = document.createElement('div');
-		container.className = 'flex flex-col mb-6';
+		container.className = 'flex flex-col mb-2';
 
 		const header = this.createHeader();
 		const content = document.createElement('div');
@@ -267,21 +275,6 @@ class UsageUI {
 		sectionsContainer.className = '-mx-1.5 flex flex-1 flex-col px-1.5 gap-px';
 		sectionsContainer.appendChild(this.usageSection.elements.container);
 		content.appendChild(sectionsContainer);
-
-		// Add footers
-		const isElectron = await sendBackgroundMessage({ type: 'isElectron' });
-		if (!isElectron) {
-			const desktopFooter = this.createDesktopFooter();
-			content.appendChild(desktopFooter);
-
-			const qolFooter = this.createQoLFooter();
-			if (qolFooter) {
-				content.appendChild(qolFooter);
-			}
-		}
-
-		const donateFooter = this.createDonateFooter();
-		content.appendChild(donateFooter);
 
 		container.appendChild(header);
 		container.appendChild(content);
@@ -321,54 +314,6 @@ class UsageUI {
 		return header;
 	}
 
-	createDesktopFooter() {
-		const footer = document.createElement('div');
-		footer.className = 'ut-desktop-footer ut-sidebar-footer mt-1';
-
-		const link = document.createElement('a');
-		link.href = 'https://github.com/lugia19/claude-webext-patcher';
-		link.target = '_blank';
-		link.className = 'ut-link hover:text-text-200';
-		link.style.color = BLUE_HIGHLIGHT;
-		link.textContent = '💻 Desktop version available';
-
-		footer.appendChild(link);
-		return footer;
-	}
-
-	createQoLFooter() {
-		const footer = document.createElement('div');
-		footer.className = 'ut-desktop-footer ut-sidebar-footer mt-1 ut-qol-footer';
-
-		const isChrome = !!window.chrome && (!!window.chrome.webstore || !!window.chrome.runtime);
-		const link = document.createElement('a');
-		link.href = isChrome
-			? 'https://chromewebstore.google.com/detail/claude-qol/dkdnancajokhfclpjpplkhlkbhaeejob'
-			: 'https://addons.mozilla.org/en-US/firefox/addon/claude-qol/';
-		link.target = '_blank';
-		link.className = 'ut-link hover:text-text-200';
-		link.style.color = BLUE_HIGHLIGHT;
-		link.textContent = '⚡ Check out the Claude QoL extension';
-
-		footer.appendChild(link);
-		return footer;
-	}
-
-	createDonateFooter() {
-		const footer = document.createElement('div');
-		footer.className = 'ut-desktop-footer ut-sidebar-footer mt-1';
-
-		const link = document.createElement('a');
-		link.href = 'https://ko-fi.com/lugia19';
-		link.target = '_blank';
-		link.className = 'ut-link';
-		link.style.cssText = 'background: #2c84db; color: white; padding: 2px 6px; border-radius: 4px; display: inline-block;';
-		link.textContent = '☕ Support me on ko-fi!';
-
-		footer.appendChild(link);
-		return footer;
-	}
-
 	createChatElements() {
 		// Stat line container
 		const statLine = document.createElement('div');
@@ -382,7 +327,7 @@ class UsageUI {
 		leftContainer.className = 'ut-row ut-flex-1';
 
 		const usageDisplay = document.createElement('div');
-		usageDisplay.className = 'text-text-400 text-xs';
+		usageDisplay.className = 'text-text-400 text-sm';
 		usageDisplay.style.whiteSpace = 'nowrap';
 		if (!isMobileView()) usageDisplay.style.marginRight = '8px';
 		usageDisplay.textContent = 'Session:';
@@ -393,6 +338,7 @@ class UsageUI {
 		let progressBar = null;
 		if (!isMobileView()) {
 			progressBar = new ProgressBar({ width: '100%' });
+			progressBar.container.classList.add('ut-progress--chat');
 			progressBar.track.classList.remove('bg-bg-500');
 			progressBar.track.classList.add('bg-bg-200');
 			leftContainer.appendChild(progressBar.container);
@@ -409,13 +355,13 @@ class UsageUI {
 
 		// Peak hours indicator
 		const peakIndicator = document.createElement('div');
-		peakIndicator.className = 'text-text-400 text-xs';
+		peakIndicator.className = 'text-text-400 text-sm';
 		peakIndicator.style.cssText = `color: ${RED_WARNING}; font-weight: bold; margin-right: 8px; display: none; user-select: none;`;
 		peakIndicator.textContent = 'PEAK';
 
 		// Reset time display
 		const resetDisplay = document.createElement('div');
-		resetDisplay.className = 'text-text-400 text-xs';
+		resetDisplay.className = 'text-text-400 text-sm';
 		if (!isMobileView()) resetDisplay.style.marginRight = '8px';
 
 		rightContainer.appendChild(peakIndicator);
@@ -623,16 +569,6 @@ class UsageUI {
 		}
 	}
 
-	checkQoLInstalled() {
-		const hasQoL = document.documentElement.hasAttribute('data-claude-qol-installed');
-		if (hasQoL) {
-			const qolFooter = this.elements.sidebar?.container?.querySelector('.ut-qol-footer');
-			if (qolFooter) {
-				qolFooter.remove();
-			}
-		}
-	}
-
 	// ========== UPDATE LOOP ==========
 
 	startUpdateLoop() {
@@ -643,7 +579,6 @@ class UsageUI {
 				this.checkExpiredLimits();
 				this.checkModelChange();
 				this.checkPeakHoursChange();
-				this.checkQoLInstalled();
 				this.mountSidebar();
 				this.mountChatArea();
 			}

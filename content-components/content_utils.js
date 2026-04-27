@@ -12,6 +12,7 @@ const SELECTORS = {
 	INIT_LOGIN_SCREEN: 'button[data-testid="login-with-google"]',
 	VERIF_LOGIN_SCREEN: 'input[data-testid="code"]'
 };
+
 // Dynamic debug setting - will be loaded from storage
 let FORCE_DEBUG = true;
 // Load FORCE_DEBUG from storage and set up error handlers
@@ -388,8 +389,6 @@ class ProgressBar {
 			this.marker = document.createElement('div');
 			this.marker.className = 'ut-weekly-marker';
 			this.marker.style.setProperty('--marker-color', RED_WARNING);
-			this.container.style.paddingTop = '10px';
-			this.container.style.marginTop = '-10px';
 			this.container.appendChild(this.marker);
 
 			this.markerTooltip = document.createElement('div');
@@ -397,6 +396,7 @@ class ProgressBar {
 			document.body.appendChild(this.markerTooltip);
 			setupTooltip(this.marker, this.markerTooltip);
 		}
+		this.container.classList.add('ut-progress--with-marker');
 		this.marker.style.left = `${Math.min(percentage, 100)}%`;
 		this.marker.style.display = 'block';
 		if (label) this.markerTooltip.textContent = label;
@@ -405,8 +405,7 @@ class ProgressBar {
 	clearMarker() {
 		if (this.marker) {
 			this.marker.style.display = 'none';
-			this.container.style.paddingTop = '';
-			this.container.style.marginTop = '';
+			this.container.classList.remove('ut-progress--with-marker');
 		}
 	}
 }
@@ -520,42 +519,68 @@ function getChatAreaCoworkHomeAnchor() {
 	};
 }
 
-function getTitleAreaAnchor() {
-	const chatMenu = document.querySelector(SELECTORS.CHAT_MENU);
-	if (!chatMenu) return null;
+/**
+ * Length | Cost immediately before `.right-3` (Share / header actions), so metrics stay left of Share.
+ */
+function getChatTitleBeforeShareAnchor() {
+	const menu = document.querySelector(SELECTORS.CHAT_MENU);
+	if (!menu) return null;
 
-	const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
-	if (!titleLine) return null;
+	const headerBar = menu.closest('.flex.w-full.items-center.justify-between');
+	if (!headerBar) return null;
 
-	const headerRow = titleLine.parentElement;
+	const rightSlot = headerBar.querySelector(':scope > div.right-3.flex')
+		|| headerBar.querySelector(':scope > .right-3.flex');
+	if (!rightSlot) return null;
 
-	if (isMobileView()) {
-		if (!headerRow) return null;
-		headerRow.classList.add('flex-wrap');
+	return {
+		parent: headerBar,
+		referenceNode: rightSlot,
+		styles: {},
+		classes: {
+			add: ['ut-chat-length-cost--before-share'],
+			remove: ['ut-chat-length-cost--composer', 'ut-chat-length-cost--by-chevron'],
+		},
+	};
+}
 
-		const headerPadding = parseFloat(getComputedStyle(headerRow).paddingLeft) || 0;
-		return {
-			parent: headerRow,
-			referenceNode: null,
-			styles: {
-				flexBasis: '100%',
-				marginTop: '-36px',
-				marginLeft: `-${headerPadding}px`,
-				paddingLeft: `${headerPadding + 8}px`,
-			},
-			classes: { add: ['bg-bg-100'], remove: ['!px-2'] },
-		};
-	} else {
-		titleLine.classList.add('flex-wrap');
+/**
+ * Fallback: same header row but no `.right-3` yet — before chat menu (chevron).
+ */
+function getChatTitleBeforeMenuAnchor() {
+	const menu = document.querySelector(SELECTORS.CHAT_MENU);
+	if (!menu?.parentElement) return null;
 
-		const hasProject = !!titleLine.querySelector('a[href^="/project/"]');
-		return {
-			parent: titleLine,
-			referenceNode: null,
-			styles: { flexBasis: '100%' },
-			classes: { toggle: { '!px-2': !hasProject } },
-		};
-	}
+	return {
+		parent: menu.parentElement,
+		referenceNode: menu,
+		styles: {},
+		classes: {
+			add: ['ut-chat-length-cost--by-chevron'],
+			remove: ['ut-chat-length-cost--composer', 'ut-chat-length-cost--before-share'],
+		},
+	};
+}
+
+/** Fallback: full-width row after session stat line when header anchor is unavailable. */
+function getChatLengthCostStatLineFallbackAnchor() {
+	const statLine = document.getElementById('ut-chat-stat-line');
+	if (!statLine) return null;
+
+	return {
+		insertAfter: statLine,
+		styles: {},
+		classes: {
+			add: ['ut-chat-length-cost--composer'],
+			remove: ['ut-chat-length-cost--before-share', 'ut-chat-length-cost--by-chevron'],
+		},
+	};
+}
+
+function getChatLengthCostAnchor() {
+	return getChatTitleBeforeShareAnchor()
+		|| getChatTitleBeforeMenuAnchor()
+		|| getChatLengthCostStatLineFallbackAnchor();
 }
 
 const pageLayouts = {
@@ -565,7 +590,7 @@ const pageLayouts = {
 		anchors: {
 			sidebar: getSidebarDesktopAnchor,
 			chatArea: getChatAreaRegularAnchor,
-			titleArea: getTitleAreaAnchor,
+			chatLengthCost: getChatLengthCostAnchor,
 		},
 	},
 	desktopCoworkHome: {
@@ -588,7 +613,7 @@ const pageLayouts = {
 		anchors: {
 			sidebar: getSidebarRegularAnchor,
 			chatArea: getChatAreaRegularAnchor,
-			titleArea: getTitleAreaAnchor,
+			chatLengthCost: getChatLengthCostAnchor,
 		},
 	},
 	code: {
@@ -633,9 +658,10 @@ const pageLayouts = {
 
 				return {
 					insertAfter: toolbar,
-					styles: { paddingLeft: '8px', paddingRight: '8px', paddingBottom: '4px' },
+					styles: { paddingLeft: '8px', paddingRight: '8px', paddingBottom: '2px' },
 				};
 			},
+			chatLengthCost: getChatLengthCostAnchor,
 		},
 	},
 	home: {
@@ -682,8 +708,8 @@ function mountToAnchor(element, anchor) {
 	}
 
 	if (anchor.styles) Object.assign(element.style, anchor.styles);
-	if (anchor.classes?.add) element.classList.add(...anchor.classes.add);
 	if (anchor.classes?.remove) element.classList.remove(...anchor.classes.remove);
+	if (anchor.classes?.add) element.classList.add(...anchor.classes.add);
 	if (anchor.classes?.toggle) {
 		for (const [cls, force] of Object.entries(anchor.classes.toggle)) {
 			element.classList.toggle(cls, force);

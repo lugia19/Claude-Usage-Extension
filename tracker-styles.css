@@ -20,7 +20,7 @@
 .ut-container {
 	display: flex;
 	flex-direction: column;
-	margin-bottom: 8px;
+	margin-bottom: 4px;
 }
 
 .ut-row {
@@ -88,6 +88,23 @@
 	width: 0%;
 	height: 100%;
 	transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+/* Weekly limit marker arrow (::before top: -8px) — reserve space above track (sidebar bars) */
+.ut-progress.ut-progress--with-marker {
+	padding-top: 8px;
+	margin-bottom: 2px;
+}
+
+/* Composer session bar only — less empty space below before Length | Cost / input */
+.ut-progress.ut-progress--chat.ut-progress--with-marker {
+	padding-top: 6px;
+	margin-bottom: 0;
+}
+
+/* Stack session / weekly / extra rows tightly */
+.ut-bars-container > .ut-limit-row:not(:last-child) {
+	margin-bottom: 4px;
 }
 
 
@@ -219,6 +236,11 @@
 	user-select: text;
 }
 
+/* Label row → progress track */
+.ut-limit-label-row {
+	margin-bottom: 2px;
+}
+
 .ut-weekly-marker {
     position: absolute;
     bottom: 0;
@@ -251,4 +273,49 @@
 .ut-desktop-footer.ut-sidebar-footer {
     text-align: left;
     /*padding: 0 0.5rem 0.5rem 0.5rem;*/
+}
+
+/* Length | Cost — text-sm (14px): readable metadata without competing with the chat title */
+.ut-chat-length-cost.ut-title-stats {
+	max-width: 100%;
+	min-width: 0;
+	line-height: 1.35;
+}
+
+.ut-chat-length-cost .ut-metrics-separator {
+	padding-left: 0.45em;
+	padding-right: 0.45em;
+	flex-shrink: 0;
+}
+
+/*
+ * Before `.right-3` (Share): sits in the gap between title column and actions.
+ * Shrink + horizontal scroll so metrics never overlap Share or other buttons.
+ */
+.ut-chat-length-cost--before-share {
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: min(26rem, 48vw, calc(100% - 9rem));
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: thin;
+	box-sizing: border-box;
+}
+
+/* Fallback: before chat-menu only (no right column yet) */
+.ut-chat-length-cost--by-chevron {
+	flex: 1 1 auto;
+	min-width: 0;
+	max-width: min(28rem, 55vw);
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: thin;
+}
+
+/* Full-width row after stat line when header anchor unavailable */
+.ut-chat-length-cost--composer {
+	width: 100%;
+	max-width: 100%;
+	box-sizing: border-box;
+	padding: 2px 8px 2px 6px;
 }
