@@ -382,6 +382,70 @@ async function requestData(message, sender, orgId) {
 }
 messageRegistry.register(requestData);
 
+async function getPopupUsageData() {
+	const orgMap = new Map(); // orgId -> cookieStoreId
+
+	const storeIds = new Set();
+	try {
+		if (browser.contextualIdentities) {
+			storeIds.add('firefox-default');
+			const containers = await browser.contextualIdentities.query({});
+			for (const c of containers) storeIds.add(c.cookieStoreId);
+		} else {
+			const stores = await browser.cookies.getAllCookieStores();
+			for (const s of stores) storeIds.add(s.id);
+		}
+	} catch (e) {
+		await Log("warn", "Cookie store enumeration failed, falling back to getAllCookieStores:", e);
+		try {
+			const stores = await browser.cookies.getAllCookieStores();
+			for (const s of stores) storeIds.add(s.id);
+		} catch (e2) {
+			await Log("warn", "getAllCookieStores also failed:", e2);
+		}
+	}
+
+	await Log("Checking cookie stores for org IDs:", [...storeIds]);
+	for (const storeId of storeIds) {
+		try {
+			const cookie = await browser.cookies.get({
+				name: 'lastActiveOrg',
+				url: 'https://claude.ai',
+				storeId
+			});
+			if (cookie?.value && !orgMap.has(cookie.value)) {
+				orgMap.set(cookie.value, storeId);
+			}
+		} catch (e) {
+			await Log("warn", `Failed to check cookies for store ${storeId}:`, e);
+		}
+	}
+
+	// Fallback: check stored orgIds if no cookies found
+	if (orgMap.size === 0) {
+		await tokenStorageManager.ensureOrgIds();
+		for (const orgId of tokenStorageManager.orgIds) {
+			orgMap.set(orgId, null);
+		}
+	}
+
+	if (orgMap.size === 0) return [];
+
+	const results = await Promise.allSettled(
+		Array.from(orgMap.entries()).map(async ([orgId, cookieStoreId]) => {
+			const api = new ClaudeAPI(cookieStoreId, orgId);
+			const usageData = await api.getUsageData();
+			const org = await api.getOrgInfo(); // cache hit — getUsageData already fetched it
+			return { orgId, orgName: org?.name || null, cookieStoreId, usageData: usageData.toJSON() };
+		})
+	);
+
+	return results.map(r =>
+		r.status === 'fulfilled' ? r.value : { orgId: r.reason?.orgId, error: String(r.reason) }
+	);
+}
+messageRegistry.register(getPopupUsageData);
+
 async function interceptedRequest(message, sender) {
 	await Log("Got intercepted request, are we in electron?", isElectron);
 	if (!isElectron) return false;

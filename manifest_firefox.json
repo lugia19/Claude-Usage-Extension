@@ -38,6 +38,7 @@
 		"webRequest",
 		"webRequestBlocking",
 		"cookies",
+		"contextualIdentities",
 		"tabs",
 		"contextMenus",
 		"notifications"

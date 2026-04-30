@@ -145,53 +145,45 @@ class ClaudeAPI {
 		return totalTokens;
 	}
 
-	async getSubscriptionTier(skipCache = false) {
+	async getOrgInfo(skipCache = false) {
 		try {
-			let subscriptionTier = await subscriptionTiersCache.get(this.orgId);
-			if (subscriptionTier && !skipCache) return subscriptionTier;
+			const cached = await subscriptionTiersCache.get(this.orgId);
+			if (cached && !skipCache && typeof cached === 'object' && cached.capabilities) return cached;
 			const appStartData = await this.getRequest(`/bootstrap/${this.orgId}/app_start?statsig_hashing_algorithm=djb2`);
 			const memberships = appStartData.account?.memberships || [];
 			const org = memberships.find(membership => membership.organization.uuid === this.orgId)?.organization;
-			// Tiers are... really weird now. I'm using a combination of many indicators to try and determine the right one.
 
-			const hasMaxCapability = org.capabilities.includes("claude_max");
-			const hasProCapability = org.capabilities.includes("claude_pro");
-			const hasRavenType = !!org.raven_type // Just true if it's non-null, Raven = Claude Team
-			const rateLimitTier = org?.rate_limit_tier || "default_claude_ai";
-			// default_claude_ai is free AND pro, because of course it's weird
-			// default_claude_max_5x is max 5x
-			// default_claude_max_20x is max 20x (I think, but unverified as of now, I will just assume that if it's NOT 5x then it's 20x)
-			console.log("Org capabilities:", org.capabilities);
-
-			if (hasRavenType) {
-				subscriptionTier = "claude_team";
-			} else {
-				if (hasMaxCapability) {
-					if (rateLimitTier.includes("5x")) {
-						subscriptionTier = "claude_max_5x";
-					} else {
-						subscriptionTier = "claude_max_20x";
-					}
-				} else if (hasProCapability) {
-					subscriptionTier = "claude_pro";
-				} else if (rateLimitTier === "default_claude_ai") {
-					subscriptionTier = "claude_free";
-				}
-			}
-
-
-			if (!subscriptionTier) {
-				subscriptionTier = "claude_free";
-			}
-
-			await Log("Fetched subscription tier:", subscriptionTier);
-			await subscriptionTiersCache.set(this.orgId, subscriptionTier, 24 * 60 * 60 * 1000);
-			return subscriptionTier;
+			await Log("Fetched org info for:", this.orgId, org?.name);
+			await subscriptionTiersCache.set(this.orgId, org, 24 * 60 * 60 * 1000);
+			return org;
 		} catch (error) {
-			await Log("error", "Failed to fetch subscription tier, defaulting to free:", error);
-			return "claude_free";
+			await Log("error", "Failed to fetch org info:", error);
+			return null;
 		}
+	}
 
+	async getSubscriptionTier(skipCache = false) {
+		const org = await this.getOrgInfo(skipCache);
+		if (!org) return "claude_free";
+
+		// Tiers are... really weird now. I'm using a combination of many indicators to try and determine the right one.
+		const hasMaxCapability = org.capabilities.includes("claude_max");
+		const hasProCapability = org.capabilities.includes("claude_pro");
+		const hasRavenType = !!org.raven_type // Just true if it's non-null, Raven = Claude Team
+		const rateLimitTier = org?.rate_limit_tier || "default_claude_ai";
+		// default_claude_ai is free AND pro, because of course it's weird
+		// default_claude_max_5x is max 5x
+		// default_claude_max_20x is max 20x (I think, but unverified as of now, I will just assume that if it's NOT 5x then it's 20x)
+		console.log("Org capabilities:", org.capabilities);
+
+		if (hasRavenType) return "claude_team";
+
+		if (hasMaxCapability) {
+			return rateLimitTier.includes("5x") ? "claude_max_5x" : "claude_max_20x";
+		}
+		if (hasProCapability) return "claude_pro";
+
+		return "claude_free";
 	}
 }
 

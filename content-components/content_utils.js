@@ -196,8 +196,7 @@ async function getCurrentModelVersion(maxWait = 3000) {
 }
 
 function isMobileView() {
-	// Check if height > width (portrait orientation)
-	return window.innerHeight > window.innerWidth;
+	return matchMedia('(pointer: coarse)').matches && window.innerWidth < 768;
 }
 
 function isCodePage() {
