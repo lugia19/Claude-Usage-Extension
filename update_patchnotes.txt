@@ -1,2 +1,3 @@
-Fix for firefox containers in multi-account scenarios
-Tweak peak hours that I'm pretty sure I got wrong due to timezone differences...
+Fix new tabs erroring out
+Added usage information when clicking the extension icon from any page
+Also supports firefox containers for multiple accounts
