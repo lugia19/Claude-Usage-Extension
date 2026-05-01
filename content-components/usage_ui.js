@@ -207,6 +207,7 @@ class UsageUI {
 		this.updateInterval = 1000;
 		this.wasPeakHours = isPeakHours();
 
+
 		this.setupMessageListener();
 		this.init();
 	}
@@ -236,8 +237,6 @@ class UsageUI {
 		this.elements.chat = this.createChatElements();
 		this.elements.tooltips = this.createTooltips();
 		this.attachTooltips();
-
-		this.mountSidebar();
 
 		this.uiReady = true;
 		await Log('UsageUI: Ready');
@@ -330,7 +329,7 @@ class UsageUI {
 		link.target = '_blank';
 		link.className = 'ut-link hover:text-text-200';
 		link.style.color = BLUE_HIGHLIGHT;
-		link.textContent = '💻 Desktop version available';
+		link.textContent = '💻 Claude Desktop version available';
 
 		footer.appendChild(link);
 		return footer;
@@ -446,8 +445,8 @@ class UsageUI {
 			d.setUTCHours(utcHour, 0, 0, 0);
 			return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 		};
-		const peakStart = formatLocal(13);
-		const peakEnd = formatLocal(19);
+		const peakStart = formatLocal(12);
+		const peakEnd = formatLocal(18);
 
 		return {
 			usage: create("How much of your 5-hour quota you've used"),
