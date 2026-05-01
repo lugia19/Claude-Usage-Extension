@@ -131,11 +131,10 @@ async function loadUsageData() {
 	try {
 		// Set CONFIG global so UsageData methods work (declared in ui_dataclasses.js)
 		CONFIG = await chrome.runtime.sendMessage({ type: 'getConfig' });
-		console.log('Loaded config in popup:', CONFIG);
 		const results = await chrome.runtime.sendMessage({ type: 'getPopupUsageData' });
 
 		if (!results || results.length === 0) {
-			container.innerHTML = '<div class="popup-empty">No usage data found. Open claude.ai first.</div>';
+			container.innerHTML = '<div class="popup-empty">No usage data found. Open claude.ai first (and authorize the extension if necessary).</div>';
 			return;
 		}
 

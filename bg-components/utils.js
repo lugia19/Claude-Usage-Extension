@@ -94,7 +94,6 @@ function fillEstimatedCaps(caps) {
 }
 
 CONFIG.ESTIMATED_CAPS = fillEstimatedCaps(CONFIG.ESTIMATED_CAPS);
-console.log("Final estimated caps:", CONFIG.ESTIMATED_CAPS);
 
 const isElectron = chrome.action === undefined || navigator.userAgent.includes("Electron");
 const FORCE_DEBUG = true; // Set to true to force debug mode
