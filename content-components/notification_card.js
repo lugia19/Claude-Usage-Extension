@@ -590,7 +590,6 @@ class FloatingCardsUI {
 		}
 
 		const last = storage.lastDonationMilestone;
-		console.log("Last donation milestone:", last, "Total tokens:", totalTokens);
 
 		let next;
 		if (last < DONATION_1M) next = DONATION_1M;
