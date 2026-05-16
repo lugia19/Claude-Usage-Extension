@@ -403,7 +403,7 @@ class LengthUI {
 		const newConversation = getConversationId();
 		const isHomePage = newConversation === null;
 
-		if (this.state.conversationData?.conversationId !== newConversation && !isHomePage) {
+		if (this.state.conversationData?.conversationId != newConversation && !isHomePage) {
 			await Log('LengthUI: Conversation changed, requesting data');
 			sendBackgroundMessage({
 				type: 'requestData',
