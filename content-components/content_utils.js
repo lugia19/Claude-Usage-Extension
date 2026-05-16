@@ -708,6 +708,16 @@ async function initExtension() {
 	CONFIG = await sendBackgroundMessage({ type: 'getConfig' });
 	await Log("Config received...");
 
+	// Incognito conversations never have the standard sidebar structure.
+    // Skip the 6-second wait to avoid a spurious warning and wasted polling.
+    if (new URLSearchParams(window.location.search).has('incognito')) {
+        await Log('Incognito mode: skipping sidebar anchor wait');
+        sendBackgroundMessage({ type: 'requestData' });
+        sendBackgroundMessage({ type: 'initOrg' });
+        await Log('Initialization complete. Ready to track tokens.');
+        return;
+    }
+
 	// Wait for page to be ready (sidebar anchor available = logged in and DOM loaded)
 	const LOGIN_CHECK_DELAY = 10000;
 	while (true) {
