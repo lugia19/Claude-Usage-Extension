@@ -124,7 +124,19 @@ async function logError(error) {
 // Utility functions
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+function isIncognitoConversation() {
+	return new URLSearchParams(window.location.search).has('incognito');
+}
+
 function getConversationId() {
+	if (isIncognitoConversation()) {
+		try {
+			const data = JSON.parse(sessionStorage.getItem('incognito_temporary_conversation_uuid'));
+			return data?.uuid || null;
+		} catch {
+			return null;
+		}
+	}
 	const match = window.location.pathname.match(/\/chat\/([^/?]+)/);
 	return match ? match[1] : null;
 }
@@ -583,7 +595,7 @@ const pageLayouts = {
 	},
 	// Web layouts
 	chat: {
-		match() { return !isCodePage() && !!getConversationId(); },
+		match() { return !isCodePage() && !isIncognitoConversation() && !!getConversationId(); },
 		anchors: {
 			sidebar: getSidebarRegularAnchor,
 			chatArea: getChatAreaRegularAnchor,
@@ -633,6 +645,27 @@ const pageLayouts = {
 				return {
 					insertAfter: toolbar,
 					styles: { paddingLeft: '8px', paddingRight: '8px', paddingBottom: '4px' },
+				};
+			},
+		},
+	},
+	incognitoConversation: {
+		// Incognito conversations have no convID in the URL and a special sessionStorage key for it instead, but otherwise behave like regular chats.
+		match() { return isIncognitoConversation(); },
+		anchors: {
+			sidebar: getSidebarRegularAnchor,
+			chatArea: getChatAreaRegularAnchor,
+			titleArea() {
+				const incognitoHeader = document.querySelector('.z-header .text-sm.select-none');
+				if (!incognitoHeader || incognitoHeader.textContent.trim() !== 'Incognito chat') return null;
+
+				const headerRow = incognitoHeader.parentElement;
+				headerRow.classList.add('flex-wrap');
+
+				return {
+					parent: headerRow,
+					referenceNode: null,
+					styles: { flexBasis: '100%', paddingLeft: '8px', marginTop: '12px' },
 				};
 			},
 		},
