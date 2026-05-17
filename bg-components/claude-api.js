@@ -397,107 +397,160 @@ class ConversationAPI {
 
 	async getCachingInfo(isNewMessage) {
 		const conversationData = await this.getData(true);
-		// Build message map and find latest assistants
+		const now = Date.now();
+		const cache_lifetime = CONFIG.TOKEN_CACHING_DURATION_MS;
+		const rootId = "00000000-0000-4000-8000-000000000000";
+
+		// Step 1: Build messageMap and childrenMap
 		const messageMap = new Map();
-		let latestAssistant = null;
-		let secondLatestAssistant = null;
+		const childrenMap = new Map(); // parentUuid → [child messages]
 
 		for (const rawMessage of conversationData.chat_messages) {
 			messageMap.set(rawMessage.uuid, rawMessage);
-
-			if (rawMessage.sender === "assistant") {
-				if (!latestAssistant || rawMessage.created_at > latestAssistant.created_at) {
-					secondLatestAssistant = latestAssistant;
-					latestAssistant = rawMessage;
-				} else if (!secondLatestAssistant || rawMessage.created_at > secondLatestAssistant.created_at) {
-					secondLatestAssistant = rawMessage;
+			if (rawMessage.parent_message_uuid) {
+				if (!childrenMap.has(rawMessage.parent_message_uuid)) {
+					childrenMap.set(rawMessage.parent_message_uuid, []);
 				}
+				childrenMap.get(rawMessage.parent_message_uuid).push(rawMessage);
 			}
 		}
 
-		// Reconstruct trunk
+		// Step 2: Reconstruct trunk (same as existing)
 		const currentTrunkIds = new Set();
-		let humanMessagesCount = 0;
-		let assistantMessagesCount = 0;
 		let currentId = conversationData.current_leaf_message_uuid;
-		const rootId = "00000000-0000-4000-8000-000000000000";
-
 		const tempTrunk = [];
+
 		while (currentId && currentId !== rootId) {
 			const rawMessage = messageMap.get(currentId);
+			if (!rawMessage) break;
 			tempTrunk.push(rawMessage);
 			currentTrunkIds.add(rawMessage.uuid);
-
-			if (rawMessage.sender === "human") humanMessagesCount++;
-			else if (rawMessage.sender === "assistant") assistantMessagesCount++;
-
 			currentId = rawMessage.parent_message_uuid;
 		}
 		const currentTrunk = tempTrunk.reverse();
 
-		// Validation
-		if (!currentTrunk || currentTrunk.length == 0) {
+		// Build index for O(1) trunk position lookups
+		const trunkIndexMap = new Map();
+		for (let i = 0; i < currentTrunk.length; i++) {
+			trunkIndexMap.set(currentTrunk[i].uuid, i);
+		}
+
+		if (!currentTrunk || currentTrunk.length === 0) {
 			return null;
 		}
 
-		// Cache determination
-		// The cache boundary (where cached content ends) is always the second latest
-		// assistant message, because the latest assistant message was output, not input -
-		// it won't be part of the cached prefix until the next request.
-		// The cache age, however, depends on whether we're mid-request or at rest:
-		// - At rest: the cache was written when the latest response was generated
-		// - New message: the currently warm cache was written by the previous response
-		const cacheBoundary = secondLatestAssistant;
-		const cacheAgeReference = isNewMessage ? secondLatestAssistant : latestAssistant;
+		await Log("CacheV2: Trunk has", currentTrunk.length, "messages");
 
-		let cacheEndId = null;
-		let conversationIsCached = false;
-		const cache_lifetime = CONFIG.TOKEN_CACHING_DURATION_MS;
-
-		if (!cacheBoundary) {
-			conversationIsCached = false;
-			await Log("No second latest assistant message - cache has no boundary");
-		} else if (!cacheAgeReference) {
-			conversationIsCached = false;
-			await Log("No cache age reference available - cache is cold");
-		} else {
-			const messageAge = Date.now() - Date.parse(cacheAgeReference.created_at);
-			if (messageAge >= cache_lifetime) {
-				conversationIsCached = false;
-				await Log("Cache has expired based on age reference");
-			} else {
-				if (currentTrunkIds.has(cacheBoundary.uuid)) {
-					conversationIsCached = true;
-					cacheEndId = cacheBoundary.uuid;
-					await Log("Cache boundary in current trunk - cache available up to:", cacheEndId);
-				} else {
-					// Find common ancestor
-					let currentId = cacheBoundary.uuid;
-					while (currentId && currentId !== rootId) {
-						if (currentTrunkIds.has(currentId)) {
-							conversationIsCached = true;
-							cacheEndId = currentId;
-							await Log(`Cache ends at common ancestor: ${cacheEndId}`);
-							break;
-						}
-						const rawMessage = messageMap.get(currentId);
-						currentId = rawMessage?.parent_message_uuid;
-					}
-
-					if (!conversationIsCached) {
-						await Log("No common ancestor found - cache is cold");
-					}
-				}
+		// Step 3: Collect recent off-trunk assistant leaves
+		// Only leaves (no children) — one per branch tip, avoids duplicates
+		const recentOffTrunkLeaves = [];
+		for (const rawMessage of conversationData.chat_messages) {
+			if (rawMessage.sender === "assistant" &&
+				!currentTrunkIds.has(rawMessage.uuid) &&
+				(now - Date.parse(rawMessage.created_at)) < cache_lifetime &&
+				!childrenMap.has(rawMessage.uuid)) {
+				recentOffTrunkLeaves.push(rawMessage);
 			}
 		}
 
-		// Calculate cache expiration
+		await Log("CacheV2: Found", recentOffTrunkLeaves.length, "recent off-trunk assistant leaves");
+
+		// Step 4: Fast path — check if the latest trunk activity keeps the cache alive
+		// If the most recent assistant on trunk is <1h from now, the latest user message has an active anchor.
+		const trunkAssistants = currentTrunk.filter(m => m.sender === "assistant");
+		const trunkHumans = currentTrunk.filter(m => m.sender === "human");
+		// isNewMessage means the latest human IS the trunk leaf and just sent a message.
+		// Its anchor can't cache itself (only benefits future messages), so exclude it.
+		if (isNewMessage) trunkHumans.pop();
+
+		let cacheEndId = null;
+		let conversationIsCached = false;
 		let conversationIsCachedUntil = null;
-		if (!latestAssistant) {
-			await Log("No latest assistant message found - assuming cache expires in lifetime");
-			conversationIsCachedUntil = Date.now() + cache_lifetime;
-		} else {
-			conversationIsCachedUntil = new Date(latestAssistant?.created_at).getTime() + cache_lifetime;
+
+		if (trunkAssistants.length > 0 && trunkHumans.length > 0) {
+			const lastAssistant = trunkAssistants[trunkAssistants.length - 1];
+			const lastAssistantTime = Date.parse(lastAssistant.created_at);
+
+			if ((now - lastAssistantTime) < cache_lifetime) {
+				// Cache is active — latest candidate human is the boundary
+				const latestHuman = trunkHumans[trunkHumans.length - 1];
+				cacheEndId = latestHuman.uuid;
+				conversationIsCached = true;
+
+				// Find the most recent assistant child of this human (could be off-trunk regen)
+				const children = childrenMap.get(latestHuman.uuid) || [];
+				let latestChildTime = lastAssistantTime;
+				for (const child of children) {
+					if (child.sender === "assistant") {
+						const childTime = Date.parse(child.created_at);
+						if (childTime > latestChildTime) latestChildTime = childTime;
+					}
+				}
+				conversationIsCachedUntil = latestChildTime + cache_lifetime;
+
+				await Log("CacheV2: Fast path — cache active, boundary at",
+					cacheEndId.substring(0, 8), ", expires at", new Date(conversationIsCachedUntil).toISOString());
+			}
+		}
+
+		// Step 5: Slow path — check off-trunk leaves for active anchors
+		// For each recent off-trunk leaf, walk back to the trunk.
+		// Verify the chain (assistant-to-assistant gaps <1h).
+		// The trunk user message at the junction has an active anchor if chain is valid.
+		// We want the LATEST such trunk human.
+		if (!conversationIsCached && recentOffTrunkLeaves.length > 0) {
+			await Log("CacheV2: Slow path — checking", recentOffTrunkLeaves.length, "off-trunk leaves");
+
+			let latestTrunkIdx = -1; // index in currentTrunk of the best candidate
+
+			for (const leaf of recentOffTrunkLeaves) {
+				// Walk backwards from leaf to trunk, collecting assistants along the way
+				const assistantsInPath = [leaf];
+				let walkId = leaf.parent_message_uuid;
+
+				while (walkId && walkId !== rootId && !currentTrunkIds.has(walkId)) {
+					const msg = messageMap.get(walkId);
+					if (!msg) break;
+					if (msg.sender === "assistant") assistantsInPath.unshift(msg);
+					walkId = msg.parent_message_uuid;
+				}
+
+				if (!walkId || !currentTrunkIds.has(walkId)) continue;
+
+				// Verify chain: no >1h gaps between consecutive assistants
+				let chainValid = true;
+				for (let i = 1; i < assistantsInPath.length; i++) {
+					const gap = Date.parse(assistantsInPath[i].created_at) - Date.parse(assistantsInPath[i - 1].created_at);
+					if (gap >= cache_lifetime) {
+						chainValid = false;
+						break;
+					}
+				}
+				if (!chainValid) continue;
+
+				// Find the trunk user message at the junction
+				const trunkAncestor = messageMap.get(walkId);
+				const anchorHuman = trunkAncestor.sender === "human" ? trunkAncestor :
+					messageMap.get(trunkAncestor.parent_message_uuid);
+
+				if (!anchorHuman || !trunkHumans.some(h => h.uuid === anchorHuman.uuid)) continue;
+
+				const trunkIdx = trunkIndexMap.get(anchorHuman.uuid);
+				const leafTime = Date.parse(leaf.created_at);
+				const leafExpiresAt = leafTime + cache_lifetime;
+
+				if (trunkIdx > latestTrunkIdx ||
+					(trunkIdx === latestTrunkIdx && leafExpiresAt > conversationIsCachedUntil)) {
+					latestTrunkIdx = trunkIdx;
+					cacheEndId = anchorHuman.uuid;
+					conversationIsCached = true;
+					conversationIsCachedUntil = leafExpiresAt;
+
+					await Log("CacheV2: Slow path — active anchor at",
+						anchorHuman.uuid.substring(0, 8), "via leaf",
+						leaf.uuid.substring(0, 8), "(", Math.round((now - leafTime) / 60000), "min ago)");
+				}
+			}
 		}
 
 		return {
