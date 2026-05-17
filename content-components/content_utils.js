@@ -564,7 +564,8 @@ function getTitleAreaAnchor() {
 			parent: titleLine,
 			referenceNode: null,
 			styles: { flexBasis: '100%' },
-			classes: { toggle: { '!px-2': !hasProject } },
+			classes: {}
+			//classes: { toggle: { '!px-2': !hasProject } },
 		};
 	}
 }
