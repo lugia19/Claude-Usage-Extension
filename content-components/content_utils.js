@@ -514,23 +514,6 @@ function getChatAreaRegularAnchor() {
 	};
 }
 
-function getChatAreaCoworkHomeAnchor() {
-	// Model selector is in a separate bottom bar, so find the toolbar via chat input
-	const chatInput = document.querySelector('[data-testid="chat-input"]');
-	if (!chatInput) return null;
-
-	const inputContainer = chatInput.closest('.flex.flex-col.gap-3');
-	if (!inputContainer) return null;
-
-	const toolbarRow = inputContainer.querySelector('.flex.w-full.items-center');
-	if (!toolbarRow) return null;
-
-	return {
-		insertAfter: toolbarRow,
-		styles: { paddingLeft: '6px', paddingRight: '', paddingBottom: '' },
-	};
-}
-
 function getTitleAreaAnchor() {
 	const chatMenu = document.querySelector(SELECTORS.CHAT_MENU);
 	if (!chatMenu) return null;
@@ -577,14 +560,62 @@ const pageLayouts = {
 		anchors: {
 			sidebar: getSidebarDesktopAnchor,
 			chatArea: getChatAreaRegularAnchor,
-			titleArea: getTitleAreaAnchor,
+			titleArea() {
+				const chatMenu = document.querySelector(SELECTORS.CHAT_MENU);
+				if (!chatMenu) return null;
+
+				const titleLine = chatMenu.closest('.font-base-bold');
+				if (!titleLine) return null;
+
+				const headerRow = titleLine.parentElement;
+
+				if (isMobileView()) {
+					if (!headerRow) return null;
+					headerRow.classList.add('flex-wrap');
+					const headerPadding = parseFloat(getComputedStyle(headerRow).paddingLeft) || 0;
+					return {
+						parent: headerRow,
+						referenceNode: null,
+						styles: {
+							flexBasis: '100%',
+							marginTop: '-36px',
+							marginLeft: `-${headerPadding}px`,
+							paddingLeft: `${headerPadding + 8}px`,
+						},
+						classes: { add: ['bg-bg-100'], remove: ['!px-2'] },
+					};
+				} else {
+					titleLine.classList.add('flex-wrap');
+					const hasProject = !!titleLine.querySelector('a[href^="/project/"]');
+					return {
+						parent: titleLine,
+						referenceNode: null,
+						styles: { flexBasis: '100%' },
+						classes: {},
+					};
+				}
+			},
 		},
 	},
 	desktopCoworkHome: {
 		match() { return !!document.querySelector('aside.dframe-sidebar') && window.location.pathname === '/task/new'; },
 		anchors: {
 			sidebar: getSidebarDesktopAnchor,
-			chatArea: getChatAreaCoworkHomeAnchor,
+			chatArea() {
+				const chatInput = document.querySelector('[data-testid="chat-input"]');
+				if (!chatInput) return null;
+
+				const inputContainer = chatInput.closest('.flex.flex-col.gap-3');
+				if (!inputContainer) return null;
+
+				const toolbarRow = inputContainer.querySelector('.flex.w-full.items-center');
+				if (!toolbarRow) return null;
+
+				return {
+					insertAfter: toolbarRow,
+					styles: { paddingLeft: '6px', paddingRight: '', paddingBottom: '' },
+				};
+			},
 		},
 	},
 	desktopHome: {
