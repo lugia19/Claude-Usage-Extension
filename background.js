@@ -788,6 +788,41 @@ async function onCompletedHandler(details) {
 		processNextTask();
 	}
 
+	// Branch switch — debounce, then invalidate cache and fetch fresh data
+	if (details.url.includes("/current_leaf_message_uuid")) {
+		const urlParts = details.url.split('/');
+		const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1];
+
+		if (branchSwitchTimers.has(conversationId)) {
+			clearTimeout(branchSwitchTimers.get(conversationId));
+		}
+
+		branchSwitchTimers.set(conversationId, setTimeout(() => {
+			branchSwitchTimers.delete(conversationId);
+			pendingTasks.push(async () => {
+				const orgId = urlParts[urlParts.indexOf('organizations') + 1];
+
+				await conversationCache.delete(conversationId);
+				await Log("Branch switch detected — fetching fresh data for:", conversationId);
+
+				const api = new ClaudeAPI(details.cookieStoreId, orgId);
+				const conversation = await api.getConversation(conversationId);
+				const conversationData = await conversation.getInfo(false);
+				const profileTokens = await api.getProfileTokens();
+
+				if (conversationData) {
+					conversationData.length += profileTokens;
+					conversationData.cost += profileTokens * CONFIG.CACHING_MULTIPLIER;
+					conversationData.uncachedCost += profileTokens * CONFIG.CACHING_MULTIPLIER;
+
+					await conversationCache.set(conversationId, conversationData.toJSON(), CONVERSATION_CACHE_TTL);
+					await updateTabWithConversationData(details.tabId, conversationData);
+				}
+			});
+			processNextTask();
+		}, 5000));
+	}
+
 	// Claude Code session events — refresh usage
 	if (details.url.includes("/v1/sessions/") && details.url.includes("/events")) {
 		pendingTasks.push(async () => {
@@ -853,6 +888,7 @@ pendingRequests = new StoredMap("pendingRequests"); // conversationId -> {userId
 scheduledNotifications = new StoredMap('scheduledNotifications');
 const conversationCache = new StoredMap("conversationCache");	// This is for convo stats
 const CONVERSATION_CACHE_TTL = 60 * 60 * 1000; // 60 minutes
+const branchSwitchTimers = new Map(); // conversationId → timeoutId (debounce)
 
 // Set up repeating alarm for reset notification polling (every 3 minutes)
 getAlarm('checkResetNotifications').then(existing => {
