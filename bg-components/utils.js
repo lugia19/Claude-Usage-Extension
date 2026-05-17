@@ -33,7 +33,7 @@ const CONFIG = {
 	"BASE_SYSTEM_PROMPT_LENGTH": 3200,
 	"CACHING_MULTIPLIER": 0, // Seems to be free.
 	"EXTRA_USAGE_CACHING_MULTIPLIER": 0.1, // Cache reads cost 10% of input during extra usage
-	"TOKEN_CACHING_DURATION_MS": 5 * 60 * 1000, // 5 minutes
+	"TOKEN_CACHING_DURATION_MS": 60 * 60 * 1000, // 1 hour
 	"ESTIMATED_CAPS": {
 		// I have no idea. This is very napkin math.
 		"claude_free": {
@@ -45,9 +45,9 @@ const CONFIG = {
 
 		// V5.2 will do telemetry to refine these values
 		"claude_max_5x": {
-			"session": 7.5 * 10 ** 6,
-			"weekly": 75 * 10 ** 6,	// 10 sessions
-			"sonnetWeekly": 45 * 10 ** 6 // Same as weekly but compensated for sonnet
+			"session": 15 * 10 ** 6,
+			"weekly": 150 * 10 ** 6,	// 10 sessions
+			"sonnetWeekly": 90 * 10 ** 6 // Same as weekly but compensated for sonnet
 		},
 		"claude_max_20x": {}
 	}
