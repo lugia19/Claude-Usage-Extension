@@ -1,3 +1,4 @@
+Support incognito chats
 Change caching algorithm to match what's actually in use (long story, will do a blogpost on this at some point...)
 Update conversation stats when switching between branches
 Tweak limit numbers following the compute deal
