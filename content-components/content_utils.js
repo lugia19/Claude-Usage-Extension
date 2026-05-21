@@ -203,8 +203,10 @@ async function getCurrentModelVersion(maxWait = 3000) {
 	const modelSelector = await waitForElement(document, SELECTORS.MODEL_PICKER, maxWait);
 	if (!modelSelector) return CONFIG.DEFAULT_MODEL_VERSION;
 	const text = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim();
-	if (!text) return CONFIG.DEFAULT_MODEL_VERSION;
-	return CONFIG.MODEL_VERSION_MAP[text.toLowerCase()] || CONFIG.DEFAULT_MODEL_VERSION;
+    if (!text) return CONFIG.DEFAULT_MODEL_VERSION;
+    const normalizedText = text.toLowerCase();
+    const matchedModel = Object.keys(CONFIG.MODEL_VERSION_MAP).find(key => normalizedText.startsWith(key));
+	return matchedModel ? CONFIG.MODEL_VERSION_MAP[matchedModel] : CONFIG.DEFAULT_MODEL_VERSION;
 }
 
 function isMobileView() {
