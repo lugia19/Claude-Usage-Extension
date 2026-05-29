@@ -1,1 +1,1 @@
-Fix model detection (fixes caching indicator breaking sometimes)
+Fix cache tracking for Opus 4.8
