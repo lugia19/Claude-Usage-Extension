@@ -7,7 +7,7 @@ const SUCCESS_GREEN = "#22c55e";
 
 const SELECTORS = {
 	MODEL_PICKER: '[data-testid="model-selector-dropdown"]',
-	CHAT_MENU: '[data-testid="chat-menu-trigger"]',
+	CHAT_MENU: '[data-testid="chat-title-split"]',
 	MODEL_SELECTOR: '[data-testid="model-selector-dropdown"]',
 	INIT_LOGIN_SCREEN: 'button[data-testid="login-with-google"]',
 	VERIF_LOGIN_SCREEN: 'input[data-testid="code"]'
@@ -517,10 +517,10 @@ function getChatAreaRegularAnchor() {
 }
 
 function getTitleAreaAnchor() {
-	const chatMenu = document.querySelector(SELECTORS.CHAT_MENU);
-	if (!chatMenu) return null;
+	const chatTitle = document.querySelector(SELECTORS.CHAT_MENU);
+	if (!chatTitle) return null;
 
-	const titleLine = chatMenu.closest('.flex.min-w-0.flex-1');
+	const titleLine = chatTitle.closest('.flex-1') || chatTitle.parentElement;
 	if (!titleLine) return null;
 
 	const headerRow = titleLine.parentElement;
@@ -544,13 +544,11 @@ function getTitleAreaAnchor() {
 	} else {
 		titleLine.classList.add('flex-wrap');
 
-		const hasProject = !!titleLine.querySelector('a[href^="/project/"]');
 		return {
 			parent: titleLine,
 			referenceNode: null,
-			styles: { flexBasis: '100%' },
+			styles: { flexBasis: '100%', paddingLeft: '6px' },
 			classes: {}
-			//classes: { toggle: { '!px-2': !hasProject } },
 		};
 	}
 }
@@ -563,10 +561,10 @@ const pageLayouts = {
 			sidebar: getSidebarDesktopAnchor,
 			chatArea: getChatAreaRegularAnchor,
 			titleArea() {
-				const chatMenu = document.querySelector(SELECTORS.CHAT_MENU);
-				if (!chatMenu) return null;
+				const chatTitle = document.querySelector(SELECTORS.CHAT_MENU);
+				if (!chatTitle) return null;
 
-				const titleLine = chatMenu.closest('.font-base-bold');
+				const titleLine = chatTitle.closest('.flex-1') || chatTitle.parentElement;
 				if (!titleLine) return null;
 
 				const headerRow = titleLine.parentElement;
@@ -588,11 +586,11 @@ const pageLayouts = {
 					};
 				} else {
 					titleLine.classList.add('flex-wrap');
-					const hasProject = !!titleLine.querySelector('a[href^="/project/"]');
+
 					return {
 						parent: titleLine,
 						referenceNode: null,
-						styles: { flexBasis: '100%' },
+						styles: { flexBasis: '100%', paddingLeft: '6px' },
 						classes: {},
 					};
 				}
