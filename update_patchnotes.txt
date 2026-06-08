@@ -1,1 +1,1 @@
-Fix cache tracking for Opus 4.8
+Desktop client length display + debug page fixes
