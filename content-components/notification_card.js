@@ -11,7 +11,7 @@ function openDebugOverlay() {
 
 	const overlay = document.createElement('div');
 	overlay.id = 'ut-debug-overlay';
-	overlay.style.cssText = 'position:;inset:0;z-index:99999;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;';
+	overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;';
 
 	const closeBtn = document.createElement('button');
 	closeBtn.textContent = '\u00D7';
