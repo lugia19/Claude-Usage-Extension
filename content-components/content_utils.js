@@ -564,7 +564,7 @@ const pageLayouts = {
 				const chatTitle = document.querySelector(SELECTORS.CHAT_MENU);
 				if (!chatTitle) return null;
 
-				const titleLine = chatTitle.closest('.flex-1') || chatTitle.parentElement;
+				const titleLine = chatTitle.closest('.font-base-bold') || chatTitle.parentElement;
 				if (!titleLine) return null;
 
 				const headerRow = titleLine.parentElement;
