@@ -1,1 +1,2 @@
-Desktop client length display + debug page fixes
+Added Fable support
+Fixed desktop client length display and debug page
