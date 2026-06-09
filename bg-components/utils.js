@@ -2,11 +2,13 @@
 const CONFIG = {
 	"OUTPUT_TOKEN_MULTIPLIER": 4,
 	"MODELS": [
+		"Fable",
 		"Opus",
 		"Sonnet",
 		"Haiku"
 	],
 	"MODEL_WEIGHTS": {
+		"Fable": 10,
 		"Opus": 5,
 		"Sonnet": 3,
 		"Haiku": 1
@@ -14,6 +16,7 @@ const CONFIG = {
 	"DEFAULT_MODEL": "Opus",
 	"MODEL_VERSION_MAP": {
 		// DOM labels (lowercased) → API model IDs
+		"fable 5": "claude-fable-5",
 		"opus 4.8": "claude-opus-4-8",
 		"opus 4.7": "claude-opus-4-7",
 		"sonnet 4.6": "claude-sonnet-4-6",
