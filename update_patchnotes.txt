@@ -1,2 +1,1 @@
-Added Fable support
-Fixed desktop client length display and debug page
+Localize extension based on the UI language
