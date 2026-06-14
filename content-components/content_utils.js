@@ -1,3 +1,4 @@
+/* global localize, fmtNum, normalizeLocale, setLocaleOverride */
 'use strict';
 
 // Constants
@@ -246,11 +247,29 @@ async function setupRequestInterception(patterns) {
 }
 
 
+// Pin the active UI locale and persist it as lastLang so the popup and background (which have
+// no claude.ai DOM) can localize too. Normally fetched from /api/account_profile at boot. But
+// right after a language change, the background pins the authoritative value (from the PUT body)
+// with a short TTL — within that window we trust it and skip the GET, because the GET can briefly
+// lag behind the change. Falls back to the stored value, then English.
+async function applyLocale() {
+	const stored = await browser.storage.local.get(['lastLang', 'lastLangPinnedUntil']);
+	let norm;
+	if (stored.lastLangPinnedUntil && Date.now() < stored.lastLangPinnedUntil) {
+		norm = normalizeLocale(stored.lastLang || 'en');
+	} else {
+		const acc = await sendBackgroundMessage({ type: 'getAccountLocale' });
+		norm = normalizeLocale(acc || stored.lastLang || 'en');
+	}
+	setLocaleOverride(norm);
+	await browser.storage.local.set({ lastLang: norm });
+}
+
 function getResetTimeHTML(timeInfo) {
-	const prefix = 'Reset in: ';
+	const prefix = localize('reset.prefix');
 
 	if (!timeInfo || !timeInfo.timestamp || timeInfo.expired) {
-		return `${prefix}<span>Not set</span>`;
+		return `${prefix} <span>${localize('reset.not_set')}</span>`;
 	}
 
 	const now = Date.now();
@@ -260,15 +279,15 @@ function getResetTimeHTML(timeInfo) {
 	const totalMinutes = Math.round(diff / (1000 * 60));
 
 	if (totalMinutes === 0) {
-		return `${prefix}<span style="color: ${BLUE_HIGHLIGHT}"><1m</span>`;
+		return `${prefix} <span style="color: ${BLUE_HIGHLIGHT}">${localize('reset.under_1m')}</span>`;
 	}
 
 	const hours = Math.floor(totalMinutes / 60);
 	const minutes = totalMinutes % 60;
 
-	const timeString = hours > 0 ? `${hours}h ${minutes}m` : `${totalMinutes}m`;
+	const timeString = hours > 0 ? localize('time.hm', { h: hours, m: minutes }) : localize('time.m', { m: totalMinutes });
 
-	return `${prefix}<span style="color: ${BLUE_HIGHLIGHT}">${timeString}</span>`;
+	return `${prefix} <span style="color: ${BLUE_HIGHLIGHT}">${timeString}</span>`;
 }
 
 function setupTooltip(element, tooltip, options = {}) {
@@ -393,7 +412,7 @@ class ProgressBar {
 		const percentage = (total / maxTokens) * 100;
 		this.bar.style.width = `${Math.min(percentage, 100)}%`;
 		this.bar.style.background = total >= maxTokens * CONFIG.WARNING.PERCENT_THRESHOLD ? RED_WARNING : BLUE_HIGHLIGHT;
-		this.tooltip.textContent = `${total.toLocaleString()} / ${maxTokens.toLocaleString()} credits (${percentage.toFixed(1)}%)`;
+		this.tooltip.textContent = localize('usage.bar_credits', { used: fmtNum(total), total: fmtNum(maxTokens), pct: percentage.toFixed(1) });
 	}
 
 	setMarker(percentage, label) {
@@ -770,7 +789,13 @@ async function initExtension() {
 	if (oldStyles) oldStyles.remove();
 
 	await injectStyles();
-	CONFIG = await sendBackgroundMessage({ type: 'getConfig' });
+
+	// Resolve the account UI language and pin it BEFORE assigning CONFIG. UI scripts gate their
+	// construction on CONFIG, so pinning the locale first means every static string (sidebar
+	// header, tooltips) is built in the right language.
+	const cfg = await sendBackgroundMessage({ type: 'getConfig' });
+	await applyLocale();
+	CONFIG = cfg;
 	await Log("Config received...");
 
 	// Incognito conversations never have the standard sidebar structure.

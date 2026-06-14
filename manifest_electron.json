@@ -21,6 +21,7 @@
 			"js": [
 				"lib/browser-polyfill.min.js",
 				"lib/o200k_base.js",
+				"content-components/localization.js",
 				"content-components/content_utils.js",
 				"content-components/electron_reciever.js",
 				"content-components/ui_dataclasses.js",

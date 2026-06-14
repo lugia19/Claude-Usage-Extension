@@ -1,4 +1,4 @@
-/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN */
+/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, localize */
 'use strict';
 
 const DONATION_1M = 1000000;
@@ -229,7 +229,7 @@ class ButtonNotificationCard extends FloatingCard {
 		link.target = '_blank';
 		link.className = 'ut-link';
 		link.style.color = BLUE_HIGHLIGHT;
-		link.textContent = 'Get the desktop version →';
+		link.textContent = localize('card.desktop_cta');
 
 		footer.appendChild(link);
 		this.element.appendChild(footer);
@@ -250,11 +250,11 @@ class VersionNotificationCard extends ButtonNotificationCard {
 	build() {
 		const dragHandle = document.createElement('div');
 		dragHandle.className = 'border-b border-border-400 ut-header';
-		dragHandle.textContent = 'Usage Tracker';
+		dragHandle.textContent = localize('card.title');
 
 		const message = document.createElement('div');
 		message.className = 'ut-mb-2';
-		message.textContent = `Updated from v${this.previousVersion} to v${this.currentVersion}!`;
+		message.textContent = localize('card.updated', { a: this.previousVersion, b: this.currentVersion });
 
 		this.element.appendChild(dragHandle);
 		this.element.appendChild(message);
@@ -265,7 +265,7 @@ class VersionNotificationCard extends ButtonNotificationCard {
 			patchContainer.style.maxHeight = '150px';
 
 			const patchTitle = document.createElement('div');
-			patchTitle.textContent = "What's New:";
+			patchTitle.textContent = localize('card.whats_new');
 			patchTitle.style.fontWeight = 'bold';
 			patchTitle.className = 'ut-mb-1';
 			patchContainer.appendChild(patchTitle);
@@ -292,7 +292,7 @@ class VersionNotificationCard extends ButtonNotificationCard {
 		patchNotesLink.target = '_blank';
 		patchNotesLink.className = 'ut-link ut-block ut-mb-2';
 		patchNotesLink.style.color = BLUE_HIGHLIGHT;
-		patchNotesLink.textContent = 'View full release notes';
+		patchNotesLink.textContent = localize('card.release_notes');
 		this.element.appendChild(patchNotesLink);
 
 		this.addKofiButton();
@@ -315,16 +315,16 @@ class DonationNotificationCard extends ButtonNotificationCard {
 	build() {
 		const dragHandle = document.createElement('div');
 		dragHandle.className = 'border-b border-border-400 ut-header';
-		dragHandle.textContent = 'Usage Tracker';
+		dragHandle.textContent = localize('card.title');
 
 		const message = document.createElement('div');
 		message.className = 'ut-mb-2';
-		message.textContent = `You've tracked over ${this.tokenMillions}M tokens!`;
+		message.textContent = localize('card.donation_milestone', { n: this.tokenMillions });
 
 		const supportMessage = document.createElement('div');
 		supportMessage.className = 'ut-mb-2';
 		supportMessage.style.fontWeight = 'bold';
-		supportMessage.textContent = 'Consider supporting continued development';
+		supportMessage.textContent = localize('card.donation_support');
 
 		this.element.appendChild(dragHandle);
 		this.element.appendChild(message);
@@ -348,16 +348,16 @@ class RateNotificationCard extends ButtonNotificationCard {
 	build() {
 		const dragHandle = document.createElement('div');
 		dragHandle.className = 'border-b border-border-400 ut-header';
-		dragHandle.textContent = 'Usage Tracker';
+		dragHandle.textContent = localize('card.title');
 
 		const message = document.createElement('div');
 		message.className = 'ut-mb-2';
-		message.textContent = 'Enjoying the Usage Tracker?';
+		message.textContent = localize('card.rate_enjoying');
 
 		const supportMessage = document.createElement('div');
 		supportMessage.className = 'ut-mb-2';
 		supportMessage.style.fontWeight = 'bold';
-		supportMessage.textContent = 'Consider leaving a rating!';
+		supportMessage.textContent = localize('card.rate_consider');
 
 		this.element.appendChild(dragHandle);
 		this.element.appendChild(message);
@@ -387,12 +387,12 @@ class SettingsCard extends FloatingCard {
 	async build() {
 		const dragHandle = document.createElement('div');
 		dragHandle.className = 'border-b border-border-400 ut-header text-sm';
-		dragHandle.textContent = 'Settings';
+		dragHandle.textContent = localize('card.settings_title');
 		this.element.appendChild(dragHandle);
 
 		const label = document.createElement('label');
 		label.className = 'ut-label text-sm';
-		label.textContent = 'API Key (more accurate):';
+		label.textContent = localize('card.api_key_label');
 
 		const input = document.createElement('input');
 		input.type = 'password';
@@ -401,7 +401,7 @@ class SettingsCard extends FloatingCard {
 		if (apiKey) input.value = apiKey
 
 		const saveButton = document.createElement('button');
-		saveButton.textContent = 'Save';
+		saveButton.textContent = localize('card.save');
 		saveButton.className = 'ut-button text-sm';
 		saveButton.style.background = BLUE_HIGHLIGHT;
 		saveButton.style.color = 'white';
@@ -411,7 +411,7 @@ class SettingsCard extends FloatingCard {
 		buttonContainer.className = 'ut-row';
 
 		const debugButton = document.createElement('button');
-		debugButton.textContent = 'Debug Logs';
+		debugButton.textContent = localize('common.debug_logs');
 		debugButton.className = 'bg-bg-300 border border-border-400 text-text-400 ut-button text-sm';
 
 		// Event listeners
@@ -431,8 +431,8 @@ class SettingsCard extends FloatingCard {
 				errorMsg.className = 'text-sm';
 				errorMsg.style.color = RED_WARNING;
 				errorMsg.textContent = input.value.startsWith('sk-ant')
-					? 'Inactive API key. Have you ever loaded credits to the account?'
-					: 'Invalid API key. Format looks wrong, it should start with sk-ant.';
+					? localize('card.api_key_inactive')
+					: localize('card.api_key_invalid');
 				input.after(errorMsg);
 				setTimeout(() => errorMsg.remove(), 3000);
 				return;
@@ -458,7 +458,7 @@ class SettingsCard extends FloatingCard {
 		const toggleLabel = document.createElement('label');
 		toggleLabel.htmlFor = 'ut-reset-notif-toggle';
 		toggleLabel.className = 'text-sm';
-		toggleLabel.innerHTML = 'Usage reset notifications';
+		toggleLabel.textContent = localize('card.reset_notif_toggle');
 
 		toggleContainer.appendChild(checkbox);
 		toggleContainer.appendChild(toggleLabel);

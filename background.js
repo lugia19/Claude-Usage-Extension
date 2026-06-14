@@ -4,6 +4,7 @@ import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addCont
 import { tokenStorageManager, tokenCounter } from './bg-components/tokenManagement.js';
 import { ClaudeAPI, ConversationAPI } from './bg-components/claude-api.js';
 import { UsageData } from './shared/dataclasses.js';
+import { translate, normalizeLocale } from './shared/localization.js';
 import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
 
 const INTERCEPT_PATTERNS = {
@@ -11,28 +12,33 @@ const INTERCEPT_PATTERNS = {
 		urls: [
 			"*://claude.ai/api/organizations/*/completion",
 			"*://claude.ai/api/organizations/*/retry_completion",
-			"*://claude.ai/api/settings/billing*"
+			"*://claude.ai/api/settings/billing*",
+			"*://claude.ai/api/account_profile"
 		],
 		regexes: [
 			"^https?://claude\\.ai/api/organizations/[^/]*/chat_conversations/[^/]*/completion$",
 			"^https?://claude\\.ai/api/organizations/[^/]*/chat_conversations/[^/]*/retry_completion$",
-			"^https?://claude\\.ai/api/settings/billing"
+			"^https?://claude\\.ai/api/settings/billing",
+			"^https?://claude\\.ai/api/account_profile$"
 		]
 	},
 	onCompleted: {
 		urls: [
 			"*://claude.ai/api/organizations/*/chat_conversations/*",
-			"*://claude.ai/v1/sessions/*/events"
+			"*://claude.ai/v1/sessions/*/events",
+			"*://claude.ai/api/account_profile"
 		],
 		regexes: [
 			"^https?://claude\\.ai/api/organizations/[^/]*/chat_conversations/[^/]*$",
-			"^https?://claude\\.ai/v1/sessions/[^/]*/events$"
+			"^https?://claude\\.ai/v1/sessions/[^/]*/events$",
+			"^https?://claude\\.ai/api/account_profile$"
 		]
 	}
 };
 
 //#region Variable declarations
 let processingLock = null;  // Unix timestamp or null
+const pendingLocaleReloads = new Map();  // tabId -> normalized new locale (set in onBeforeRequest, consumed in onCompleted)
 const pendingTasks = [];
 const LOCK_TIMEOUT = 30000;  // 30 seconds - if a task takes longer, something's wrong
 let pendingRequests;
@@ -167,11 +173,13 @@ async function checkResetNotifications() {
 
 	if (shouldNotify) {
 		try {
+			const stored = await browser.storage.local.get('lastLang');
+			const loc = normalizeLocale(stored.lastLang || 'en');
 			await createNotification({
 				type: 'basic',
 				iconUrl: browser.runtime.getURL('icon128.png'),
-				title: 'Claude Usage Reset',
-				message: 'Your Claude usage limit has been reset!'
+				title: translate(loc, 'bg.reset_title'),
+				message: translate(loc, 'bg.reset_message')
 			});
 			await Log("Reset notification sent");
 		} catch (error) {
@@ -294,6 +302,14 @@ async function updateTabWithConversationData(tabId, conversationData) {
 
 // Simple handlers with inline functions
 messageRegistry.register('getConfig', () => CONFIG);
+messageRegistry.register('getAccountLocale', async (message, sender) => {
+	try {
+		return await new ClaudeAPI(sender.tab?.cookieStoreId, null).getAccountLocale();
+	} catch (error) {
+		await Log("warn", "Failed to fetch account locale:", error);
+		return null;
+	}
+});
 messageRegistry.register('initOrg', (message, sender, orgId) => tokenStorageManager.addOrgId(orgId).then(() => true));
 
 messageRegistry.register('getAPIKey', () => getStorageValue('apiKey'));
@@ -756,6 +772,23 @@ async function onBeforeRequestHandler(details) {
 		});
 	}
 
+	if (details.method === "PUT" && details.url.includes("/account_profile")) {
+		// Read the new UI language straight from the request body — the authoritative value the
+		// user just submitted, with no server-propagation lag (a GET right after the PUT can
+		// briefly still return the old locale). Pin it so the post-reload boot trusts it.
+		const body = await parseRequestBody(details.requestBody);
+		const bodyLocale = body?.locale;
+		if (bodyLocale) {
+			const newLoc = normalizeLocale(bodyLocale);
+			const stored = await browser.storage.local.get('lastLang');
+			if (normalizeLocale(stored.lastLang || 'en') !== newLoc) {
+				await browser.storage.local.set({ lastLang: newLoc, lastLangPinnedUntil: Date.now() + 30000 });
+				pendingLocaleReloads.set(details.tabId, newLoc);
+				await Log("Account language change detected in PUT body:", newLoc);
+			}
+		}
+	}
+
 	if (details.method === "GET" && details.url.includes("/settings/billing")) {
 		await Log("Hit the billing page, let's make sure we get the updated subscription tier in case it was changed...")
 		const orgId = await requestActiveOrgId(details.tabId);
@@ -766,6 +799,16 @@ async function onBeforeRequestHandler(details) {
 }
 
 async function onCompletedHandler(details) {
+	// The language-change PUT has completed (locale was captured from its body in
+	// onBeforeRequest). Reload the originating tab so the whole UI re-renders in the new locale.
+	if (details.method === "PUT" && details.url.includes("/account_profile") &&
+		pendingLocaleReloads.has(details.tabId)) {
+		const loc = pendingLocaleReloads.get(details.tabId);
+		pendingLocaleReloads.delete(details.tabId);
+		await Log("Account language changed to", loc, "- reloading tab");
+		await browser.tabs.reload(details.tabId);
+	}
+
 	if (details.method === "GET" &&
 		details.url.includes("/chat_conversations/") &&
 		details.url.includes("tree=True") &&

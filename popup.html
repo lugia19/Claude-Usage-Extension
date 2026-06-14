@@ -105,12 +105,13 @@
 	<div id="usage-container">
 		<div class="popup-loading">Loading usage data...</div>
 	</div>
-	<p>If you clicked here because you can't find the usage stats, try reloading the page or authorizing the extension to run on claude.ai &mdash; the usage stats are injected directly into the page.</p>
+	<p id="popup-help">If you clicked here because you can't find the usage stats, try reloading the page or authorizing the extension to run on claude.ai &mdash; the usage stats are injected directly into the page.</p>
 	<div class="button-container">
 		<button id="debug">Debug Logs</button>
 		<button id="donate">Donate</button>
 	</div>
 	<script src="lib/browser-polyfill.min.js"></script>
+	<script src="content-components/localization.js"></script>
 	<script src="content-components/ui_dataclasses.js"></script>
 	<script src="popup.js"></script>
 </body>

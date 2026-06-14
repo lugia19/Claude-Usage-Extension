@@ -2,22 +2,34 @@ const fs = require('fs');
 const path = require('path');
 
 const rootDir = path.join(__dirname, '..');
-const sourceFile = path.join(rootDir, 'shared', 'dataclasses.js');
-const outputFile = path.join(rootDir, 'content-components', 'ui_dataclasses.js');
 
-// Read source file
-const source = fs.readFileSync(sourceFile, 'utf8');
+// Shared ES6 modules that need a content-script (plain globals) twin generated.
+// Each entry: { src, out, pragma } — same regex transform for all of them.
+const targets = [
+	{
+		src: path.join('shared', 'dataclasses.js'),
+		out: path.join('content-components', 'ui_dataclasses.js'),
+		pragma: '/* global CONFIG */'
+	},
+	{
+		src: path.join('shared', 'localization.js'),
+		out: path.join('content-components', 'localization.js'),
+		pragma: '/* Generated from shared/localization.js by scripts/build-dataclasses.js — do not edit. */'
+	}
+];
 
-// Transform ES6 module → content script globals
-const contentVersion = source
-	// Remove import statements
-	.replace(/^import\s+.*?;\s*\n/gm, '')
-	// Remove export keywords
-	.replace(/^export\s+/gm, '')
-	// Add global pragma and 'use strict' at top
-	.replace(/^/, '/* global CONFIG */\n\'use strict\';\n\n');
+for (const { src, out, pragma } of targets) {
+	const source = fs.readFileSync(path.join(rootDir, src), 'utf8');
 
-// Write output file
-fs.writeFileSync(outputFile, contentVersion);
+	// Transform ES6 module → content script globals
+	const contentVersion = source
+		// Remove import statements
+		.replace(/^import\s+.*?;\s*\n/gm, '')
+		// Remove export keywords
+		.replace(/^export\s+/gm, '')
+		// Add global pragma and 'use strict' at top
+		.replace(/^/, `${pragma}\n'use strict';\n\n`);
 
-console.log('Generated content-components/ui_dataclasses.js');
+	fs.writeFileSync(path.join(rootDir, out), contentVersion);
+	console.log(`Generated ${out.split(path.sep).join('/')}`);
+}

@@ -1,4 +1,4 @@
-/* global UsageData, isPeakHours */
+/* global UsageData, isPeakHours, localize, setLocaleOverride */
 'use strict';
 let CONFIG;
 const BLUE_HIGHLIGHT = '#2c84db';
@@ -6,12 +6,15 @@ const RED_WARNING = '#de2929';
 const SUCCESS_GREEN = '#22c55e';
 const WARNING_THRESHOLD = 0.9;
 
-const LIMIT_LABELS = {
-	session: 'Session (5h):',
-	weekly: 'Weekly:',
-	sonnetWeekly: 'Sonnet Weekly:',
-	opusWeekly: 'Opus Weekly:',
-	extraUsage: 'Extra Usage:'
+// The popup's own document has no lang attribute, so localize() is pinned (via
+// setLocaleOverride) to the last page language persisted to storage by the content script.
+
+const LIMIT_LABEL_KEYS = {
+	session: 'usage.label_session',
+	weekly: 'usage.label_weekly',
+	sonnetWeekly: 'usage.label_sonnet_weekly',
+	opusWeekly: 'usage.label_opus_weekly',
+	extraUsage: 'usage.label_extra'
 };
 
 function createProgressBar(percentage) {
@@ -34,7 +37,7 @@ function createProgressBar(percentage) {
 function formatResetTime(timestamp) {
 	if (!timestamp) return '';
 	const diff = timestamp - Date.now();
-	if (diff <= 0) return `<span style="color: ${SUCCESS_GREEN}">Resetting...</span>`;
+	if (diff <= 0) return `<span style="color: ${SUCCESS_GREEN}">${localize('common.resetting')}</span>`;
 
 	const hours = Math.floor(diff / (1000 * 60 * 60));
 	const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
@@ -42,10 +45,10 @@ function formatResetTime(timestamp) {
 	if (hours >= 24) {
 		const days = Math.floor(hours / 24);
 		const remainingHours = hours % 24;
-		return `${days}d ${remainingHours}h`;
+		return localize('time.dh', { d: days, h: remainingHours });
 	}
-	if (hours === 0) return `${minutes}m`;
-	return `${hours}h ${minutes}m`;
+	if (hours === 0) return localize('time.m', { m: minutes });
+	return localize('time.hm', { h: hours, m: minutes });
 }
 
 function createLimitRow(key, limit) {
@@ -61,7 +64,7 @@ function createLimitRow(key, limit) {
 
 	const title = document.createElement('span');
 	title.style.cssText = 'font-size: 12px; min-width: 95px; display: inline-block;';
-	title.textContent = LIMIT_LABELS[key] || key;
+	title.textContent = LIMIT_LABEL_KEYS[key] ? localize(LIMIT_LABEL_KEYS[key]) : key;
 
 	const percentage = document.createElement('span');
 	percentage.style.cssText = 'font-size: 12px; min-width: 30px;';
@@ -102,7 +105,7 @@ function renderOrgUsage(orgResult, showLabel) {
 	if (activeLimits.length === 0) {
 		const empty = document.createElement('div');
 		empty.className = 'popup-empty';
-		empty.textContent = 'No active limits.';
+		empty.textContent = localize('popup.no_active_limits');
 		wrapper.appendChild(empty);
 		return wrapper;
 	}
@@ -125,8 +128,25 @@ function renderOrgUsage(orgResult, showLabel) {
 	return wrapper;
 }
 
+function applyStaticLocalization() {
+	const loadingEl = document.querySelector('#usage-container .popup-loading');
+	if (loadingEl) loadingEl.textContent = localize('popup.loading');
+	const helpEl = document.getElementById('popup-help');
+	if (helpEl) helpEl.textContent = localize('popup.help');
+	const debugEl = document.getElementById('debug');
+	if (debugEl) debugEl.textContent = localize('common.debug_logs');
+	const donateEl = document.getElementById('donate');
+	if (donateEl) donateEl.textContent = localize('popup.donate');
+}
+
 async function loadUsageData() {
 	const container = document.getElementById('usage-container');
+
+	// Resolve the locale from the last page language seen by the content script, then
+	// localize the static popup chrome.
+	const stored = await browser.storage.local.get('lastLang');
+	setLocaleOverride(stored.lastLang || 'en');
+	applyStaticLocalization();
 
 	try {
 		// Set CONFIG global so UsageData methods work (declared in ui_dataclasses.js)
@@ -134,7 +154,7 @@ async function loadUsageData() {
 		const results = await chrome.runtime.sendMessage({ type: 'getPopupUsageData' });
 
 		if (!results || results.length === 0) {
-			container.innerHTML = '<div class="popup-empty">No usage data found. Open claude.ai first (and authorize the extension if necessary).</div>';
+			container.innerHTML = `<div class="popup-empty">${localize('popup.no_data')}</div>`;
 			return;
 		}
 
@@ -147,7 +167,7 @@ async function loadUsageData() {
 		}
 
 		if (validResults.length === 0) {
-			container.innerHTML = '<div class="popup-error">Failed to load usage data.</div>';
+			container.innerHTML = `<div class="popup-error">${localize('popup.load_failed')}</div>`;
 		}
 
 		// Update reset countdowns every 30 seconds

@@ -1,7 +1,7 @@
 /* global CONFIG, Log, setupTooltip, getResetTimeHTML, sleep, sendBackgroundMessage, getActiveOrgId,
    isMobileView, isCodePage, UsageData, ConversationData, getConversationId, getCurrentModel,
    getCurrentModelVersion, RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS,
-   LayoutManager, mountToAnchor */
+   LayoutManager, mountToAnchor, localize, fmtNum */
 'use strict';
 
 // Length UI actor - handles all conversation-related displays
@@ -123,10 +123,10 @@ class LengthUI {
 		};
 
 		return {
-			length: create('Length of the conversation, in tokens. The longer it is, the faster your limits run out.'),
-			cost: create('Estimated cost of sending another message\nIncludes ephemeral items like thinking.\nCost = length*model mult / caching factor'),
-			cached: create('Follow up messages in this conversation will have a reduced cost'),
-			estimate: create('Number of messages left based on the current cost'),
+			length: create(localize('length.tooltip_length')),
+			cost: create(localize('length.tooltip_cost')),
+			cached: create(localize('length.tooltip_cached')),
+			estimate: create(localize('length.tooltip_estimate')),
 		};
 	}
 
@@ -180,7 +180,7 @@ class LengthUI {
 		const { length, cost, cached, container } = this.elements.titleArea;
 
 		if (!conversationData) {
-			length.innerHTML = 'Length: <span>N/A</span> tokens';
+			length.innerHTML = `${localize('length.label')}: <span>${localize('common.na')}</span> ${localize('common.unit_tokens')}`;
 			cost.innerHTML = '';
 			cached.innerHTML = '';
 			this.renderTitleContainer();
@@ -189,13 +189,13 @@ class LengthUI {
 
 		// Length
 		const lengthColor = conversationData.isLong() ? RED_WARNING : BLUE_HIGHLIGHT;
-		const lengthLabel = conversationData.lengthIsEstimate ? 'Length*' : 'Length';
-		length.innerHTML = `${lengthLabel}: <span style="color: ${lengthColor}">${conversationData.length.toLocaleString()}</span> tokens`;
+		const lengthLabel = conversationData.lengthIsEstimate ? localize('length.label_estimate') : localize('length.label');
+		length.innerHTML = `${lengthLabel}: <span style="color: ${lengthColor}">${fmtNum(conversationData.length)}</span> ${localize('common.unit_tokens')}`;
 
 		// Update length tooltip based on estimate status
-		const baseTooltip = 'Length of the conversation, in tokens. The longer it is, the faster your limits run out.';
+		const baseTooltip = localize('length.tooltip_length');
 		this.elements.tooltips.length.textContent = conversationData.lengthIsEstimate
-			? baseTooltip + '\n\nNOTE: Count may be inaccurate due to enabled features.'
+			? baseTooltip + '\n\n' + localize('length.tooltip_length_note')
 			: baseTooltip;
 
 		// Cost
@@ -224,16 +224,16 @@ class LengthUI {
 			const interpolatedFutureCost = baseFutureCost +
 				CONFIG.EXTRA_USAGE_CACHING_MULTIPLIER * (conversationData.uncachedFutureCost - baseFutureCost);
 			const dollars = Math.round(interpolatedFutureCost * weight) / 1_000_000;
-			cost.innerHTML = `Cost: <span style="color: ${costColor}">$${dollars.toFixed(2)}</span>`;
+			cost.innerHTML = `${localize('length.cost')}: <span style="color: ${costColor}">$${dollars.toFixed(2)}</span>`;
 		} else {
-			cost.innerHTML = `Cost: <span style="color: ${costColor}">${weightedCost.toLocaleString()}</span> credits`;
+			cost.innerHTML = `${localize('length.cost')}: <span style="color: ${costColor}">${fmtNum(weightedCost)}</span> ${localize('common.unit_credits')}`;
 		}
 
 		// Cached
 		if (conversationData.isCurrentlyCached(currentModelVersion)) {
 			this.state.cachedUntilTimestamp = conversationData.conversationIsCachedUntil;
 			const timeInfo = conversationData.getTimeUntilCacheExpires();
-			cached.innerHTML = `Cached for: <span class="ut-cached-time" style="color: ${SUCCESS_GREEN}">${timeInfo.minutes}m</span>`;
+			cached.innerHTML = `${localize('length.cached_prefix')} <span class="ut-cached-time" style="color: ${SUCCESS_GREEN}">${localize('time.m', { m: timeInfo.minutes })}</span>`;
 		} else {
 			this.state.cachedUntilTimestamp = null;
 			cached.innerHTML = '';
@@ -282,7 +282,7 @@ class LengthUI {
 		const timeSpan = this.elements.titleArea.cached.querySelector('.ut-cached-time');
 		if (timeSpan) {
 			const minutes = Math.ceil(diff / (1000 * 60));
-			timeSpan.textContent = `${minutes}m`;
+			timeSpan.textContent = localize('time.m', { m: minutes });
 		}
 
 		return false;
@@ -298,10 +298,10 @@ class LengthUI {
 
 		const { usageData, conversationData, currentModel, currentModelVersion } = this.state;
 
-		const msgPrefix = isMobileView() ? 'Msgs Left: ' : 'Messages left: ';
+		const msgPrefix = isMobileView() ? localize('length.msgs_left_mobile') : localize('length.msgs_left_desktop');
 
 		if (!getConversationId() || !usageData || !conversationData) {
-			estimate.innerHTML = `${msgPrefix}<span>N/A</span>`;
+			estimate.innerHTML = `${msgPrefix} <span>${localize('common.na')}</span>`;
 			return;
 		}
 
@@ -321,7 +321,7 @@ class LengthUI {
 				const messagesLeft = remainingDollars / costPerMessageDollars;
 				const estimateValue = messagesLeft.toFixed(1);
 				const color = parseFloat(estimateValue) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
-				estimate.innerHTML = `${msgPrefix}<span style="color: ${color}">${estimateValue}</span>`;
+				estimate.innerHTML = `${msgPrefix} <span style="color: ${color}">${estimateValue}</span>`;
 				return;
 			}
 		}
@@ -330,11 +330,11 @@ class LengthUI {
 		if (limiting && limiting.messagesLeft > 0) {
 			const estimateValue = limiting.messagesLeft.toFixed(1);
 			const color = parseFloat(estimateValue) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
-			estimate.innerHTML = `${msgPrefix}<span style="color: ${color}">${estimateValue}</span>`;
+			estimate.innerHTML = `${msgPrefix} <span style="color: ${color}">${estimateValue}</span>`;
 			return;
 		}
 
-		estimate.innerHTML = `${msgPrefix}<span>N/A</span>`;
+		estimate.innerHTML = `${msgPrefix} <span>${localize('common.na')}</span>`;
 	}
 
 	// ========== MESSAGE HANDLERS ==========

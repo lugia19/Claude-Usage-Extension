@@ -1,6 +1,7 @@
 /* global CONFIG, Log, ProgressBar, sendBackgroundMessage, getActiveOrgId,
    setupTooltip, getResetTimeHTML, sleep, isMobileView, isCodePage, UsageData, isPeakHours,
-   RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS, LayoutManager, mountToAnchor */
+   RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS, LayoutManager, mountToAnchor,
+   localize, fmtNum, localeForIntl */
 'use strict';
 
 // Usage section with multiple limit bars
@@ -60,14 +61,14 @@ class UsageSection {
 	}
 
 	getLimitLabel(limitKey) {
-		const labels = {
-			session: 'Session (5h):',
-			weekly: 'Weekly:',
-			sonnetWeekly: 'Sonnet Weekly:',
-			opusWeekly: 'Opus Weekly:',
-			extraUsage: 'Extra Usage:'
+		const labelKeys = {
+			session: 'usage.label_session',
+			weekly: 'usage.label_weekly',
+			sonnetWeekly: 'usage.label_sonnet_weekly',
+			opusWeekly: 'usage.label_opus_weekly',
+			extraUsage: 'usage.label_extra'
 		};
-		return labels[limitKey] || limitKey;
+		return labelKeys[limitKey] ? localize(labelKeys[limitKey]) : limitKey;
 	}
 
 	render(usageData) {
@@ -98,9 +99,9 @@ class UsageSection {
 			if (limit.key === 'session' && isPeakHours()) cap = cap / CONFIG.PEAK_SESSION_MULTIPLIER;
 			if (cap) {
 				const used = Math.round((limit.percentage / 100) * cap);
-				progressBar.tooltip.textContent = `${used.toLocaleString()} / ${cap.toLocaleString()} tokens (${limit.percentage.toFixed(0)}%)`;
+				progressBar.tooltip.textContent = localize('usage.tooltip_tokens', { used: fmtNum(used), cap: fmtNum(cap), pct: limit.percentage.toFixed(0) });
 			} else {
-				progressBar.tooltip.textContent = `${limit.percentage.toFixed(0)}% used`;
+				progressBar.tooltip.textContent = localize('usage.tooltip_pct_used', { pct: limit.percentage.toFixed(0) });
 			}
 
 			const color = limit.percentage >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
@@ -131,7 +132,7 @@ class UsageSection {
 
 			const usedDollars = (used / 100).toFixed(2);
 			const totalDollars = (effectiveTotal / 100).toFixed(2);
-			progressBar.tooltip.textContent = `$${usedDollars} / $${totalDollars} used`;
+			progressBar.tooltip.textContent = localize('usage.tooltip_dollars', { used: usedDollars, total: totalDollars });
 
 			const color = pct >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
 			percentage.textContent = `${pct.toFixed(0)}%`;
@@ -152,7 +153,7 @@ class UsageSection {
 	formatResetTime(timestamp) {
 		if (!timestamp) return '';
 		const diff = timestamp - Date.now();
-		if (diff <= 0) return `<span style="color: ${SUCCESS_GREEN}">Resetting...</span>`;
+		if (diff <= 0) return `<span style="color: ${SUCCESS_GREEN}">${localize('common.resetting')}</span>`;
 
 		const hours = Math.floor(diff / (1000 * 60 * 60));
 		const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
@@ -160,12 +161,12 @@ class UsageSection {
 		if (hours >= 24) {
 			const days = Math.floor(hours / 24);
 			const remainingHours = hours % 24;
-			return `⏱ ${days}d ${remainingHours}h`;
+			return `⏱ ${localize('time.dh', { d: days, h: remainingHours })}`;
 		}
 		if (hours === 0) {
-			return `⏱ ${minutes}m`;
+			return `⏱ ${localize('time.m', { m: minutes })}`;
 		}
-		return `⏱ ${hours}h ${minutes}m`;
+		return `⏱ ${localize('time.hm', { h: hours, m: minutes })}`;
 	}
 
 	renderResetTimes(usageData) {
@@ -293,7 +294,7 @@ class UsageUI {
 		header.className = 'ut-row ut-justify-between';
 
 		const title = document.createElement('h3');
-		title.textContent = 'Usage';
+		title.textContent = localize('usage.header');
 		title.className = 'text-text-500 pb-2 mt-1 text-xs select-none pl-2 pr-2';
 
 		const settingsButton = document.createElement('button');
@@ -329,7 +330,7 @@ class UsageUI {
 		link.target = '_blank';
 		link.className = 'ut-link hover:text-text-200';
 		link.style.color = BLUE_HIGHLIGHT;
-		link.textContent = '💻 Claude Desktop version available';
+		link.textContent = '💻 ' + localize('usage.footer_desktop');
 
 		footer.appendChild(link);
 		return footer;
@@ -347,7 +348,7 @@ class UsageUI {
 		link.target = '_blank';
 		link.className = 'ut-link hover:text-text-200';
 		link.style.color = BLUE_HIGHLIGHT;
-		link.textContent = '⚡ Check out the Claude QoL extension';
+		link.textContent = '⚡ ' + localize('usage.footer_qol');
 
 		footer.appendChild(link);
 		return footer;
@@ -362,7 +363,7 @@ class UsageUI {
 		link.target = '_blank';
 		link.className = 'ut-link';
 		link.style.cssText = 'background: #2c84db; color: white; padding: 2px 6px; border-radius: 4px; display: inline-block;';
-		link.textContent = '☕ Support me on ko-fi!';
+		link.textContent = '☕ ' + localize('usage.footer_kofi');
 
 		footer.appendChild(link);
 		return footer;
@@ -384,7 +385,7 @@ class UsageUI {
 		usageDisplay.className = 'text-text-400 text-xs';
 		usageDisplay.style.whiteSpace = 'nowrap';
 		if (!isMobileView()) usageDisplay.style.marginRight = '8px';
-		usageDisplay.textContent = 'Session:';
+		usageDisplay.textContent = localize('usage.session_inline');
 
 		leftContainer.appendChild(usageDisplay);
 
@@ -410,7 +411,7 @@ class UsageUI {
 		const peakIndicator = document.createElement('div');
 		peakIndicator.className = 'text-text-400 text-xs';
 		peakIndicator.style.cssText = `color: ${RED_WARNING}; font-weight: bold; margin-right: 8px; display: none; user-select: none;`;
-		peakIndicator.textContent = 'PEAK';
+		peakIndicator.textContent = localize('usage.peak');
 
 		// Reset time display
 		const resetDisplay = document.createElement('div');
@@ -443,15 +444,15 @@ class UsageUI {
 		const formatLocal = (utcHour) => {
 			const d = new Date();
 			d.setUTCHours(utcHour, 0, 0, 0);
-			return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+			return d.toLocaleTimeString(localeForIntl(), { hour: 'numeric', minute: '2-digit' });
 		};
 		const peakStart = formatLocal(12);
 		const peakEnd = formatLocal(18);
 
 		return {
-			usage: create("How much of your 5-hour quota you've used"),
-			timer: create('When your 5-hour usage will reset'),
-			peak: create(`Session limit reduced during peak times:\n${peakStart} - ${peakEnd}, weekdays`),
+			usage: create(localize('usage.tooltip_usage')),
+			timer: create(localize('usage.tooltip_timer')),
+			peak: create(localize('usage.tooltip_peak', { start: peakStart, end: peakEnd })),
 		};
 	}
 
@@ -506,7 +507,7 @@ class UsageUI {
 			const pct = effectiveTotal > 0 ? (used / effectiveTotal) * 100 : 0;
 
 			const color = pct >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
-			usageDisplay.innerHTML = `Extra: <span style="color: ${color}">${pct.toFixed(0)}%</span>`;
+			usageDisplay.innerHTML = `${localize('usage.extra_inline')} <span style="color: ${color}">${pct.toFixed(0)}%</span>`;
 			peakIndicator.style.display = 'none';
 
 			if (!isMobileView() && progressBar) {
@@ -514,7 +515,7 @@ class UsageUI {
 
 				const usedDollars = (used / 100).toFixed(2);
 				const totalDollars = (effectiveTotal / 100).toFixed(2);
-				progressBar.tooltip.textContent = `$${usedDollars} / $${totalDollars} used`;
+				progressBar.tooltip.textContent = localize('usage.tooltip_dollars', { used: usedDollars, total: totalDollars });
 				progressBar.clearMarker();
 			}
 
@@ -526,7 +527,7 @@ class UsageUI {
 
 		// Normal session display
 		const color = session.percentage >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
-		usageDisplay.innerHTML = `Session: <span style="color: ${color}">${session.percentage.toFixed(0)}%</span>`;
+		usageDisplay.innerHTML = `${localize('usage.session_inline')} <span style="color: ${color}">${session.percentage.toFixed(0)}%</span>`;
 		peakIndicator.style.display = isPeakHours() ? '' : 'none';
 
 		// Progress bar (desktop only)
@@ -538,9 +539,9 @@ class UsageUI {
 			if (isPeakHours()) cap = cap / CONFIG.PEAK_SESSION_MULTIPLIER;
 			if (cap) {
 				const used = Math.round((session.percentage / 100) * cap);
-				progressBar.tooltip.textContent = `${used.toLocaleString()} / ${cap.toLocaleString()} tokens (${session.percentage.toFixed(0)}%)`;
+				progressBar.tooltip.textContent = localize('usage.tooltip_tokens', { used: fmtNum(used), cap: fmtNum(cap), pct: session.percentage.toFixed(0) });
 			} else {
-				progressBar.tooltip.textContent = `${session.percentage.toFixed(0)}% used`;
+				progressBar.tooltip.textContent = localize('usage.tooltip_pct_used', { pct: session.percentage.toFixed(0) });
 			}
 
 			// Add weekly marker (filter by current model)
@@ -548,8 +549,9 @@ class UsageUI {
 			const modelName = modelSelector?.textContent?.trim() || null;
 			const weeklyLimit = usageData.getBindingWeeklyLimit(modelName);
 			if (weeklyLimit) {
-				const markerLabels = { weekly: 'All Models (Weekly)', sonnetWeekly: 'Sonnet (Weekly)', opusWeekly: 'Opus (Weekly)' };
-				const markerLabel = `${markerLabels[weeklyLimit.key] || 'Weekly'}: ${weeklyLimit.percentage.toFixed(0)}%`;
+				const markerKeys = { weekly: 'usage.marker_all', sonnetWeekly: 'usage.marker_sonnet', opusWeekly: 'usage.marker_opus' };
+				const markerName = markerKeys[weeklyLimit.key] ? localize(markerKeys[weeklyLimit.key]) : localize('usage.marker_fallback');
+				const markerLabel = `${markerName}: ${weeklyLimit.percentage.toFixed(0)}%`;
 				progressBar.setMarker(weeklyLimit.percentage, markerLabel);
 			} else {
 				progressBar.clearMarker();

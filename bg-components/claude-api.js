@@ -135,6 +135,12 @@ class ClaudeAPI {
 		}
 	}
 
+	// Account UI language, e.g. "fr-FR" (null if unavailable)
+	async getAccountLocale() {
+		const profileData = await this.getRequest('/account_profile');
+		return profileData?.locale || null;
+	}
+
 	async getProfileTokens() {
 		const profileData = await this.getRequest('/account_profile');
 		let totalTokens = 0;
