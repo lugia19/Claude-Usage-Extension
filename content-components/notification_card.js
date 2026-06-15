@@ -1,8 +1,23 @@
-/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, localize */
+/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, localize, SUPPORTED_LOCALES */
 'use strict';
 
 const DONATION_1M = 1000000;
 const DONATION_10M = 10000000;
+
+// Native language display names for the settings override dropdown. These are intentionally NOT
+// translated — each language is shown in its own script so users recognize their own language.
+const LANGUAGE_NATIVE_NAMES = {
+	en: 'English',
+	fr: 'Français',
+	de: 'Deutsch',
+	hi: 'हिन्दी',
+	id: 'Bahasa Indonesia',
+	it: 'Italiano',
+	ja: '日本語',
+	ko: '한국어',
+	'pt-BR': 'Português (Brasil)',
+	es: 'Español',
+};
 
 function openDebugOverlay() {
 	// Remove existing overlay if present
@@ -463,12 +478,53 @@ class SettingsCard extends FloatingCard {
 		toggleContainer.appendChild(checkbox);
 		toggleContainer.appendChild(toggleLabel);
 
+		// Language override dropdown
+		const langContainer = document.createElement('div');
+		langContainer.className = 'ut-row';
+		langContainer.style.alignItems = 'center';
+		langContainer.style.gap = '6px';
+		langContainer.style.marginBottom = '8px';
+
+		const langLabel = document.createElement('label');
+		langLabel.htmlFor = 'ut-language-override';
+		langLabel.className = 'text-sm';
+		langLabel.textContent = localize('card.language_label');
+
+		const langSelect = document.createElement('select');
+		langSelect.id = 'ut-language-override';
+		langSelect.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input text-sm';
+
+		const autoOpt = document.createElement('option');
+		autoOpt.value = '';
+		autoOpt.textContent = localize('card.language_auto');
+		langSelect.appendChild(autoOpt);
+
+		for (const loc of SUPPORTED_LOCALES) {
+			const opt = document.createElement('option');
+			opt.value = loc;
+			opt.textContent = LANGUAGE_NATIVE_NAMES[loc] || loc;
+			langSelect.appendChild(opt);
+		}
+
+		// Preselect after options are appended ('' selects the Auto option).
+		const currentOverride = await sendBackgroundMessage({ type: 'getLanguageOverride' });
+		langSelect.value = currentOverride || '';
+
+		langSelect.addEventListener('change', async () => {
+			await sendBackgroundMessage({ type: 'setLanguageOverride', value: langSelect.value || null });
+			location.reload();
+		});
+
+		langContainer.appendChild(langLabel);
+		langContainer.appendChild(langSelect);
+
 		// Assemble
 		this.element.appendChild(label);
 		this.element.appendChild(input);
 		buttonContainer.appendChild(saveButton);
 		buttonContainer.appendChild(debugButton);
 		this.element.appendChild(toggleContainer);
+		this.element.appendChild(langContainer);
 		this.element.appendChild(buttonContainer);
 
 		this.addCloseButton();

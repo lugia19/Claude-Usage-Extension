@@ -336,6 +336,9 @@ messageRegistry.register('setAPIKey', async (message) => {
 messageRegistry.register('getResetNotifEnabled', () => getStorageValue('resetNotifEnabled', false));
 messageRegistry.register('setResetNotifEnabled', (message) => setStorageValue('resetNotifEnabled', message.value));
 
+messageRegistry.register('getLanguageOverride', () => getStorageValue('languageOverride', null));
+messageRegistry.register('setLanguageOverride', (message) => setStorageValue('languageOverride', message.value));
+
 messageRegistry.register('isElectron', () => isElectron);
 messageRegistry.register('getMonkeypatchPatterns', () => isElectron ? INTERCEPT_PATTERNS : false);
 
@@ -778,7 +781,10 @@ async function onBeforeRequestHandler(details) {
 		// briefly still return the old locale). Pin it so the post-reload boot trusts it.
 		const body = await parseRequestBody(details.requestBody);
 		const bodyLocale = body?.locale;
-		if (bodyLocale) {
+		// If the user has set an explicit language override, the account language is irrelevant to
+		// the displayed UI — don't pin it or reload (applyLocale would override it on boot anyway).
+		const override = await getStorageValue('languageOverride', null);
+		if (bodyLocale && !override) {
 			const newLoc = normalizeLocale(bodyLocale);
 			const stored = await browser.storage.local.get('lastLang');
 			if (normalizeLocale(stored.lastLang || 'en') !== newLoc) {

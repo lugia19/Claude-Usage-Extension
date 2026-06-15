@@ -253,9 +253,12 @@ async function setupRequestInterception(patterns) {
 // with a short TTL — within that window we trust it and skip the GET, because the GET can briefly
 // lag behind the change. Falls back to the stored value, then English.
 async function applyLocale() {
-	const stored = await browser.storage.local.get(['lastLang', 'lastLangPinnedUntil']);
+	const stored = await browser.storage.local.get(['lastLang', 'lastLangPinnedUntil', 'languageOverride']);
 	let norm;
-	if (stored.lastLangPinnedUntil && Date.now() < stored.lastLangPinnedUntil) {
+	if (stored.languageOverride) {
+		// Explicit user choice wins over everything: skip the account fetch and the PUT pin.
+		norm = normalizeLocale(stored.languageOverride);
+	} else if (stored.lastLangPinnedUntil && Date.now() < stored.lastLangPinnedUntil) {
 		norm = normalizeLocale(stored.lastLang || 'en');
 	} else {
 		const acc = await sendBackgroundMessage({ type: 'getAccountLocale' });
