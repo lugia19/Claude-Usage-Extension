@@ -1,5 +1,5 @@
 /* global CONFIG, Log, ProgressBar, sendBackgroundMessage, getActiveOrgId,
-   setupTooltip, getResetTimeHTML, sleep, isMobileView, isCodePage, UsageData, isPeakHours,
+   setupTooltip, getTooltipPortal, getResetTimeHTML, sleep, isMobileView, isCodePage, UsageData, isPeakHours,
    RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS, LayoutManager, mountToAnchor,
    localize, fmtNum, localeForIntl */
 'use strict';
@@ -431,12 +431,12 @@ class UsageUI {
 	createTooltips() {
 		const create = (text) => {
 			const tooltip = document.createElement('div');
-			tooltip.className = 'bg-bg-500 text-text-000 ut-tooltip font-normal font-ui';
+			tooltip.className = 'bg-[var(--cds-tooltip-bg)] text-[var(--cds-tooltip-fg)] ut-tooltip font-normal font-ui';
 			tooltip.textContent = text;
 			tooltip.style.maxWidth = '400px';
 			tooltip.style.textAlign = 'left';
 			tooltip.style.whiteSpace = 'pre-line';
-			document.body.appendChild(tooltip);
+			getTooltipPortal().appendChild(tooltip);
 			return tooltip;
 		};
 

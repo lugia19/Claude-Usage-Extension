@@ -293,6 +293,35 @@ function getResetTimeHTML(timeInfo) {
 	return `${prefix} <span style="color: ${BLUE_HIGHLIGHT}">${timeString}</span>`;
 }
 
+// Tooltips use the CDS color vars (--cds-tooltip-bg/-fg), which are scoped to .cds-root.
+// Append them into a dedicated portal so the vars resolve outside claude.ai's own roots.
+let _tooltipPortal = null;
+function getTooltipPortal() {
+	if (_tooltipPortal && _tooltipPortal.isConnected) return _tooltipPortal;
+
+	const existing = document.querySelector('.cds-root[data-cds-portal]');
+	if (existing) {
+		_tooltipPortal = existing;
+		return _tooltipPortal;
+	}
+
+	const reference = document.querySelector('.cds-root');
+	const portal = document.createElement('div');
+	portal.className = 'cds-root pointer-events-none';
+	portal.setAttribute('data-cds-portal', '');
+
+	if (reference) {
+		for (const attr of ['data-density', 'data-mode', 'data-platform', 'data-font']) {
+			const val = reference.getAttribute(attr);
+			if (val) portal.setAttribute(attr, val);
+		}
+	}
+
+	document.body.appendChild(portal);
+	_tooltipPortal = portal;
+	return _tooltipPortal;
+}
+
 function setupTooltip(element, tooltip, options = {}) {
 	if (!element || !tooltip) return;
 
@@ -403,11 +432,11 @@ class ProgressBar {
 		this.bar.style.background = BLUE_HIGHLIGHT;
 
 		this.tooltip = document.createElement('div');
-		this.tooltip.className = 'bg-bg-500 text-text-000 ut-tooltip';
+		this.tooltip.className = 'bg-[var(--cds-tooltip-bg)] text-[var(--cds-tooltip-fg)] ut-tooltip';
 
 		this.track.appendChild(this.bar);
 		this.container.appendChild(this.track);
-		document.body.appendChild(this.tooltip);
+		getTooltipPortal().appendChild(this.tooltip);
 		setupTooltip(this.container, this.tooltip, { topOffset: 10 });
 	}
 
@@ -428,8 +457,8 @@ class ProgressBar {
 			this.container.appendChild(this.marker);
 
 			this.markerTooltip = document.createElement('div');
-			this.markerTooltip.className = 'bg-bg-500 text-text-000 ut-tooltip';
-			document.body.appendChild(this.markerTooltip);
+			this.markerTooltip.className = 'bg-[var(--cds-tooltip-bg)] text-[var(--cds-tooltip-fg)] ut-tooltip';
+			getTooltipPortal().appendChild(this.markerTooltip);
 			setupTooltip(this.marker, this.markerTooltip);
 		}
 		this.marker.style.left = `${Math.min(percentage, 100)}%`;

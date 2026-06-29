@@ -1,2 +1,1 @@
-Fix language display in popup
-Add language override to settings
+Fix tooltips to match new styling
