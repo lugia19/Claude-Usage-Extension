@@ -41,6 +41,38 @@ browser.storage.local.get('force_debug').then(result => {
 // Global variables that will be shared across all content scripts
 let CONFIG;
 
+// Debug logs are buffered in memory and flushed on a short debounce so logging (which happens inside
+// the per-frame update loop) never blocks on storage. Up to ~1s of logs can be lost on navigation.
+let pendingLogEntries = [];
+let logFlushScheduled = false;
+
+function scheduleLogFlush() {
+	if (logFlushScheduled) return;
+	logFlushScheduled = true;
+	setTimeout(flushLogs, 1000);
+}
+
+async function flushLogs() {
+	logFlushScheduled = false;
+	if (pendingLogEntries.length === 0) return;
+	const batch = pendingLogEntries;
+	pendingLogEntries = [];
+	// Read fresh and append so we don't clobber logs written by other contexts (background / other tabs).
+	try {
+		const result = await browser.storage.local.get('debug_logs');
+		const logs = result.debug_logs || [];
+		logs.push(...batch);
+		while (logs.length > 1000) logs.shift();
+		await browser.storage.local.set({ debug_logs: logs });
+	} catch (e) {
+		try {
+			await browser.storage.local.set({ debug_logs: batch.slice(-100) });
+		} catch (e2) {
+			// Give up — never let logging throw.
+		}
+	}
+}
+
 // Logging function
 async function Log(...args) {
 	const sender = `content:${document.title.substring(0, 20)}${document.title.length > 20 ? '...' : ''}`;
@@ -51,17 +83,14 @@ async function Log(...args) {
 		level = args.shift();
 	}
 
-	const result = await browser.storage.local.get('debug_mode_until');
-	const debugUntil = result.debug_mode_until;
-	const now = Date.now();
-
-	if ((!debugUntil || debugUntil <= now) && !FORCE_DEBUG) {
-		return;
+	// Gate: when FORCE_DEBUG is off, only log within the debug window. When on, skip the storage read.
+	if (!FORCE_DEBUG) {
+		const result = await browser.storage.local.get('debug_mode_until');
+		const debugUntil = result.debug_mode_until;
+		if (!debugUntil || debugUntil <= Date.now()) return;
 	}
 
-	if (level === "debug") {
-		console.log("[UsageTracker]", ...args);
-	} else if (level === "warn") {
+	if (level === "warn") {
 		console.warn("[UsageTracker]", ...args);
 	} else if (level === "error") {
 		console.error("[UsageTracker]", ...args);
@@ -77,35 +106,33 @@ async function Log(...args) {
 		fractionalSecondDigits: 3
 	});
 
-	const logEntry = {
-		timestamp: timestamp,
-		sender: sender,
-		level: level,
-		message: args.map(arg => {
-			if (arg instanceof Error) {
-				return arg.stack || `${arg.name}: ${arg.message}`;
+	let message = args.map(arg => {
+		if (arg instanceof Error) {
+			return arg.stack || `${arg.name}: ${arg.message}`;
+		}
+		if (typeof arg === 'object') {
+			// Handle null case
+			if (arg === null) return 'null';
+			// For other objects, try to stringify with error handling
+			try {
+				return JSON.stringify(arg, Object.getOwnPropertyNames(arg), 2);
+			} catch (e) {
+				return String(arg);
 			}
-			if (typeof arg === 'object') {
-				// Handle null case
-				if (arg === null) return 'null';
-				// For other objects, try to stringify with error handling
-				try {
-					return JSON.stringify(arg, Object.getOwnPropertyNames(arg), 2);
-				} catch (e) {
-					return String(arg);
-				}
-			}
-			return String(arg);
-		}).join(' ')
-	};
+		}
+		return String(arg);
+	}).join(' ');
 
-	const logsResult = await browser.storage.local.get('debug_logs');
-	const logs = logsResult.debug_logs || [];
-	logs.push(logEntry);
+	// Cap per-entry size so a large payload can't bloat storage past quota.
+	const MAX_LOG_MESSAGE = 2000;
+	if (message.length > MAX_LOG_MESSAGE) {
+		message = message.slice(0, MAX_LOG_MESSAGE) + `…[truncated ${message.length - MAX_LOG_MESSAGE} chars]`;
+	}
 
-	if (logs.length > 1000) logs.shift();
-
-	await browser.storage.local.set({ debug_logs: logs });
+	// Buffer + debounced flush — no awaited storage I/O in the caller's path.
+	pendingLogEntries.push({ timestamp, sender, level, message });
+	if (pendingLogEntries.length > 1000) pendingLogEntries.shift();
+	scheduleLogFlush();
 }
 
 async function logError(error) {
