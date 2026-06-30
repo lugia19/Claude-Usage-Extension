@@ -82,6 +82,8 @@ export const MESSAGES = {
 		"popup.no_active_limits": "No active limits.",
 		"popup.no_data": "No usage data found. Open claude.ai first (and authorize the extension if necessary).",
 		"popup.load_failed": "Failed to load usage data.",
+		"popup.org_no_tab": "Open a tab in this container to see usage.",
+		"popup.org_unavailable": "Usage unavailable.",
 		"popup.loading": "Loading usage data...",
 		"popup.help": "If you clicked here because you can't find the usage stats, try reloading the page or authorizing the extension to run on claude.ai — the usage stats are injected directly into the page.",
 		"popup.donate": "Donate",

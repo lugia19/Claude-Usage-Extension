@@ -106,6 +106,40 @@ setStorageValue('force_debug', FORCE_DEBUG);
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Debug logs are buffered in memory and flushed to storage on a short debounce, so the hot path never
+// blocks on (or repeatedly rewrites) storage — previously every Log() did 2 awaited storage reads + a
+// full-array write. Trade-off: up to ~1s of logs can be lost if the background context is torn down
+// before a flush — acceptable for debug logging.
+let pendingLogEntries = [];
+let logFlushScheduled = false;
+
+function scheduleLogFlush() {
+	if (logFlushScheduled) return;
+	logFlushScheduled = true;
+	setTimeout(flushLogs, 1000);
+}
+
+async function flushLogs() {
+	logFlushScheduled = false;
+	if (pendingLogEntries.length === 0) return;
+	const batch = pendingLogEntries;
+	pendingLogEntries = [];
+	// Read fresh and append so we don't clobber logs written by other contexts (e.g. content scripts).
+	try {
+		const logs = await getStorageValue('debug_logs', []);
+		logs.push(...batch);
+		while (logs.length > 1000) logs.shift();
+		await setStorageValue('debug_logs', logs);
+	} catch (e) {
+		// Storage full — keep only the most recent so it self-heals; never throw.
+		try {
+			await setStorageValue('debug_logs', batch.slice(-100));
+		} catch (e2) {
+			// Give up — better to lose logs than to break anything.
+		}
+	}
+}
+
 async function RawLog(sender, ...args) {
 	let level = "debug";
 
@@ -113,15 +147,13 @@ async function RawLog(sender, ...args) {
 		level = args.shift();
 	}
 
-	const debugUntil = await getStorageValue('debug_mode_until');
-	const now = Date.now();
-
-	if ((!debugUntil || debugUntil <= now) && !FORCE_DEBUG) {
-		return;
+	// Gate: when FORCE_DEBUG is off, only log within the debug window. When on, skip the storage read.
+	if (!FORCE_DEBUG) {
+		const debugUntil = await getStorageValue('debug_mode_until');
+		if (!debugUntil || debugUntil <= Date.now()) return;
 	}
-	if (level === "debug") {
-		console.log("[UsageTracker]", ...args);
-	} else if (level === "warn") {
+
+	if (level === "warn") {
 		console.warn("[UsageTracker]", ...args);
 	} else if (level === "error") {
 		console.error("[UsageTracker]", ...args);
@@ -137,164 +169,38 @@ async function RawLog(sender, ...args) {
 		fractionalSecondDigits: 3
 	});
 
-	const logEntry = {
-		timestamp: timestamp,
-		sender: sender,
-		level: level,
-		message: args.map(arg => {
-			if (arg instanceof Error) {
-				return arg.stack || `${arg.name}: ${arg.message}`;
+	let message = args.map(arg => {
+		if (arg instanceof Error) {
+			return arg.stack || `${arg.name}: ${arg.message}`;
+		}
+		if (typeof arg === 'object') {
+			if (arg === null) return 'null';
+			try {
+				return JSON.stringify(arg, Object.getOwnPropertyNames(arg), 2);
+			} catch (e) {
+				return String(arg);
 			}
-			if (typeof arg === 'object') {
-				if (arg === null) return 'null';
-				try {
-					return JSON.stringify(arg, Object.getOwnPropertyNames(arg), 2);
-				} catch (e) {
-					return String(arg);
-				}
-			}
-			return String(arg);
-		}).join(' ')
-	};
+		}
+		return String(arg);
+	}).join(' ');
 
-	const logs = await getStorageValue('debug_logs', []);
-	logs.push(logEntry);
+	// Cap per-entry size so a large payload (e.g. a base64 proxyFetch body) can't blow the storage
+	// quota. With the 1000-entry cap this bounds debug_logs well under the 10MB local limit.
+	const MAX_LOG_MESSAGE = 2000;
+	if (message.length > MAX_LOG_MESSAGE) {
+		message = message.slice(0, MAX_LOG_MESSAGE) + `…[truncated ${message.length - MAX_LOG_MESSAGE} chars]`;
+	}
 
-	if (logs.length > 1000) logs.shift();
-
-	await setStorageValue('debug_logs', logs);
+	// Append to the in-memory buffer (bounded) and let the debounced flush persist it — no awaited
+	// storage I/O in the caller's path.
+	pendingLogEntries.push({ timestamp, sender, level, message });
+	if (pendingLogEntries.length > 1000) pendingLogEntries.shift();
+	scheduleLogFlush();
 }
 
 async function Log(...args) {
 	await RawLog("utils", ...args);
 }
-
-async function containerFetch(url, options = {}, cookieStoreId = null) {
-	if (!cookieStoreId || cookieStoreId === "0" || isElectron) {
-		return fetch(url, options);
-	}
-
-	const headers = options.headers || {};
-	headers['X-Container'] = cookieStoreId;
-	options.headers = headers;
-
-	return fetch(url, options);
-}
-
-const containerRequestMap = new Map();
-
-async function redirectCookie(setCookieStr, requestUrl, storeId) {
-	const parts = setCookieStr.split(';').map(p => p.trim());
-	const [nameValue, ...attrs] = parts;
-	const eqIdx = nameValue.indexOf('=');
-	const name = nameValue.substring(0, eqIdx);
-	const value = nameValue.substring(eqIdx + 1);
-
-	const cookieDetails = { url: requestUrl, name, value, storeId };
-
-	for (const attr of attrs) {
-		const lower = attr.toLowerCase();
-		if (lower.startsWith('domain=')) cookieDetails.domain = attr.split('=')[1];
-		else if (lower.startsWith('path=')) cookieDetails.path = attr.split('=')[1];
-		else if (lower.startsWith('expires=')) {
-			cookieDetails.expirationDate = Math.floor(new Date(attr.substring(8)).getTime() / 1000);
-		}
-		else if (lower === 'secure') cookieDetails.secure = true;
-		else if (lower === 'httponly') cookieDetails.httpOnly = true;
-		else if (lower.startsWith('samesite=')) {
-			const val = attr.split('=')[1].toLowerCase();
-			cookieDetails.sameSite = val === 'none' ? 'no_restriction' : val;
-		}
-	}
-
-	await Log("Redirecting cookie", name, "to store:", storeId);
-	await browser.cookies.set(cookieDetails);
-}
-
-async function addContainerFetchListener() {
-	if (isElectron || !chrome.cookies) return;
-	const stores = await browser.cookies.getAllCookieStores();
-	const isFirefoxContainers = stores[0]?.id === "firefox-default";
-
-	if (isFirefoxContainers) {
-		await Log("We're in firefox with containers, registering blocking listener...");
-		browser.webRequest.onBeforeSendHeaders.addListener(
-			async (details) => {
-				// Check for our container header
-				const containerStore = details.requestHeaders.find(h =>
-					h.name === 'X-Container'
-				)?.value;
-
-				if (containerStore) {
-					containerRequestMap.set(details.requestId, containerStore);
-
-					// Extract domain from URL
-					const url = new URL(details.url);
-					const domain = url.hostname;
-
-					// Get cookies for this domain from the specified container
-					const domainCookies = await browser.cookies.getAll({
-						domain: domain,
-						storeId: containerStore
-					});
-					if (domainCookies.length > 0) {
-						// Create or find the cookie header
-						let cookieHeader = details.requestHeaders.find(h => h.name === 'Cookie');
-						if (!cookieHeader) {
-							cookieHeader = { name: 'Cookie', value: '' };
-							details.requestHeaders.push(cookieHeader);
-						}
-
-						// Format cookies for the header
-						const formattedCookies = domainCookies.map(c => `${c.name}=${c.value}`);
-						cookieHeader.value = formattedCookies.join('; ');
-					}
-
-					// Remove our custom header
-					details.requestHeaders = details.requestHeaders.filter(h =>
-						h.name !== 'X-Container'
-					);
-				}
-
-				return { requestHeaders: details.requestHeaders };
-			},
-			{ urls: ["<all_urls>"] },
-			["blocking", "requestHeaders"]
-		);
-
-		browser.webRequest.onHeadersReceived.addListener(
-			async (details) => {
-				const containerStore = containerRequestMap.get(details.requestId);
-				if (!containerStore) return;
-				containerRequestMap.delete(details.requestId);
-
-				const setCookieHeaders = details.responseHeaders.filter(
-					h => h.name.toLowerCase() === 'set-cookie'
-				);
-				if (setCookieHeaders.length === 0) return;
-
-				await Log("Redirecting", setCookieHeaders.length, "Set-Cookie header(s) from request", details.requestId, "to container:", containerStore);
-				for (const header of setCookieHeaders) {
-					await redirectCookie(header.value, details.url, containerStore);
-				}
-
-				return {
-					responseHeaders: details.responseHeaders.filter(
-						h => h.name.toLowerCase() !== 'set-cookie'
-					)
-				};
-			},
-			{ urls: ["<all_urls>"] },
-			["blocking", "responseHeaders"]
-		);
-
-		browser.webRequest.onErrorOccurred.addListener(
-			(details) => containerRequestMap.delete(details.requestId),
-			{ urls: ["<all_urls>"] }
-		);
-	}
-}
-
 
 class StoredMap {
 	constructor(storageKey) {
@@ -462,8 +368,6 @@ export {
 	sleep,
 	RawLog,
 	FORCE_DEBUG,
-	containerFetch,
-	addContainerFetchListener,
 	StoredMap,
 	getOrgStorageKey,
 	getStorageValue,

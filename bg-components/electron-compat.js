@@ -1,5 +1,5 @@
 import '../lib/browser-polyfill.min.js';
-import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addContainerFetchListener, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './utils.js';
+import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './utils.js';
 
 async function Log(...args) {
 	await RawLog("electron-compat", ...args)

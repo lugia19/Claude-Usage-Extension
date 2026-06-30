@@ -171,6 +171,29 @@ async function sendBackgroundMessage(message) {
 	throw new Error("Failed to send message to background script after 10 retries.");
 }
 
+// Encode bytes as base64 (chunked to avoid stack overflow on large file downloads). Used to ship
+// proxyFetch response bodies back to the background, which rebuilds a Response from them.
+function bytesToBase64(buffer) {
+	const bytes = new Uint8Array(buffer);
+	let binary = '';
+	const chunk = 0x8000;
+	for (let i = 0; i < bytes.length; i += chunk) {
+		binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+	}
+	return btoa(binary);
+}
+
+// Brave hides containers from extension APIs, so the background can't read this container's cookies.
+// Tell it whether we're on Brave; if so, it proxies claude.ai fetches back through this tab.
+async function reportBraveStatus() {
+	try {
+		const isBrave = !!(navigator.brave && typeof navigator.brave.isBrave === 'function' && await navigator.brave.isBrave());
+		await sendBackgroundMessage({ type: 'reportBrave', isBrave });
+	} catch (e) {
+		await Log("warn", "Brave detection failed:", e);
+	}
+}
+
 async function waitForElement(target, selector, maxTime = 1000) {
 	let elapsed = 0;
 	const waitInterval = 100
@@ -483,18 +506,16 @@ browser.runtime.onMessage.addListener(async (message) => {
 	if (message.action === "getOrgID") {
 		return Promise.resolve({ orgId: getActiveOrgId() });
 	}
-	if (message.action === "getStyleId") {
-		const storedStyle = localStorage.getItem('LSS-claude_personalized_style');
-		let styleId;
-		if (storedStyle) {
-			try {
-				const styleData = JSON.parse(storedStyle);
-				if (styleData) styleId = styleData.styleKey;
-			} catch (e) {
-				await Log("error", 'Failed to parse stored style:', e);
-			}
+	if (message.type === 'proxyFetch') {
+		// Brave: perform a fetch in this tab's container context and ship the result to the background.
+		try {
+			const r = await fetch(message.url, { ...(message.options || {}), credentials: 'include' });
+			const buf = await r.arrayBuffer();
+			return { ok: r.ok, status: r.status, statusText: r.statusText, body: bytesToBase64(buf) };
+		} catch (e) {
+			await Log("error", "proxyFetch failed:", message.url, e);
+			return { ok: false, status: 0, statusText: String(e), body: '' };
 		}
-		return Promise.resolve({ styleId });
 	}
 });
 
@@ -814,6 +835,10 @@ async function initExtension() {
 		return;
 	}
 	window.claudeTrackerInstance = true;
+
+	// Report Brave status before any ClaudeAPI-backed call (e.g. getAccountLocale below) so the
+	// background knows to proxy claude.ai fetches through this tab's container.
+	await reportBraveStatus();
 
 	// Clean up any leftover UI elements from a previous instance (e.g. extension toggled off/on)
 	document.querySelectorAll('[class^="ut-"], [class*=" ut-"]').forEach(el => el.remove());

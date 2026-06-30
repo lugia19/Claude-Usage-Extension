@@ -1,4 +1,4 @@
-import { CONFIG, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey, sendTabMessage, containerFetch } from './utils.js';
+import { CONFIG, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey } from './utils.js';
 import { tokenCounter, getTextFromContent } from './tokenManagement.js';
 import { UsageData, ConversationData } from '../shared/dataclasses.js';
 
@@ -28,25 +28,27 @@ const projectCache = new StoredMap("projectCache");
 
 // Pure HTTP/API layer
 class ClaudeAPI {
-	constructor(cookieStoreId, orgId) {
+	// `fetchImpl(url, options) => Response` is supplied by the active ContainerStrategy, already bound
+	// to this account's container. ClaudeAPI itself is container-agnostic.
+	constructor(orgId, fetchImpl) {
 		this.baseUrl = 'https://claude.ai/api';
-		this.cookieStoreId = cookieStoreId;
 		this.orgId = orgId;
+		this.fetchImpl = fetchImpl;
 	}
 
 	// Core methods
 	async getRequest(endpoint) {
-		const response = await containerFetch(`${this.baseUrl}${endpoint}`, {
+		const response = await this.fetchImpl(`${this.baseUrl}${endpoint}`, {
 			headers: {
 				'Content-Type': 'application/json'
 			},
 			method: 'GET'
-		}, this.cookieStoreId);
+		});
 		return response.json();
 	}
 
 	async fetchUrl(url, options = {}) {
-		return containerFetch(url, options, this.cookieStoreId);
+		return this.fetchImpl(url, options);
 	}
 
 	// Factory method - returns a ConversationAPI instance
@@ -109,30 +111,6 @@ class ClaudeAPI {
 				isCached: isCached
 			}
 		};
-	}
-
-	async getStyleTokens(styleId, tabId) {
-		if (!styleId) {
-			await Log("Fetching styleId from tab:", tabId);
-			const response = await sendTabMessage(tabId, {
-				action: "getStyleId"
-			});
-			styleId = response?.styleId;
-			if (!styleId) return 0;
-		}
-
-		const styleData = await this.getRequest(`/organizations/${this.orgId}/list_styles`);
-		let style = styleData?.defaultStyles?.find(style => style.key === styleId);
-		if (!style) {
-			style = styleData?.customStyles?.find(style => style.uuid === styleId);
-		}
-
-		await Log("Got style:", style);
-		if (style) {
-			return await tokenCounter.countText(style.prompt);
-		} else {
-			return 0;
-		}
 	}
 
 	// Account UI language, e.g. "fr-FR" (null if unavailable)

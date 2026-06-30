@@ -256,28 +256,25 @@ class TokenCounter {
 	}
 }
 
+// How long an org stays "known" without being seen again. Refreshed on every sighting so active
+// accounts persist; idle ones drop out so the popup doesn't keep listing accounts you no longer use.
+const KNOWN_ORG_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 // Token storage manager (simplified - only org ID tracking and total tokens)
 class TokenStorageManager {
 	constructor() {
-		this.orgIds = undefined;
-	}
-
-	async ensureOrgIds() {
-		if (this.orgIds) return;
-		try {
-			const orgIds = await getStorageValue('orgIds', []);
-			this.orgIds = new Set(orgIds);
-		} catch (error) {
-			this.orgIds = new Set();
-		}
+		// TTL'd set of orgs we've seen recently (value is unused; the key + expiry is the data).
+		this.knownOrgs = new StoredMap('knownOrgsV2');
 	}
 
 	async addOrgId(orgId) {
-		await this.ensureOrgIds();
-		if (!this.orgIds.has(orgId)) {
-			this.orgIds.add(orgId);
-			await setStorageValue('orgIds', Array.from(this.orgIds));
-		}
+		// Always write to refresh the TTL on every sighting.
+		await this.knownOrgs.set(orgId, true, KNOWN_ORG_TTL_MS);
+	}
+
+	// Non-expired orgs we've seen recently (entries() prunes expired keys on read).
+	async getKnownOrgIds() {
+		return (await this.knownOrgs.entries()).map(([orgId]) => orgId);
 	}
 
 	async getTotalTokens() {

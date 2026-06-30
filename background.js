@@ -1,8 +1,8 @@
 import './lib/browser-polyfill.min.js';
 import './lib/o200k_base.js';
-import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, containerFetch, addContainerFetchListener, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './bg-components/utils.js';
+import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './bg-components/utils.js';
 import { tokenStorageManager, tokenCounter } from './bg-components/tokenManagement.js';
-import { ClaudeAPI, ConversationAPI } from './bg-components/claude-api.js';
+import { getStrategy, initContainerStrategy, setBrave } from './bg-components/container-strategy.js';
 import { UsageData } from './shared/dataclasses.js';
 import { translate, normalizeLocale } from './shared/localization.js';
 import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
@@ -111,7 +111,7 @@ if (!isElectron) {
 		["responseHeaders"]
 	);
 
-	addContainerFetchListener();
+	initContainerStrategy();
 }
 
 //Alarm listeners
@@ -155,7 +155,7 @@ async function checkResetNotifications() {
 
 			const tab = tabs[0];
 			const tabOrgId = await requestActiveOrgId(tab);
-			const api = new ClaudeAPI(tab.cookieStoreId, tabOrgId);
+			const api = getStrategy().apiForTab(tab, tabOrgId);
 			const usageData = await api.getUsageData();
 
 			// Only notify if session usage is at 0% (user hasn't started chatting again)
@@ -229,32 +229,8 @@ async function requestActiveOrgId(tab) {
 	if (typeof tab === "number") {
 		tab = await browser.tabs.get(tab);
 	}
-	if (chrome.cookies) {
-		try {
-			const cookie = await browser.cookies.get({
-				name: 'lastActiveOrg',
-				url: tab.url,
-				storeId: tab.cookieStoreId
-			});
-
-			if (cookie?.value) {
-				return cookie.value;
-			}
-		} catch (error) {
-			await Log("error", "Error getting cookie directly:", error);
-		}
-	}
-
-
-	try {
-		const response = await sendTabMessage(tab.id, {
-			action: "getOrgID"
-		});
-		return response?.orgId;
-	} catch (error) {
-		await Log("error", "Error getting org ID from content script:", error);
-		return null;
-	}
+	// The active strategy knows how to read the active org for this platform's container model.
+	return getStrategy().activeOrgForTab(tab);
 }
 
 //#endregion
@@ -273,7 +249,7 @@ async function updateAllTabsWithUsage(usageData = null) {
 		// If no usageData provided, fetch fresh
 		if (!data) {
 			const orgId = await requestActiveOrgId(tab);
-			const api = new ClaudeAPI(tab.cookieStoreId, orgId);
+			const api = getStrategy().apiForTab(tab, orgId);
 			data = await api.getUsageData();
 		}
 
@@ -304,7 +280,7 @@ async function updateTabWithConversationData(tabId, conversationData) {
 messageRegistry.register('getConfig', () => CONFIG);
 messageRegistry.register('getAccountLocale', async (message, sender) => {
 	try {
-		return await new ClaudeAPI(sender.tab?.cookieStoreId, null).getAccountLocale();
+		return await getStrategy().apiForTab(sender.tab, null).getAccountLocale();
 	} catch (error) {
 		await Log("warn", "Failed to fetch account locale:", error);
 		return null;
@@ -342,6 +318,13 @@ messageRegistry.register('setLanguageOverride', (message) => setStorageValue('la
 messageRegistry.register('isElectron', () => isElectron);
 messageRegistry.register('getMonkeypatchPatterns', () => isElectron ? INTERCEPT_PATTERNS : false);
 
+// The content script reports whether we're on Brave (navigator.brave.isBrave()). On Brave we can't
+// read per-container cookies, so claude.ai fetches are proxied through the originating tab instead.
+messageRegistry.register('reportBrave', async (message) => {
+	await setBrave(message.isBrave);
+	return true;
+});
+
 async function openDebugPage() {
 	if (!isElectron) {
 		browser.tabs.create({ url: browser.runtime.getURL('debug.html') });
@@ -355,7 +338,7 @@ messageRegistry.register(openDebugPage);
 async function requestData(message, sender, orgId) {
 	const { conversationId } = message;
 
-	const api = new ClaudeAPI(sender.tab?.cookieStoreId, orgId);
+	const api = getStrategy().apiForTab(sender.tab, orgId);
 
 	// Always fetch and send fresh usage data
 	const usageData = await api.getUsageData();
@@ -402,66 +385,23 @@ async function requestData(message, sender, orgId) {
 messageRegistry.register(requestData);
 
 async function getPopupUsageData() {
-	const orgMap = new Map(); // orgId -> cookieStoreId
+	// The active strategy owns discovery: it returns [{ orgId, ctx }] for this platform's container model.
+	const accounts = await getStrategy().listAccounts();
+	if (accounts.length === 0) return [];
 
-	const storeIds = new Set();
-	try {
-		if (browser.contextualIdentities) {
-			storeIds.add('firefox-default');
-			const containers = await browser.contextualIdentities.query({});
-			for (const c of containers) storeIds.add(c.cookieStoreId);
-		} else {
-			const stores = await browser.cookies.getAllCookieStores();
-			for (const s of stores) storeIds.add(s.id);
-		}
-	} catch (e) {
-		await Log("warn", "Cookie store enumeration failed, falling back to getAllCookieStores:", e);
+	// Each account resolves to a success or a structured error (never rejects), so error entries keep
+	// their orgId and a cached name for the popup to render as an "unavailable" row.
+	return Promise.all(accounts.map(async ({ orgId, ctx }) => {
+		const api = getStrategy().apiFor(ctx, orgId);
 		try {
-			const stores = await browser.cookies.getAllCookieStores();
-			for (const s of stores) storeIds.add(s.id);
-		} catch (e2) {
-			await Log("warn", "getAllCookieStores also failed:", e2);
-		}
-	}
-
-	await Log("Checking cookie stores for org IDs:", [...storeIds]);
-	for (const storeId of storeIds) {
-		try {
-			const cookie = await browser.cookies.get({
-				name: 'lastActiveOrg',
-				url: 'https://claude.ai',
-				storeId
-			});
-			if (cookie?.value && !orgMap.has(cookie.value)) {
-				orgMap.set(cookie.value, storeId);
-			}
-		} catch (e) {
-			await Log("warn", `Failed to check cookies for store ${storeId}:`, e);
-		}
-	}
-
-	// Fallback: check stored orgIds if no cookies found
-	if (orgMap.size === 0) {
-		await tokenStorageManager.ensureOrgIds();
-		for (const orgId of tokenStorageManager.orgIds) {
-			orgMap.set(orgId, null);
-		}
-	}
-
-	if (orgMap.size === 0) return [];
-
-	const results = await Promise.allSettled(
-		Array.from(orgMap.entries()).map(async ([orgId, cookieStoreId]) => {
-			const api = new ClaudeAPI(cookieStoreId, orgId);
 			const usageData = await api.getUsageData();
 			const org = await api.getOrgInfo(); // cache hit — getUsageData already fetched it
-			return { orgId, orgName: org?.name || null, cookieStoreId, usageData: usageData.toJSON() };
-		})
-	);
-
-	return results.map(r =>
-		r.status === 'fulfilled' ? r.value : { orgId: r.reason?.orgId, error: String(r.reason) }
-	);
+			return { orgId, orgName: org?.name || null, usageData: usageData.toJSON() };
+		} catch (e) {
+			const org = await api.getOrgInfo().catch(() => null); // cached name if available
+			return { orgId, orgName: org?.name || null, error: String(e) };
+		}
+	}));
 }
 messageRegistry.register(getPopupUsageData);
 
@@ -532,7 +472,7 @@ async function parseRequestBody(requestBody) {
 
 async function processResponse(orgId, conversationId, responseKey, details) {
 	const tabId = details.tabId;
-	const api = new ClaudeAPI(details.cookieStoreId, orgId);
+	const api = getStrategy().apiForRequest(details, orgId);
 	await Log("Processing response...");
 
 	const pendingRequest = await pendingRequests.get(responseKey);
@@ -555,9 +495,6 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 	let modifierCost = 0;
 	const profileTokens = await api.getProfileTokens();
 	modifierCost += profileTokens;
-
-	const styleTokens = await api.getStyleTokens(pendingRequest?.styleId, tabId);
-	modifierCost += styleTokens;
 
 	if (pendingRequest?.toolDefinitions) {
 		let toolTokens = 0;
@@ -737,8 +674,6 @@ async function onBeforeRequestHandler(details) {
 
 		const key = `${orgId}:${conversationId}`;
 		await Log(`Message sent - Key: ${key}`);
-		const styleId = requestBodyJSON?.personalized_styles?.[0]?.key || requestBodyJSON?.personalized_styles?.[0]?.uuid
-		await Log("Choosing style between:", requestBodyJSON?.personalized_styles?.[0]?.key, requestBodyJSON?.personalized_styles?.[0]?.uuid)
 
 		// Process tool definitions if present
 		const toolDefs = requestBodyJSON?.tools?.filter(tool =>
@@ -753,7 +688,7 @@ async function onBeforeRequestHandler(details) {
 		// Fetch current usage to snapshot before message
 		let previousUsage = null;
 		try {
-			const api = new ClaudeAPI(details.cookieStoreId, orgId);
+			const api = getStrategy().apiForRequest(details, orgId);
 			const usageData = await api.getUsageData();
 			previousUsage = usageData.toJSON();
 		} catch (error) {
@@ -766,7 +701,6 @@ async function onBeforeRequestHandler(details) {
 			orgId: orgId,
 			conversationId: conversationId,
 			tabId: details.tabId,
-			styleId: styleId,
 			model: model,
 			modelVersion: requestBodyJSON?.model || CONFIG.DEFAULT_MODEL_VERSION,
 			requestTimestamp: Date.now(),
@@ -798,7 +732,7 @@ async function onBeforeRequestHandler(details) {
 	if (details.method === "GET" && details.url.includes("/settings/billing")) {
 		await Log("Hit the billing page, let's make sure we get the updated subscription tier in case it was changed...")
 		const orgId = await requestActiveOrgId(details.tabId);
-		const api = new ClaudeAPI(details.cookieStoreId, orgId);
+		const api = getStrategy().apiForRequest(details, orgId);
 		await api.getSubscriptionTier(true);
 	}
 
@@ -854,7 +788,7 @@ async function onCompletedHandler(details) {
 				await conversationCache.delete(conversationId);
 				await Log("Branch switch detected — fetching fresh data for:", conversationId);
 
-				const api = new ClaudeAPI(details.cookieStoreId, orgId);
+				const api = getStrategy().apiForRequest(details, orgId);
 				const conversation = await api.getConversation(conversationId);
 				const conversationData = await conversation.getInfo(false);
 				const profileTokens = await api.getProfileTokens();
@@ -878,7 +812,7 @@ async function onCompletedHandler(details) {
 			const orgId = await requestActiveOrgId(details.tabId);
 			if (!orgId) return;
 			await tokenStorageManager.addOrgId(orgId);
-			const api = new ClaudeAPI(details.cookieStoreId, orgId);
+			const api = getStrategy().apiForRequest(details, orgId);
 			const usageData = await api.getUsageData();
 			await updateAllTabsWithUsage(usageData);
 			await scheduleResetNotifications(orgId, usageData);

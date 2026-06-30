@@ -403,14 +403,18 @@ class LengthUI {
 		const newConversation = getConversationId();
 		const isHomePage = newConversation === null;
 
-		if (this.state.conversationData?.conversationId != newConversation && !isHomePage) {
+		if (this.state.conversationData?.conversationId != newConversation && !isHomePage
+			&& this.state.requestedConversationId !== newConversation) {
 			await Log('LengthUI: Conversation changed, requesting data');
+			// Guard against re-sending every animation frame while the reply is in flight (a slow
+			// transport — e.g. the Brave content-script proxy — would otherwise cause a request storm).
+			this.state.requestedConversationId = newConversation;
 			sendBackgroundMessage({
 				type: 'requestData',
 				conversationId: newConversation
 			});
 			this.state.conversationData = null;
-			// Clear old data to avoid showing wrong info and to spam messages
+			// Clear old data to avoid showing wrong info
 			this.renderCostAndLength();
 			this.renderEstimate();
 		}

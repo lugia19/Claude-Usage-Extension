@@ -190,7 +190,6 @@ export class ConversationData {
 
 		// Associated metadata
 		this.projectUuid = data.projectUuid || null;
-		this.styleId = data.styleId || null;
 		this.settings = data.settings || {};
 		this.lastMessageTimestamp = data.lastMessageTimestamp || null; // Timestamp of the last message in the conversation
 		this.lengthIsEstimate = data.lengthIsEstimate || false; // True if length may be inaccurate due to features
@@ -259,7 +258,6 @@ export class ConversationData {
 			costUsedCache: this.costUsedCache,
 			conversationIsCachedUntil: this.conversationIsCachedUntil,
 			projectUuid: this.projectUuid,
-			styleId: this.styleId,
 			settings: this.settings,
 			lastMessageTimestamp: this.lastMessageTimestamp,
 			lengthIsEstimate: this.lengthIsEstimate,

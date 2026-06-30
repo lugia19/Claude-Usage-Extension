@@ -128,6 +128,26 @@ function renderOrgUsage(orgResult, showLabel) {
 	return wrapper;
 }
 
+// An org we know about but couldn't fetch usage for (e.g. a Brave container with no open tab).
+function renderOrgUnavailable(orgResult, showLabel, message) {
+	const wrapper = document.createElement('div');
+	wrapper.className = 'popup-org-section';
+
+	if (showLabel) {
+		const header = document.createElement('div');
+		header.className = 'popup-org-header';
+		header.textContent = orgResult.orgName || orgResult.orgId.substring(0, 12) + '...';
+		wrapper.appendChild(header);
+	}
+
+	const msg = document.createElement('div');
+	msg.className = 'popup-empty';
+	msg.textContent = message;
+	wrapper.appendChild(msg);
+
+	return wrapper;
+}
+
 function applyStaticLocalization() {
 	const loadingEl = document.querySelector('#usage-container .popup-loading');
 	if (loadingEl) loadingEl.textContent = localize('popup.loading');
@@ -159,15 +179,15 @@ async function loadUsageData() {
 		}
 
 		container.innerHTML = '';
-		const validResults = results.filter(r => !r.error);
-		const showOrgLabels = validResults.length > 1;
+		const showOrgLabels = results.length > 1;
+		// Wording for unreachable orgs depends on platform: on Brave it's a no-open-tab situation.
+		const { isBrave } = await browser.storage.local.get('isBrave');
+		const unavailableMsg = localize(isBrave ? 'popup.org_no_tab' : 'popup.org_unavailable');
 
-		for (const orgResult of validResults) {
-			container.appendChild(renderOrgUsage(orgResult, showOrgLabels));
-		}
-
-		if (validResults.length === 0) {
-			container.innerHTML = `<div class="popup-error">${localize('popup.load_failed')}</div>`;
+		for (const orgResult of results) {
+			container.appendChild(orgResult.error
+				? renderOrgUnavailable(orgResult, showOrgLabels, unavailableMsg)
+				: renderOrgUsage(orgResult, showOrgLabels));
 		}
 
 		// Update reset countdowns every 30 seconds
