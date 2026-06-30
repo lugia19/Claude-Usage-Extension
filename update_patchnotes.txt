@@ -1,1 +1,2 @@
-Fix tooltips to match new styling
+Added support for brave containers
+Improved performance and responsiveness
