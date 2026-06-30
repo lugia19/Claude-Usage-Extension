@@ -17,6 +17,7 @@ const CONFIG = {
 	"MODEL_VERSION_MAP": {
 		// DOM labels (lowercased) → API model IDs
 		"fable 5": "claude-fable-5",
+		"sonnet 5": "claude-sonnet-5",
 		"opus 4.8": "claude-opus-4-8",
 		"opus 4.7": "claude-opus-4-7",
 		"sonnet 4.6": "claude-sonnet-4-6",

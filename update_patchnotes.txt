@@ -1,2 +1,1 @@
-Added support for brave containers
-Improved performance and responsiveness
+Added Sonnet 5 support
