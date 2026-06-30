@@ -143,18 +143,14 @@ class BraveStrategy extends ContainerStrategy {
 			await Log("warn", "Tab enumeration failed:", e);
 		}
 
-		// The default container's orgs → reachable via a plain background fetch (no tab needed).
+		// The default container's ACTIVE org → reachable via a plain background fetch (no tab needed).
+		// We read its lastActiveOrg cookie (the default store) rather than listing /api/organizations,
+		// so the account's other, non-active orgs don't show up as "ghost" cards.
 		try {
-			const resp = await fetch('https://claude.ai/api/organizations', {
-				credentials: 'include',
-				headers: { 'Content-Type': 'application/json' }
-			});
-			if (resp.ok) {
-				const orgs = await resp.json();
-				if (Array.isArray(orgs)) for (const o of orgs) add(o.uuid, { default: true });
-			}
+			const cookie = await browser.cookies.get({ name: 'lastActiveOrg', url: 'https://claude.ai', storeId: '0' });
+			if (cookie?.value) add(cookie.value, { default: true });
 		} catch (e) {
-			await Log("warn", "Default-container org fetch failed:", e);
+			await Log("warn", "Default-container active-org cookie read failed:", e);
 		}
 
 		// Remaining TTL'd known orgs → a non-default container with no open tab (unreachable → "open a tab").
