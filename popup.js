@@ -14,6 +14,7 @@ const LIMIT_LABEL_KEYS = {
 	weekly: 'usage.label_weekly',
 	sonnetWeekly: 'usage.label_sonnet_weekly',
 	opusWeekly: 'usage.label_opus_weekly',
+	fableWeekly: 'usage.label_fable_weekly',
 	extraUsage: 'usage.label_extra'
 };
 

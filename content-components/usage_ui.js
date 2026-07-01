@@ -66,6 +66,7 @@ class UsageSection {
 			weekly: 'usage.label_weekly',
 			sonnetWeekly: 'usage.label_sonnet_weekly',
 			opusWeekly: 'usage.label_opus_weekly',
+			fableWeekly: 'usage.label_fable_weekly',
 			extraUsage: 'usage.label_extra'
 		};
 		return labelKeys[limitKey] ? localize(labelKeys[limitKey]) : limitKey;
@@ -549,7 +550,7 @@ class UsageUI {
 			const modelName = modelSelector?.textContent?.trim() || null;
 			const weeklyLimit = usageData.getBindingWeeklyLimit(modelName);
 			if (weeklyLimit) {
-				const markerKeys = { weekly: 'usage.marker_all', sonnetWeekly: 'usage.marker_sonnet', opusWeekly: 'usage.marker_opus' };
+				const markerKeys = { weekly: 'usage.marker_all', sonnetWeekly: 'usage.marker_sonnet', opusWeekly: 'usage.marker_opus', fableWeekly: 'usage.marker_fable' };
 				const markerName = markerKeys[weeklyLimit.key] ? localize(markerKeys[weeklyLimit.key]) : localize('usage.marker_fallback');
 				const markerLabel = `${markerName}: ${weeklyLimit.percentage.toFixed(0)}%`;
 				progressBar.setMarker(weeklyLimit.percentage, markerLabel);

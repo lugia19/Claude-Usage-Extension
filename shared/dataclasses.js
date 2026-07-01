@@ -19,7 +19,8 @@ export class UsageData {
 			session: data.limits?.session || null,      // five_hour
 			weekly: data.limits?.weekly || null,         // seven_day
 			sonnetWeekly: data.limits?.sonnetWeekly || null,  // seven_day_sonnet (Max only)
-			opusWeekly: data.limits?.opusWeekly || null       // seven_day_opus (Max only)
+			opusWeekly: data.limits?.opusWeekly || null,       // seven_day_opus (Max only)
+			fableWeekly: data.limits?.fableWeekly || null      // weekly_scoped Fable (new format only)
 		};
 		this.subscriptionTier = data.subscriptionTier || 'claude_free';
 		this.extraUsage = data.extraUsage || null;  // { isEnabled, monthlyLimit, usedCredits } (cents)
@@ -28,29 +29,82 @@ export class UsageData {
 	}
 
 	static fromAPIResponse(apiResponse, subscriptionTier, creditsResponse = null) {
-		// DEBUG: Force all limits to 100% to test extra usage display
+		const toResetsAt = (isoString) => isoString ? new Date(isoString).getTime() : null;
+
+		// Old top-level format: { utilization, resets_at }
 		const parseLimit = (obj) => obj ? {
 			percentage: obj.utilization,
-			resetsAt: new Date(obj.resets_at).getTime()
+			resetsAt: toResetsAt(obj.resets_at)
 		} : null;
 
-		const extraUsage = apiResponse.extra_usage?.is_enabled ? {
-			isEnabled: true,
-			monthlyLimit: apiResponse.extra_usage.monthly_limit,
-			usedCredits: apiResponse.extra_usage.used_credits || 0
-		} : null;
-
-		return new UsageData({
-			limits: {
+		// New format: authoritative `limits` array with { kind, percent, resets_at, scope }.
+		// Prefer it when present; fall back to the old top-level fields otherwise.
+		let limits;
+		if (Array.isArray(apiResponse.limits) && apiResponse.limits.length > 0) {
+			limits = UsageData.parseNewLimits(apiResponse.limits, toResetsAt);
+		} else {
+			limits = {
 				session: parseLimit(apiResponse.five_hour),
 				weekly: parseLimit(apiResponse.seven_day),
 				sonnetWeekly: parseLimit(apiResponse.seven_day_sonnet),
 				opusWeekly: parseLimit(apiResponse.seven_day_opus)
-			},
+			};
+		}
+
+		// Extra usage: prefer the new `spend` object (replacement for `extra_usage`),
+		// fall back to the old `extra_usage` field. Both are in minor units (cents).
+		const spend = apiResponse.spend;
+		let extraUsage = null;
+		if (spend?.enabled) {
+			extraUsage = {
+				isEnabled: true,
+				monthlyLimit: spend.limit?.amount_minor ?? spend.cap?.money?.amount_minor ?? 0,
+				usedCredits: spend.used?.amount_minor || 0
+			};
+		} else if (apiResponse.extra_usage?.is_enabled) {
+			extraUsage = {
+				isEnabled: true,
+				monthlyLimit: apiResponse.extra_usage.monthly_limit,
+				usedCredits: apiResponse.extra_usage.used_credits || 0
+			};
+		}
+
+		// Prepaid credit balance comes from the separate /credits endpoint.
+		// (spend.balance is NOT the credit balance — it reads null even when credits exist.)
+		const creditBalance = creditsResponse?.amount ?? null;
+
+		return new UsageData({
+			limits,
 			subscriptionTier,
 			extraUsage,
-			creditBalance: creditsResponse?.amount ?? null
+			creditBalance
 		});
+	}
+
+	// Map the new `limits` array into our fixed internal keys.
+	// Scoped weekly limits (weekly_scoped) are keyed by model display name.
+	static parseNewLimits(arr, toResetsAt) {
+		const scopedKeyByModel = { fable: 'fableWeekly', sonnet: 'sonnetWeekly', opus: 'opusWeekly' };
+		const limits = { session: null, weekly: null, sonnetWeekly: null, opusWeekly: null, fableWeekly: null };
+
+		for (const entry of arr) {
+			const value = { percentage: entry.percent, resetsAt: toResetsAt(entry.resets_at) };
+			if (entry.kind === 'session') {
+				limits.session = value;
+			} else if (entry.kind === 'weekly_all') {
+				limits.weekly = value;
+			} else if (entry.kind === 'weekly_scoped') {
+				const model = entry.scope?.model?.display_name?.toLowerCase();
+				const key = model ? scopedKeyByModel[model] : null;
+				if (key) {
+					limits[key] = value;
+				} else {
+					console.warn(`Unknown scoped weekly limit model: ${entry.scope?.model?.display_name}`);
+				}
+			}
+		}
+
+		return limits;
 	}
 
 	// Convert % to estimated tokens remaining for a limit
@@ -112,8 +166,9 @@ export class UsageData {
 			const m = model.toLowerCase();
 			if (m.includes('sonnet')) keys.push('sonnetWeekly');
 			if (m.includes('opus')) keys.push('opusWeekly');
+			if (m.includes('fable')) keys.push('fableWeekly');
 		} else {
-			keys.push('sonnetWeekly', 'opusWeekly');
+			keys.push('sonnetWeekly', 'opusWeekly', 'fableWeekly');
 		}
 
 

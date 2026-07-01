@@ -72,7 +72,7 @@ class ClaudeAPI {
 		const usageLimitsResponse = await this.getUsageLimits();
 		const subscriptionTier = await this.getSubscriptionTier();
 		let creditsResponse = null;
-		if (usageLimitsResponse.extra_usage?.is_enabled) {
+		if (usageLimitsResponse.spend?.enabled || usageLimitsResponse.extra_usage?.is_enabled) {
 			creditsResponse = await this.getCredits();
 		}
 		const usageData = UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier, creditsResponse);

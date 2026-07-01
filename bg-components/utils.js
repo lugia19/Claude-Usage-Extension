@@ -84,6 +84,13 @@ function fillEstimatedCaps(caps) {
 		}
 	}
 
+	// fableWeekly is half of the (all-model) weekly cap on every tier that has one
+	for (const tier of tiers) {
+		if (caps[tier]?.weekly != null) {
+			caps[tier].fableWeekly ??= caps[tier].weekly / 2;
+		}
+	}
+
 	// sonnetWeekly only lives on max_5x and max_20x (4x relationship)
 	const max5x = caps.claude_max_5x;
 	const max20x = caps.claude_max_20x;

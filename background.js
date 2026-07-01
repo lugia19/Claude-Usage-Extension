@@ -552,7 +552,8 @@ async function debugLogMessageCost(usageData, conversationData) {
 		session: 'debug_session',
 		weekly: 'debug_weekly',
 		sonnetWeekly: 'debug_sonnet_weekly',
-		opusWeekly: 'debug_opus_weekly'
+		opusWeekly: 'debug_opus_weekly',
+		fableWeekly: 'debug_fable_weekly'
 	};
 
 	for (const [limitKey, storagePrefix] of Object.entries(limitMapping)) {
