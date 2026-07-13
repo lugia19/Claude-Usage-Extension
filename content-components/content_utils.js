@@ -482,7 +482,7 @@ class ProgressBar {
 		this.bar.style.background = BLUE_HIGHLIGHT;
 
 		this.tooltip = document.createElement('div');
-		this.tooltip.className = 'bg-[var(--cds-tooltip-bg)] text-[var(--cds-tooltip-fg)] ut-tooltip';
+		this.tooltip.className = 'bg-[var(--cds-tooltip-bg)] text-[var(--cds-tooltip-fg)] ut-tooltip shadow-sm dark:shadow-panel-sm';
 
 		this.track.appendChild(this.bar);
 		this.container.appendChild(this.track);
@@ -507,7 +507,7 @@ class ProgressBar {
 			this.container.appendChild(this.marker);
 
 			this.markerTooltip = document.createElement('div');
-			this.markerTooltip.className = 'bg-[var(--cds-tooltip-bg)] text-[var(--cds-tooltip-fg)] ut-tooltip';
+			this.markerTooltip.className = 'bg-[var(--cds-tooltip-bg)] text-[var(--cds-tooltip-fg)] ut-tooltip shadow-sm dark:shadow-panel-sm';
 			getTooltipPortal().appendChild(this.markerTooltip);
 			setupTooltip(this.marker, this.markerTooltip);
 		}

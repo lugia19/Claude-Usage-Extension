@@ -432,7 +432,7 @@ class UsageUI {
 	createTooltips() {
 		const create = (text) => {
 			const tooltip = document.createElement('div');
-			tooltip.className = 'bg-[var(--cds-tooltip-bg)] text-[var(--cds-tooltip-fg)] ut-tooltip font-normal font-ui';
+			tooltip.className = 'bg-[var(--cds-tooltip-bg)] text-[var(--cds-tooltip-fg)] ut-tooltip font-normal font-ui shadow-sm dark:shadow-panel-sm';
 			tooltip.textContent = text;
 			tooltip.style.maxWidth = '400px';
 			tooltip.style.textAlign = 'left';
