@@ -583,8 +583,9 @@ class ConversationAPI {
 			}
 		}
 
+
 		if ("enabled_web_search" in conversationData.settings || "enabled_bananagrams" in conversationData.settings) {
-			if (conversationData.settings?.enabled_websearch || conversationData.settings?.enabled_bananagrams) {
+			if (conversationData.settings?.enabled_web_search || conversationData.settings?.enabled_bananagrams) {
 				lengthTokens += FEATURE_COSTS["citation_info"];
 				costTokens += FEATURE_COSTS["citation_info"] * CONFIG.CACHING_MULTIPLIER;
 			}
