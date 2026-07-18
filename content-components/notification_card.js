@@ -1,4 +1,4 @@
-/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, localize, SUPPORTED_LOCALES */
+/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, localize, SUPPORTED_LOCALES, isFunkyWaterEnabled */
 'use strict';
 
 const DONATION_1M = 1000000;
@@ -478,6 +478,29 @@ class SettingsCard extends FloatingCard {
 		toggleContainer.appendChild(checkbox);
 		toggleContainer.appendChild(toggleLabel);
 
+		// Funky water toggle
+		const funkyContainer = document.createElement('div');
+		funkyContainer.className = 'ut-row';
+		funkyContainer.style.alignItems = 'start';
+		funkyContainer.style.gap = '6px';
+		funkyContainer.style.marginBottom = '8px';
+
+		const funkyCheckbox = document.createElement('input');
+		funkyCheckbox.type = 'checkbox';
+		funkyCheckbox.id = 'ut-funky-toggle';
+		funkyCheckbox.checked = await isFunkyWaterEnabled();
+		funkyCheckbox.addEventListener('change', () => {
+			browser.storage.local.set({ funkyWaterEnabled: funkyCheckbox.checked });
+		});
+
+		const funkyLabel = document.createElement('label');
+		funkyLabel.htmlFor = 'ut-funky-toggle';
+		funkyLabel.className = 'text-sm';
+		funkyLabel.textContent = localize('card.funky_toggle');
+
+		funkyContainer.appendChild(funkyCheckbox);
+		funkyContainer.appendChild(funkyLabel);
+
 		// Language override dropdown
 		const langContainer = document.createElement('div');
 		langContainer.className = 'ut-row';
@@ -524,6 +547,7 @@ class SettingsCard extends FloatingCard {
 		buttonContainer.appendChild(saveButton);
 		buttonContainer.appendChild(debugButton);
 		this.element.appendChild(toggleContainer);
+		this.element.appendChild(funkyContainer);
 		this.element.appendChild(langContainer);
 		this.element.appendChild(buttonContainer);
 

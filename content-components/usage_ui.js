@@ -1,7 +1,7 @@
 /* global CONFIG, Log, ProgressBar, sendBackgroundMessage, getActiveOrgId,
    setupTooltip, getTooltipPortal, getResetTimeHTML, sleep, isMobileView, isCodePage, UsageData, isPeakHours,
    RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS, LayoutManager, mountToAnchor,
-   localize, fmtNum, localeForIntl */
+   localize, fmtNum, localeForIntl, WaterWidget, isFunkyWaterEnabled */
 'use strict';
 
 // Usage section with multiple limit bars
@@ -9,6 +9,8 @@ class UsageSection {
 	constructor() {
 		this.elements = this.createElement();
 		this.limitBars = new Map(); // limitKey -> { row, percentage, resetTime, progressBar }
+		this.waterWidget = new WaterWidget();
+		this.elements.container.appendChild(this.waterWidget.element);
 	}
 
 	createElement() {
@@ -20,6 +22,12 @@ class UsageSection {
 
 		container.appendChild(barsContainer);
 		return { container, barsContainer };
+	}
+
+	// Funky mode: wavy bars (via CSS class) + the water-equivalent line.
+	setFunky(enabled) {
+		this.elements.barsContainer.classList.toggle('ut-funky', enabled);
+		this.waterWidget.setEnabled(enabled);
 	}
 
 	createLimitBar(limitKey) {
@@ -142,6 +150,13 @@ class UsageSection {
 			resetTime.innerHTML = '';
 		}
 
+		// Feed the funky water line with the estimated session tokens used
+		// (same cap math as the bar tooltips above).
+		const session = usageData.limits.session;
+		let sessionCap = session && CONFIG.ESTIMATED_CAPS?.[usageData.subscriptionTier]?.session;
+		if (sessionCap && isPeakHours()) sessionCap = sessionCap / CONFIG.PEAK_SESSION_MULTIPLIER;
+		this.waterWidget.setTokens(sessionCap ? (session.percentage / 100) * sessionCap : null);
+
 		// Remove bars for limits no longer active
 		for (const [key, barElements] of this.limitBars) {
 			if (!seenKeys.has(key)) {
@@ -235,6 +250,12 @@ class UsageUI {
 		}
 
 		this.usageSection = new UsageSection();
+		this.usageSection.setFunky(await isFunkyWaterEnabled());
+		browser.storage.onChanged.addListener((changes, area) => {
+			if (area === 'local' && changes.funkyWaterEnabled) {
+				this.usageSection.setFunky(changes.funkyWaterEnabled.newValue !== false);
+			}
+		});
 		this.elements.sidebar = await this.createSidebarElements();
 		this.elements.chat = this.createChatElements();
 		this.elements.tooltips = this.createTooltips();

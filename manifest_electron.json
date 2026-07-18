@@ -23,6 +23,7 @@
 				"lib/o200k_base.js",
 				"content-components/localization.js",
 				"content-components/content_utils.js",
+				"content-components/funky_water.js",
 				"content-components/electron_reciever.js",
 				"content-components/ui_dataclasses.js",
 				"content-components/notification_card.js",
