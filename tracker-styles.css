@@ -223,10 +223,20 @@
 /* Funky water mode */
 .ut-water-line {
 	display: flex;
-	align-items: center;
-	gap: 4px;
+	flex-direction: column;
 	margin-top: 2px;
 	user-select: none;
+}
+
+.ut-water-headline {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ut-water-range {
+	font-size: 11px;
+	opacity: 0.7;
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;

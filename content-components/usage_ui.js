@@ -1,7 +1,7 @@
 /* global CONFIG, Log, ProgressBar, sendBackgroundMessage, getActiveOrgId,
    setupTooltip, getTooltipPortal, getResetTimeHTML, sleep, isMobileView, isCodePage, UsageData, isPeakHours,
    RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS, LayoutManager, mountToAnchor,
-   localize, fmtNum, localeForIntl, WaterWidget, isFunkyWaterEnabled */
+   localize, fmtNum, localeForIntl, WaterWidget, isFunkyWaterEnabled, getFunkyWaterPreset */
 'use strict';
 
 // Usage section with multiple limit bars
@@ -28,6 +28,11 @@ class UsageSection {
 	setFunky(enabled) {
 		this.elements.barsContainer.classList.toggle('ut-funky', enabled);
 		this.waterWidget.setEnabled(enabled);
+	}
+
+	// Which datacenter preset the water estimate uses.
+	setWaterPreset(preset) {
+		this.waterWidget.setPreset(preset);
 	}
 
 	createLimitBar(limitKey) {
@@ -251,9 +256,14 @@ class UsageUI {
 
 		this.usageSection = new UsageSection();
 		this.usageSection.setFunky(await isFunkyWaterEnabled());
+		this.usageSection.setWaterPreset(await getFunkyWaterPreset());
 		browser.storage.onChanged.addListener((changes, area) => {
-			if (area === 'local' && changes.funkyWaterEnabled) {
+			if (area !== 'local') return;
+			if (changes.funkyWaterEnabled) {
 				this.usageSection.setFunky(changes.funkyWaterEnabled.newValue !== false);
+			}
+			if (changes.funkyWaterPreset) {
+				this.usageSection.setWaterPreset(changes.funkyWaterPreset.newValue || 'us_avg');
 			}
 		});
 		this.elements.sidebar = await this.createSidebarElements();
