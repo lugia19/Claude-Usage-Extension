@@ -747,10 +747,18 @@ class ConversationAPI {
 		// Step 11: Future cost
 		let futureCost;
 		let uncachedFutureCost;
+		let cachedUntil = conversationIsCachedUntil;
 		if (isNewMessage) {
 			const futureConversation = await this.getInfo(false);
 			futureCost = futureConversation.cost;
 			uncachedFutureCost = futureConversation.uncachedCost;
+			// getCachingInfo drops the just-sent message's anchor, because that message can't
+			// read its own cache. But conversationIsCachedUntil is forward-looking - it answers
+			// "will the next message be cached" - and the anchor exists now that the reply has
+			// been generated. So take it from the same isNewMessage=false pass the future cost
+			// comes from. Without this the first message of a conversation reports uncached
+			// (its only human message gets popped) until a reload or a second message.
+			cachedUntil = futureConversation.conversationIsCachedUntil;
 		} else {
 			futureCost = Math.round(costTokens);
 			uncachedFutureCost = Math.round(uncachedCostTokens);
@@ -772,7 +780,7 @@ class ConversationAPI {
 			model: conversationModelType,
 			modelVersion: conversationData.model || CONFIG.DEFAULT_MODEL_VERSION,
 			costUsedCache: conversationIsCached,
-			conversationIsCachedUntil: conversationIsCachedUntil,
+			conversationIsCachedUntil: cachedUntil,
 			projectUuid: conversationData.project_uuid,
 			settings: effectiveSettings,
 			lastMessageTimestamp: lastMessageTimestamp,
