@@ -1,2 +1,3 @@
-Fixed bug that was making citation info tokens not be counted
-Tweaked tooltips to match claude.ai styling
+Support new memory system prompt
+Fix various UI bugs
+Fix mobile UI
