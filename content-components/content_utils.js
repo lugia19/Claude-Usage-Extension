@@ -615,6 +615,52 @@ function getChatAreaRegularAnchor() {
 	};
 }
 
+// Mobile headers are position:absolute with a fixed height, so forcing our line onto a
+// second line inside them renders it outside the header, on top of the message list (and
+// pushes the page's own buttons out with it). The layout already reserves the header's
+// height as margin-top on the sibling scroll container, so take a strip of that instead:
+// sit between the two and carry the reservation on our own margin. When our line is empty
+// its height is 0, so the scroller ends up exactly where the original margin put it.
+function getMobileTitleAreaAnchor(headerRow) {
+	const container = headerRow?.parentElement;
+	const scroller = container?.querySelector(':scope > .overflow-y-auto.overflow-x-hidden');
+	if (!scroller) return null;
+
+	const headerHeight = Math.round(headerRow.getBoundingClientRect().height);
+	if (!headerHeight) return null;
+
+	// An older build forced a wrap here, which is what pushed the header's own controls out.
+	headerRow.classList.remove('flex-wrap');
+	scroller.style.marginTop = '0px';
+
+	return {
+		parent: container,
+		referenceNode: scroller,
+		styles: {
+			flexBasis: '',
+			// Line up with the title's glyphs: the header's own padding, plus the 6px the
+			// title button insets its text by.
+			paddingLeft: `${(parseFloat(getComputedStyle(headerRow).paddingLeft) || 0) + 6}px`,
+			marginLeft: '',
+			// The margin keeps the reservation intact (and stays correct when the line is
+			// empty); `top` does the tucking, so the scroller never creeps under the header.
+			marginTop: `${headerHeight}px`,
+			position: 'relative',
+			top: '-8px',
+			zIndex: '11', // above the header's gradient overlay
+		},
+		classes: { remove: ['bg-bg-100', '!px-2'] },
+	};
+}
+
+// Hand the header-height reservation back to the scroll container. Needed when the view
+// stops being mobile (resize past the breakpoint, tablet rotation) - otherwise the offset
+// we moved onto our own element stays gone and the messages slide under the header.
+function clearMobileTitleAreaOffset(headerRow) {
+	const scroller = headerRow?.parentElement?.querySelector(':scope > .overflow-y-auto.overflow-x-hidden');
+	if (scroller?.style.marginTop) scroller.style.marginTop = '';
+}
+
 function getTitleAreaAnchor() {
 	const chatTitle = document.querySelector(SELECTORS.CHAT_MENU);
 	if (!chatTitle) return null;
@@ -625,22 +671,9 @@ function getTitleAreaAnchor() {
 	const headerRow = titleLine.parentElement;
 
 	if (isMobileView()) {
-		if (!headerRow) return null;
-		headerRow.classList.add('flex-wrap');
-
-		const headerPadding = parseFloat(getComputedStyle(headerRow).paddingLeft) || 0;
-		return {
-			parent: headerRow,
-			referenceNode: null,
-			styles: {
-				flexBasis: '100%',
-				marginTop: '-36px',
-				marginLeft: `-${headerPadding}px`,
-				paddingLeft: `${headerPadding + 8}px`,
-			},
-			classes: { add: ['bg-bg-100'], remove: ['!px-2'] },
-		};
+		return getMobileTitleAreaAnchor(headerRow);
 	} else {
+		clearMobileTitleAreaOffset(headerRow);
 		titleLine.classList.add('flex-wrap');
 
 		return {
@@ -669,21 +702,9 @@ const pageLayouts = {
 				const headerRow = titleLine.parentElement;
 
 				if (isMobileView()) {
-					if (!headerRow) return null;
-					headerRow.classList.add('flex-wrap');
-					const headerPadding = parseFloat(getComputedStyle(headerRow).paddingLeft) || 0;
-					return {
-						parent: headerRow,
-						referenceNode: null,
-						styles: {
-							flexBasis: '100%',
-							marginTop: '-36px',
-							marginLeft: `-${headerPadding}px`,
-							paddingLeft: `${headerPadding + 8}px`,
-						},
-						classes: { add: ['bg-bg-100'], remove: ['!px-2'] },
-					};
+					return getMobileTitleAreaAnchor(headerRow);
 				} else {
+					clearMobileTitleAreaOffset(headerRow);
 					titleLine.classList.add('flex-wrap');
 
 					return {
