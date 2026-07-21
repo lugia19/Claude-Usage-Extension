@@ -167,6 +167,32 @@
 	flex-grow: 1;
 }
 
+/* Composer stat line: the session bar gets a fixed share of the line so it never
+   resizes when the right-hand text (messages left / reset time / PEAK) changes width. */
+.ut-statline-left {
+	flex: 0 1 35%;
+}
+
+.ut-statline-pct {
+	display: inline-block;
+	min-width: 30px;
+}
+
+/* Optical centering: flex centers the 6px track on the text's line box, but the
+   digits' visual center sits a touch above it, so the bar reads high. Nudge down.
+   .ut-progress is already position: relative (for the weekly marker). */
+.ut-statline-left .ut-progress {
+	top: 1px;
+}
+
+#ut-stat-right {
+	flex: 0 0 auto;
+}
+
+#ut-stat-right > * {
+	white-space: nowrap;
+}
+
 .ut-justify-between {
 	justify-content: space-between;
 }

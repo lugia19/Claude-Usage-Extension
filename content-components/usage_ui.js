@@ -380,7 +380,7 @@ class UsageUI {
 		// Left container (usage)
 		const leftContainer = document.createElement('div');
 		leftContainer.id = 'ut-stat-left';
-		leftContainer.className = 'ut-row ut-flex-1';
+		leftContainer.className = 'ut-row ut-statline-left';
 
 		const usageDisplay = document.createElement('div');
 		usageDisplay.className = 'text-text-400 text-xs';
@@ -508,7 +508,7 @@ class UsageUI {
 			const pct = effectiveTotal > 0 ? (used / effectiveTotal) * 100 : 0;
 
 			const color = pct >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
-			usageDisplay.innerHTML = `${localize('usage.extra_inline')} <span style="color: ${color}">${pct.toFixed(0)}%</span>`;
+			usageDisplay.innerHTML = `${localize('usage.extra_inline')} <span class="ut-statline-pct" style="color: ${color}">${pct.toFixed(0)}%</span>`;
 			peakIndicator.style.display = 'none';
 
 			if (!isMobileView() && progressBar) {
@@ -528,7 +528,7 @@ class UsageUI {
 
 		// Normal session display
 		const color = session.percentage >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
-		usageDisplay.innerHTML = `${localize('usage.session_inline')} <span style="color: ${color}">${session.percentage.toFixed(0)}%</span>`;
+		usageDisplay.innerHTML = `${localize('usage.session_inline')} <span class="ut-statline-pct" style="color: ${color}">${session.percentage.toFixed(0)}%</span>`;
 		peakIndicator.style.display = isPeakHours() ? '' : 'none';
 
 		// Progress bar (desktop only)
