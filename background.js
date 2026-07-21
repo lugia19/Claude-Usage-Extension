@@ -265,6 +265,22 @@ async function updateAllTabsWithUsage(usageData = null) {
 	}
 }
 
+// A conversation record can lag the message that created it: a freshly created chat comes back
+// from the API with no model at all, so getInfo() falls back to CONFIG.DEFAULT_MODEL_VERSION and
+// mislabels it - reporting Opus for a Sonnet chat, which then reads as a model change and hides
+// the cache indicator. The request body we captured is authoritative, so prefer it while it is
+// fresh. Bounded by time because a pending entry outlives its request whenever processResponse
+// bails before deleting it.
+const PENDING_MODEL_TRUST_MS = 5 * 60 * 1000;
+
+async function applyPendingModel(conversationData, orgId, conversationId) {
+	const pending = await pendingRequests.get(`${orgId}:${conversationId}`);
+	if (!pending || Date.now() - (pending.requestTimestamp || 0) > PENDING_MODEL_TRUST_MS) return;
+
+	if (pending.model) conversationData.model = pending.model;
+	if (pending.modelVersion) conversationData.modelVersion = pending.modelVersion;
+}
+
 // Updates a specific tab with conversation metrics
 async function updateTabWithConversationData(tabId, conversationData) {
 	await Log("Updating tab with conversation metrics:", tabId, conversationData);
@@ -375,6 +391,9 @@ async function requestData(message, sender, orgId) {
 				conversationData.length += profileTokens;
 				conversationData.cost += profileTokens * CONFIG.CACHING_MULTIPLIER;
 				conversationData.uncachedCost += profileTokens * CONFIG.CACHING_MULTIPLIER;
+
+				// Before caching, so the correction sticks for the cache's lifetime too.
+				await applyPendingModel(conversationData, orgId, conversationId);
 
 				await conversationCache.set(conversationId, conversationData.toJSON(), CONVERSATION_CACHE_TTL);
 				await updateTabWithConversationData(sender.tab.id, conversationData);
