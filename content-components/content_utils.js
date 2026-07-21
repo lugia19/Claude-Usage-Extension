@@ -808,16 +808,32 @@ const pageLayouts = {
 			sidebar: getSidebarRegularAnchor,
 			chatArea: getChatAreaRegularAnchor,
 			titleArea() {
-				const incognitoHeader = document.querySelector('.z-header .text-sm.select-none');
-				if (!incognitoHeader || incognitoHeader.textContent.trim() !== 'Incognito chat') return null;
-
-				const headerRow = incognitoHeader.parentElement;
-				headerRow.classList.add('flex-wrap');
+				// The label used to live under .z-header, which no longer exists - it now sits
+				// in a fixed title bar. Matched structurally rather than by its text: the layout
+				// is already gated on isIncognitoConversation(), so testing for "Incognito chat"
+				// bought nothing and broke in every locale but English.
+				const label = document.querySelector('.fixed.draggable > .text-sm.select-none');
+				if (!label) return null;
 
 				return {
-					parent: headerRow,
-					referenceNode: null,
-					styles: { flexBasis: '100%', paddingLeft: '8px', marginTop: '12px' },
+					insertAfter: label,
+					styles: {
+						// That bar is a fixed-height, nowrap flex row with room to spare, so sit
+						// inline beside the label instead of forcing a line it can't accommodate.
+						// min-width/overflow keep a long conversation from blowing the bar out.
+						flexBasis: '',
+						marginTop: '',
+						marginLeft: '',
+						paddingLeft: '',
+						position: '',
+						top: '',
+						zIndex: '',
+						minWidth: '0',
+						overflow: 'hidden',
+						whiteSpace: 'nowrap',
+					},
+					// Inherit the bar's colour; it themes independently of the page body.
+					classes: { remove: ['text-text-500', 'bg-bg-100'] },
 				};
 			},
 		},
