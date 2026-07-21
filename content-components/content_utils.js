@@ -615,6 +615,23 @@ function getChatAreaRegularAnchor() {
 	};
 }
 
+// The title line is a single element that gets re-anchored as the layout changes, and
+// in-page navigation (incognito <-> normal chat) can hand it from one anchor to another
+// without a reload. Every titleArea anchor therefore spreads this reset and states the
+// muted-text class explicitly, so nothing the previous anchor set can survive the move.
+const TITLE_AREA_STYLE_RESET = {
+	flexBasis: '',
+	marginTop: '',
+	marginLeft: '',
+	paddingLeft: '',
+	position: '',
+	top: '',
+	zIndex: '',
+	minWidth: '',
+	overflow: '',
+	whiteSpace: '',
+};
+
 // Mobile headers are position:absolute with a fixed height, so forcing our line onto a
 // second line inside them renders it outside the header, on top of the message list (and
 // pushes the page's own buttons out with it). The layout already reserves the header's
@@ -637,11 +654,10 @@ function getMobileTitleAreaAnchor(headerRow) {
 		parent: container,
 		referenceNode: scroller,
 		styles: {
-			flexBasis: '',
+			...TITLE_AREA_STYLE_RESET,
 			// Line up with the title's glyphs: the header's own padding, plus the 6px the
 			// title button insets its text by.
 			paddingLeft: `${(parseFloat(getComputedStyle(headerRow).paddingLeft) || 0) + 6}px`,
-			marginLeft: '',
 			// The margin keeps the reservation intact (and stays correct when the line is
 			// empty); `top` does the tucking, so the scroller never creeps under the header.
 			marginTop: `${headerHeight}px`,
@@ -649,7 +665,7 @@ function getMobileTitleAreaAnchor(headerRow) {
 			top: '-8px',
 			zIndex: '11', // above the header's gradient overlay
 		},
-		classes: { remove: ['bg-bg-100', '!px-2'] },
+		classes: { toggle: { 'text-text-500': true, 'bg-bg-100': false, '!px-2': false } },
 	};
 }
 
@@ -679,8 +695,8 @@ function getTitleAreaAnchor() {
 		return {
 			parent: titleLine,
 			referenceNode: null,
-			styles: { flexBasis: '100%', paddingLeft: '6px' },
-			classes: {}
+			styles: { ...TITLE_AREA_STYLE_RESET, flexBasis: '100%', paddingLeft: '6px' },
+			classes: { toggle: { 'text-text-500': true } }
 		};
 	}
 }
@@ -710,8 +726,8 @@ const pageLayouts = {
 					return {
 						parent: titleLine,
 						referenceNode: null,
-						styles: { flexBasis: '100%', paddingLeft: '6px' },
-						classes: {},
+						styles: { ...TITLE_AREA_STYLE_RESET, flexBasis: '100%', paddingLeft: '6px' },
+						classes: { toggle: { 'text-text-500': true } },
 					};
 				}
 			},
@@ -818,22 +834,17 @@ const pageLayouts = {
 				return {
 					insertAfter: label,
 					styles: {
+						...TITLE_AREA_STYLE_RESET,
 						// That bar is a fixed-height, nowrap flex row with room to spare, so sit
 						// inline beside the label instead of forcing a line it can't accommodate.
 						// min-width/overflow keep a long conversation from blowing the bar out.
-						flexBasis: '',
-						marginTop: '',
-						marginLeft: '',
-						paddingLeft: '',
-						position: '',
-						top: '',
-						zIndex: '',
 						minWidth: '0',
 						overflow: 'hidden',
 						whiteSpace: 'nowrap',
 					},
-					// Inherit the bar's colour; it themes independently of the page body.
-					classes: { remove: ['text-text-500', 'bg-bg-100'] },
+					// Drop the muted class so the text inherits the bar's own colour - it themes
+					// independently of the page body.
+					classes: { toggle: { 'text-text-500': false, 'bg-bg-100': false } },
 				};
 			},
 		},
