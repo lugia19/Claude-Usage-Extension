@@ -8,23 +8,37 @@ const FEATURE_COSTS = {
 	"preview_feature_uses_latex": 200,		// DEPRECATED: LaTeX
 	"enabled_bananagrams": 750,				// Drive search
 	"enabled_sourdough": 900,				// GCal or GMail search (not sure which)
-	"enabled_focaccia": 1350,				// GCal or GMail search (not sure which)
+	"enabled_foccacia": 1350,				// GCal or GMail search (not sure which) - note the API's spelling
 	"enabled_web_search": 10250,			// Web search
 	"citation_info": 450,					// Citation info
-	"compass_mode": 1000,					// Research tool
+	"enabled_compass": 1000,				// Research tool
 	"profile_preferences": 850,				// Base preferences cost
 	"enabled_turmeric": 2000,				// AI artifacts
 	"enabled_saffron": 4250,				// Memory base cost (actual memory content counted separately)
 	"enabled_saffron_search": 3000,			// Memory search
+	"enabled_melange": 14000,				// Per-file memory system (contents loaded dynamically, not counted)
 	"enabled_monkeys_in_a_barrel": 5300		// Code Interpreter
 };
 
 async function Log(...args) {
 	await RawLog("claude-api", ...args);
 }
+
+// Called from the background webRequest hook when the user writes account settings.
+export async function invalidateAccountSettings(orgId) {
+	if (!orgId) return;
+	await accountSettingsCache.delete(orgId);
+	await Log("Invalidated account settings cache for:", orgId);
+}
 const subscriptionTiersCache = new StoredMap("subscriptionTiers");
 const syncTokenCache = new StoredMap("syncTokens");
 const projectCache = new StoredMap("projectCache");
+const accountSettingsCache = new StoredMap("accountSettings");
+
+// Short — feature flags are user-toggleable, so a stale read visibly misprices the
+// conversation. This only exists to absorb the burst of getInfo() calls per message;
+// the webRequest hook in background.js invalidates on an actual settings write.
+const ACCOUNT_SETTINGS_TTL = 5 * 60 * 1000;
 
 // Pure HTTP/API layer
 class ClaudeAPI {
@@ -80,11 +94,6 @@ class ClaudeAPI {
 		return usageData;
 	}
 
-	// Fetch memory content
-	async getMemory() {
-		return this.getRequest(`/organizations/${this.orgId}/memory`);
-	}
-
 	// Platform operations
 	async getGoogleDriveDocument(uri) {
 		return this.getRequest(`/organizations/${this.orgId}/sync/mcp/drive/document/${uri}`);
@@ -117,6 +126,37 @@ class ClaudeAPI {
 	async getAccountLocale() {
 		const profileData = await this.getRequest('/account_profile');
 		return profileData?.locale || null;
+	}
+
+	// Account-level feature flags. The conversation payload only carries a subset of these
+	// (notably it has no enabled_melange), so it can't be relied on alone for pricing.
+	// Endpoint is account-scoped, not org-scoped - we key the cache by orgId only to keep
+	// multi-account containers separate. Returns null on failure rather than throwing:
+	// the Brave strategy throws when a container has no open tab, and that must not take
+	// down the whole cost computation.
+	async getAccountSettings() {
+		try {
+			const cached = await accountSettingsCache.get(this.orgId);
+			if (cached && typeof cached === 'object') return cached;
+
+			const accountData = await this.getRequest('/account');
+			const settings = accountData?.settings;
+			if (!settings) return null;
+
+			// Keep only what we price. The raw payload carries hundreds of dismissed banners
+			// and per-tool MCP booleans - persisting all of it would bloat storage.local.
+			const flags = {};
+			for (const key of Object.keys(FEATURE_COSTS)) {
+				if (key in settings) flags[key] = settings[key];
+			}
+
+			await Log("Fetched account settings for:", this.orgId, flags);
+			await accountSettingsCache.set(this.orgId, flags, ACCOUNT_SETTINGS_TTL);
+			return flags;
+		} catch (error) {
+			await Log("error", "Failed to fetch account settings:", error);
+			return null;
+		}
 	}
 
 	async getProfileTokens() {
@@ -574,8 +614,21 @@ class ConversationAPI {
 		let lengthTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
 		let costTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER;
 
+		// Whether a flag appears in the conversation's own settings determines how it behaves,
+		// so this spread order handles both classes without special-casing:
+		//   - present (artifacts, code execution, turmeric): frozen at creation. A feature off
+		//     when the chat was created can't be enabled in it later, so the snapshot wins.
+		//   - absent (melange, bananagrams, sourdough, foccacia, compass): no snapshot exists,
+		//     so they track the account profile live and change mid-conversation.
+		// Verified empirically - don't "simplify" by picking one source.
+		const accountSettings = await this.api.getAccountSettings();
+		const effectiveSettings = {
+			...(accountSettings || {}),
+			...(conversationData.settings || {})
+		};
+
 		// Add settings costs
-		for (const [setting, enabled] of Object.entries(conversationData.settings)) {
+		for (const [setting, enabled] of Object.entries(effectiveSettings)) {
 			await Log("Setting:", setting, enabled);
 			if (enabled && FEATURE_COSTS[setting]) {
 				lengthTokens += FEATURE_COSTS[setting];
@@ -583,27 +636,9 @@ class ConversationAPI {
 			}
 		}
 
-
-		if ("enabled_web_search" in conversationData.settings || "enabled_bananagrams" in conversationData.settings) {
-			if (conversationData.settings?.enabled_web_search || conversationData.settings?.enabled_bananagrams) {
-				lengthTokens += FEATURE_COSTS["citation_info"];
-				costTokens += FEATURE_COSTS["citation_info"] * CONFIG.CACHING_MULTIPLIER;
-			}
-		}
-
-		// Add memory content tokens if memory is enabled
-		if (conversationData.settings?.enabled_saffron) {
-			try {
-				const memoryData = await this.api.getMemory();
-				if (memoryData?.memory) {
-					const memoryTokens = await tokenCounter.countText(memoryData.memory);
-					await Log("Memory tokens:", memoryTokens);
-					lengthTokens += memoryTokens;
-					costTokens += memoryTokens * CONFIG.CACHING_MULTIPLIER;
-				}
-			} catch (error) {
-				await Log("warn", "Failed to fetch memory:", error);
-			}
+		if (effectiveSettings.enabled_web_search || effectiveSettings.enabled_bananagrams) {
+			lengthTokens += FEATURE_COSTS["citation_info"];
+			costTokens += FEATURE_COSTS["citation_info"] * CONFIG.CACHING_MULTIPLIER;
 		}
 
 		let uncachedCostTokens = costTokens; // Same — system prompts are always platform-cached
@@ -691,10 +726,11 @@ class ConversationAPI {
 
 		// Determine if length is an estimate (features that add unknown tokens)
 		const lengthIsEstimate = !!(
-			conversationData.settings?.enabled_monkeys_in_a_barrel ||  // Code execution
-			hasWebSearchResult ||                                      // Web search result in history
-			conversationData.settings?.enabled_bananagrams ||          // Drive search
-			projectStats?.use_project_knowledge_search                 // Project retrieval
+			effectiveSettings.enabled_monkeys_in_a_barrel ||  // Code execution
+			hasWebSearchResult ||                            // Web search result in history
+			effectiveSettings.enabled_bananagrams ||         // Drive search
+			effectiveSettings.enabled_melange ||             // Memory (files loaded dynamically)
+			projectStats?.use_project_knowledge_search       // Project retrieval
 		);
 
 		let conversationModelType = CONFIG.DEFAULT_MODEL;
@@ -738,7 +774,7 @@ class ConversationAPI {
 			costUsedCache: conversationIsCached,
 			conversationIsCachedUntil: conversationIsCachedUntil,
 			projectUuid: conversationData.project_uuid,
-			settings: conversationData.settings,
+			settings: effectiveSettings,
 			lastMessageTimestamp: lastMessageTimestamp,
 			lengthIsEstimate: lengthIsEstimate,
 			orgId: this.api.orgId

@@ -6,6 +6,7 @@ import { getStrategy, initContainerStrategy, setBrave } from './bg-components/co
 import { UsageData } from './shared/dataclasses.js';
 import { translate, normalizeLocale } from './shared/localization.js';
 import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
+import { invalidateAccountSettings } from './bg-components/claude-api.js';
 
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
@@ -13,13 +14,15 @@ const INTERCEPT_PATTERNS = {
 			"*://claude.ai/api/organizations/*/completion",
 			"*://claude.ai/api/organizations/*/retry_completion",
 			"*://claude.ai/api/settings/billing*",
-			"*://claude.ai/api/account_profile"
+			"*://claude.ai/api/account_profile",
+			"*://claude.ai/api/account/settings*"
 		],
 		regexes: [
 			"^https?://claude\\.ai/api/organizations/[^/]*/chat_conversations/[^/]*/completion$",
 			"^https?://claude\\.ai/api/organizations/[^/]*/chat_conversations/[^/]*/retry_completion$",
 			"^https?://claude\\.ai/api/settings/billing",
-			"^https?://claude\\.ai/api/account_profile$"
+			"^https?://claude\\.ai/api/account_profile$",
+			"^https?://claude\\.ai/api/account/settings"
 		]
 	},
 	onCompleted: {
@@ -728,6 +731,14 @@ async function onBeforeRequestHandler(details) {
 				await Log("Account language change detected in PUT body:", newLoc);
 			}
 		}
+	}
+
+	// The user toggled a feature (memory, web search, ...). Drop the cached account settings
+	// so the next cost computation reflects it instead of waiting out the TTL. Matching every
+	// write verb rather than just one - the UI currently uses PATCH, but that's not contractual.
+	if (["POST", "PATCH", "PUT"].includes(details.method) && details.url.includes("/account/settings")) {
+		const orgId = await requestActiveOrgId(details.tabId);
+		await invalidateAccountSettings(orgId);
 	}
 
 	if (details.method === "GET" && details.url.includes("/settings/billing")) {
