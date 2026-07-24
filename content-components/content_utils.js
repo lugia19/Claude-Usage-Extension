@@ -1,4 +1,5 @@
-/* global localize, fmtNum, normalizeLocale, setLocaleOverride */
+/* global localize, fmtNum, normalizeLocale, setLocaleOverride,
+   modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier */
 'use strict';
 
 // Constants
@@ -234,30 +235,30 @@ async function waitForElement(target, selector, maxTime = 1000) {
 	return null;
 }
 
-async function getCurrentModel(maxWait = 3000) {
+// subscriptionTier decides the default when the picker can't be read - claude.ai defaults
+// Max to Opus and everyone else to Sonnet. Pass null if the tier isn't known yet.
+async function getCurrentModel(maxWait = 3000, subscriptionTier = null) {
 	const modelSelector = await waitForElement(document, SELECTORS.MODEL_PICKER, maxWait);
-	if (!modelSelector) return CONFIG.DEFAULT_MODEL;
+	if (!modelSelector) return defaultModelForTier(subscriptionTier);
 
-	const fullModelName = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim()?.toLowerCase();
-	if (!fullModelName) return CONFIG.DEFAULT_MODEL;
+	const fullModelName = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim();
+	if (!fullModelName) return defaultModelForTier(subscriptionTier);
 
-	for (const modelType of CONFIG.MODELS) {
-		if (fullModelName.includes(modelType.toLowerCase())) {
-			return modelType;
-		}
-	}
+	const matchedModel = modelFamilyFromVersion(fullModelName);
+	if (matchedModel) return matchedModel;
+
 	await Log("Could not find matching model, returning default")
-	return CONFIG.DEFAULT_MODEL;
+	return defaultModelForTier(subscriptionTier);
 }
 
-async function getCurrentModelVersion(maxWait = 3000) {
+async function getCurrentModelVersion(maxWait = 3000, subscriptionTier = null) {
 	const modelSelector = await waitForElement(document, SELECTORS.MODEL_PICKER, maxWait);
-	if (!modelSelector) return CONFIG.DEFAULT_MODEL_VERSION;
+	if (!modelSelector) return defaultModelVersionForTier(subscriptionTier);
 	const text = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim();
-    if (!text) return CONFIG.DEFAULT_MODEL_VERSION;
+    if (!text) return defaultModelVersionForTier(subscriptionTier);
     const normalizedText = text.toLowerCase();
     const matchedModel = Object.keys(CONFIG.MODEL_VERSION_MAP).find(key => normalizedText.startsWith(key));
-	return matchedModel ? CONFIG.MODEL_VERSION_MAP[matchedModel] : CONFIG.DEFAULT_MODEL_VERSION;
+	return matchedModel ? CONFIG.MODEL_VERSION_MAP[matchedModel] : defaultModelVersionForTier(subscriptionTier);
 }
 
 function isMobileView() {

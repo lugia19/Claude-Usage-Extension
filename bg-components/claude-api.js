@@ -1,6 +1,6 @@
 import { CONFIG, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey } from './utils.js';
 import { tokenCounter, getTextFromContent } from './tokenManagement.js';
-import { UsageData, ConversationData } from '../shared/dataclasses.js';
+import { UsageData, ConversationData, modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier } from '../shared/dataclasses.js';
 
 const FEATURE_COSTS = {
 	"enabled_artifacts_attachments": 2200,	// DEPRECATED: Analysis tool
@@ -733,14 +733,9 @@ class ConversationAPI {
 			projectStats?.use_project_knowledge_search       // Project retrieval
 		);
 
-		let conversationModelType = CONFIG.DEFAULT_MODEL;
-		let modelString = (conversationData.model || CONFIG.DEFAULT_MODEL_VERSION).toLowerCase();
-		for (const modelType of CONFIG.MODELS) {
-			if (modelString.includes(modelType.toLowerCase())) {
-				conversationModelType = modelType;
-				break;
-			}
-		}
+		const subscriptionTier = await this.api.getSubscriptionTier();
+		const conversationModelVersion = conversationData.model || defaultModelVersionForTier(subscriptionTier);
+		const conversationModelType = modelFamilyFromVersion(conversationModelVersion) || defaultModelForTier(subscriptionTier);
 
 		await Log(`Total tokens for conversation ${this.conversationId}: ${lengthTokens} with model ${conversationModelType}`);
 
@@ -778,7 +773,7 @@ class ConversationAPI {
 			futureCost: futureCost,
 			uncachedFutureCost: uncachedFutureCost,
 			model: conversationModelType,
-			modelVersion: conversationData.model || CONFIG.DEFAULT_MODEL_VERSION,
+			modelVersion: conversationModelVersion,
 			costUsedCache: conversationIsCached,
 			conversationIsCachedUntil: cachedUntil,
 			projectUuid: conversationData.project_uuid,

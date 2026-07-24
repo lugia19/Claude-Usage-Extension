@@ -12,6 +12,22 @@ export function isPeakHours() {
 	return hour >= 12 && hour < 18;
 }
 
+// Model family (Opus/Sonnet/...) for an API model ID; null if unrecognized.
+export function modelFamilyFromVersion(modelVersion) {
+	const slug = (modelVersion || '').toLowerCase();
+	return CONFIG.MODELS.find(family => slug.includes(family.toLowerCase())) || null;
+}
+
+// The model claude.ai's picker defaults to for this plan. Pass a null/unknown tier to get
+// the tier-agnostic fallback.
+export function defaultModelVersionForTier(subscriptionTier) {
+	return CONFIG.DEFAULT_MODEL_VERSION_BY_TIER[subscriptionTier] || CONFIG.DEFAULT_MODEL_VERSION;
+}
+
+export function defaultModelForTier(subscriptionTier) {
+	return modelFamilyFromVersion(defaultModelVersionForTier(subscriptionTier));
+}
+
 export class UsageData {
 	constructor(data = {}) {
 		// Each limit: { percentage, resetsAt } or null
@@ -236,8 +252,10 @@ export class ConversationData {
 		this.uncachedCost = data.uncachedCost || 0;       // Without caching
 		this.futureCost = data.futureCost || 0; // Estimated cost of future messages
 		this.uncachedFutureCost = data.uncachedFutureCost || 0; // Estimated future cost without caching
-		this.model = data.model || CONFIG.DEFAULT_MODEL;
+		// Defensive only - the background always populates both before this is rehydrated
+		// from JSON, and it has a subscription tier available to pick a better default.
 		this.modelVersion = data.modelVersion || CONFIG.DEFAULT_MODEL_VERSION;
+		this.model = data.model || modelFamilyFromVersion(this.modelVersion);
 
 		// Cache status
 		this.costUsedCache = data.costUsedCache || false;	//Currently unused, since now we show future_cost rather than past cost
@@ -277,14 +295,14 @@ export class ConversationData {
 	getWeightedCost(modelOverride) {
 		let model = this.model;
 		if (modelOverride) model = modelOverride;
-		const weight = CONFIG.MODEL_WEIGHTS[model] || CONFIG.MODEL_WEIGHTS[CONFIG.DEFAULT_MODEL];
+		const weight = CONFIG.MODEL_WEIGHTS[model] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
 		return Math.round(this.cost * weight);
 	}
 
 	getWeightedFutureCost(modelOverride, modelVersionOverride) {
 		let model = this.model;
 		if (modelOverride) model = modelOverride;
-		const weight = CONFIG.MODEL_WEIGHTS[model] || CONFIG.MODEL_WEIGHTS[CONFIG.DEFAULT_MODEL];
+		const weight = CONFIG.MODEL_WEIGHTS[model] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
 		const baseCost = this.isCurrentlyCached(modelVersionOverride) ? this.futureCost : this.uncachedFutureCost;
 		return Math.round(baseCost * weight);
 	}

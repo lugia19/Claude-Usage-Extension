@@ -13,10 +13,15 @@ const CONFIG = {
 		"Sonnet": 3,
 		"Haiku": 1
 	},
-	"DEFAULT_MODEL": "Opus",
+	// Weight to use for a model family we don't recognize. Opus-equivalent - erring high
+	// is the safe direction for a cost estimate.
+	"FALLBACK_MODEL_WEIGHT": 5,
 	"MODEL_VERSION_MAP": {
-		// DOM labels (lowercased) → API model IDs
+		// DOM labels (lowercased) → API model IDs.
+		// Matched with startsWith() in insertion order, so a longer label must come above
+		// any shorter label that prefixes it ("opus 5.1" above "opus 5").
 		"fable 5": "claude-fable-5",
+		"opus 5": "claude-opus-5",
 		"sonnet 5": "claude-sonnet-5",
 		"opus 4.8": "claude-opus-4-8",
 		"opus 4.7": "claude-opus-4-7",
@@ -27,7 +32,19 @@ const CONFIG = {
 		"haiku 4.5": "claude-haiku-4-5-20251001",
 		"opus 3": "claude-3-opus-20240229",
 	},
-	"DEFAULT_MODEL_VERSION": "claude-opus-4-8",
+	// claude.ai's default picker selection depends on the plan: Max lands on Opus,
+	// every other tier on Sonnet.
+	"DEFAULT_MODEL_VERSION_BY_TIER": {
+		"claude_free": "claude-sonnet-5",
+		"claude_pro": "claude-sonnet-5",
+		"claude_team": "claude-sonnet-5",
+		"claude_max_5x": "claude-opus-5",
+		"claude_max_20x": "claude-opus-5"
+	},
+	// Used only when the tier isn't known yet (e.g. a content script before the first
+	// updateUsage arrives). Matches the claude_free row, which is where an unresolvable
+	// tier already degrades to.
+	"DEFAULT_MODEL_VERSION": "claude-sonnet-5",
 	"WARNING_THRESHOLD": 0.9,
 	"PEAK_SESSION_MULTIPLIER": 1.5,
 	"WARNING": {

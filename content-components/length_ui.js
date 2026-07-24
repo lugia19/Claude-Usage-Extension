@@ -166,8 +166,9 @@ class LengthUI {
 	// ========== RENDER (state → DOM) ==========
 
 	async renderAll() {
-		this.state.currentModel = await getCurrentModel(200);
-		this.state.currentModelVersion = await getCurrentModelVersion(200);
+		const tier = this.state.usageData?.subscriptionTier;
+		this.state.currentModel = await getCurrentModel(200, tier);
+		this.state.currentModelVersion = await getCurrentModelVersion(200, tier);
 		await Log('LengthUI: renderAll - detected:', this.state.currentModelVersion,
 			'| stored on conversation:', this.state.conversationData?.modelVersion,
 			'| isCurrentlyCached:', this.state.conversationData?.isCurrentlyCached(this.state.currentModelVersion));
@@ -219,7 +220,7 @@ class LengthUI {
 			// During extra usage, cache reads cost 10% of input (not free)
 			// Interpolate between cached (free) and uncached (full price) costs
 			// This is technically not entirely accurate, but it's accurate enough and doesn't require reworking half the codebase
-			const weight = CONFIG.MODEL_WEIGHTS[currentModel] || CONFIG.MODEL_WEIGHTS[CONFIG.DEFAULT_MODEL];
+			const weight = CONFIG.MODEL_WEIGHTS[currentModel] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
 			const baseFutureCost = conversationData.isCurrentlyCached(currentModelVersion) ? conversationData.futureCost : conversationData.uncachedFutureCost;
 			const interpolatedFutureCost = baseFutureCost +
 				CONFIG.EXTRA_USAGE_CACHING_MULTIPLIER * (conversationData.uncachedFutureCost - baseFutureCost);
@@ -310,7 +311,7 @@ class LengthUI {
 
 		// If regular limits are maxed but extra usage is available, estimate from dollars
 		if ((!limiting || limiting.messagesLeft <= 0) && usageData.hasExtraUsage()) {
-			const weight = CONFIG.MODEL_WEIGHTS[currentModel] || CONFIG.MODEL_WEIGHTS[CONFIG.DEFAULT_MODEL];
+			const weight = CONFIG.MODEL_WEIGHTS[currentModel] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
 			const baseFutureCost = conversationData.isCurrentlyCached(currentModelVersion) ? conversationData.futureCost : conversationData.uncachedFutureCost;
 			const interpolatedFutureCost = baseFutureCost +
 				CONFIG.EXTRA_USAGE_CACHING_MULTIPLIER * (conversationData.uncachedFutureCost - baseFutureCost);
@@ -427,8 +428,9 @@ class LengthUI {
 	}
 
 	async checkModelChange() {
-		const newModel = await getCurrentModel(200);
-		const newModelVersion = await getCurrentModelVersion(200);
+		const tier = this.state.usageData?.subscriptionTier;
+		const newModel = await getCurrentModel(200, tier);
+		const newModelVersion = await getCurrentModelVersion(200, tier);
 		if ((newModel && newModel !== this.state.currentModel) ||
 			(newModelVersion && newModelVersion !== this.state.currentModelVersion)) {
 			await Log('LengthUI: Model changed, recalculating displays');

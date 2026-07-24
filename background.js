@@ -3,7 +3,7 @@ import './lib/o200k_base.js';
 import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './bg-components/utils.js';
 import { tokenStorageManager, tokenCounter } from './bg-components/tokenManagement.js';
 import { getStrategy, initContainerStrategy, setBrave } from './bg-components/container-strategy.js';
-import { UsageData } from './shared/dataclasses.js';
+import { UsageData, modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier } from './shared/dataclasses.js';
 import { translate, normalizeLocale } from './shared/localization.js';
 import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
 import { invalidateAccountSettings } from './bg-components/claude-api.js';
@@ -499,10 +499,11 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 
 	const pendingRequest = await pendingRequests.get(responseKey);
 	const isNewMessage = pendingRequest !== undefined;
-	const model = pendingRequest?.model || CONFIG.DEFAULT_MODEL;
 
 	// Fetch current usage limits from endpoint
 	const usageData = await api.getUsageData();
+
+	const model = pendingRequest?.model || defaultModelForTier(usageData.subscriptionTier);
 
 	// Fetch conversation data
 	const conversation = await api.getConversation(conversationId);
@@ -683,17 +684,22 @@ async function onBeforeRequestHandler(details) {
 		await tokenStorageManager.addOrgId(orgId);
 		const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1];
 
-		let model = CONFIG.DEFAULT_MODEL;
-		if (requestBodyJSON?.model) {
-			const modelString = requestBodyJSON.model.toLowerCase();
-			for (const modelType of CONFIG.MODELS) {
-				if (modelString.includes(modelType.toLowerCase())) {
-					model = modelType;
-					await Log("Model from request:", model);
-					break;
-				}
-			}
+		// Fetch current usage to snapshot before message. Also gives us the subscription
+		// tier, which decides the default model when the request body doesn't name one.
+		let previousUsage = null;
+		let subscriptionTier = null;
+		try {
+			const api = getStrategy().apiForRequest(details, orgId);
+			const usageData = await api.getUsageData();
+			previousUsage = usageData.toJSON();
+			subscriptionTier = usageData.subscriptionTier;
+		} catch (error) {
+			await Log("warn", "Failed to fetch pre-message usage snapshot:", error);
 		}
+
+		const modelVersion = requestBodyJSON?.model || defaultModelVersionForTier(subscriptionTier);
+		const model = modelFamilyFromVersion(modelVersion) || defaultModelForTier(subscriptionTier);
+		await Log("Model from request:", model, modelVersion);
 
 		const key = `${orgId}:${conversationId}`;
 		await Log(`Message sent - Key: ${key}`);
@@ -708,24 +714,14 @@ async function onBeforeRequestHandler(details) {
 		})) || [];
 		await Log("Tool definitions:", toolDefs);
 
-		// Fetch current usage to snapshot before message
-		let previousUsage = null;
-		try {
-			const api = getStrategy().apiForRequest(details, orgId);
-			const usageData = await api.getUsageData();
-			previousUsage = usageData.toJSON();
-		} catch (error) {
-			await Log("warn", "Failed to fetch pre-message usage snapshot:", error);
-		}
-
 		// Store pending request with all data
-		await Log('onBeforeRequest: storing modelVersion:', requestBodyJSON?.model, '| class:', model);
+		await Log('onBeforeRequest: storing modelVersion:', modelVersion, '| class:', model);
 		await pendingRequests.set(key, {
 			orgId: orgId,
 			conversationId: conversationId,
 			tabId: details.tabId,
 			model: model,
-			modelVersion: requestBodyJSON?.model || CONFIG.DEFAULT_MODEL_VERSION,
+			modelVersion: modelVersion,
 			requestTimestamp: Date.now(),
 			toolDefinitions: toolDefs,
 			previousUsage: previousUsage
