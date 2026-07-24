@@ -5,7 +5,7 @@ import { CONFIG, sleep, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStor
 async function Log(...args) {
 	await RawLog("tokenManagement", ...args);
 }
-
+const API_MODEL_SLUG = "claude-opus-5";
 // Move getTextFromContent here since it's token-related
 async function getTextFromContent(content, includeEphemeral = false, api = null, orgId = null) {
 	let textPieces = [];
@@ -168,7 +168,7 @@ class TokenCounter {
 			},
 			body: JSON.stringify({
 				messages,
-				model: "claude-sonnet-4-6"
+				model: API_MODEL_SLUG
 			})
 		});
 
@@ -210,7 +210,7 @@ class TokenCounter {
 			},
 			body: JSON.stringify({
 				messages,
-				model: "claude-sonnet-4-6"
+				model: API_MODEL_SLUG
 			})
 		});
 
