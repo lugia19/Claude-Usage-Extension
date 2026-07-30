@@ -210,21 +210,11 @@ class LengthUI {
 			costColor = conversationData.isExpensive() ? RED_WARNING : BLUE_HIGHLIGHT;
 		}
 
-		// Check if limits are maxed - if so, display in dollars instead of credits
+		// If we're spending credits rather than plan usage, display in dollars instead of credits
 		const { usageData } = this.state;
-		const sessionMaxed = usageData?.limits?.session?.percentage >= 100;
-		const weeklyLimit = usageData?.getBindingWeeklyLimit(currentModel);
-		const weeklyMaxed = weeklyLimit?.percentage >= 100;
 
-		if (sessionMaxed || weeklyMaxed) {
-			// During extra usage, cache reads cost 10% of input (not free)
-			// Interpolate between cached (free) and uncached (full price) costs
-			// This is technically not entirely accurate, but it's accurate enough and doesn't require reworking half the codebase
-			const weight = CONFIG.MODEL_WEIGHTS[currentModel] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
-			const baseFutureCost = conversationData.isCurrentlyCached(currentModelVersion) ? conversationData.futureCost : conversationData.uncachedFutureCost;
-			const interpolatedFutureCost = baseFutureCost +
-				CONFIG.EXTRA_USAGE_CACHING_MULTIPLIER * (conversationData.uncachedFutureCost - baseFutureCost);
-			const dollars = Math.round(interpolatedFutureCost * weight) / 1_000_000;
+		if (usageData?.isSpendingCredits(currentModel)) {
+			const dollars = this.extraUsageDollars(conversationData, currentModel, currentModelVersion);
 			cost.innerHTML = `${localize('length.cost')}: <span style="color: ${costColor}">$${dollars.toFixed(2)}</span>`;
 		} else {
 			cost.innerHTML = `${localize('length.cost')}: <span style="color: ${costColor}">${fmtNum(weightedCost)}</span> ${localize('common.unit_credits')}`;
@@ -241,6 +231,18 @@ class LengthUI {
 		}
 
 		this.renderTitleContainer();
+	}
+
+	// Dollar cost of the next message when it's billed against credits.
+	// During extra usage, cache reads cost 10% of input (not free), so interpolate between the
+	// cached (free) and uncached (full price) costs. This is technically not entirely accurate,
+	// but it's accurate enough and doesn't require reworking half the codebase.
+	extraUsageDollars(conversationData, currentModel, currentModelVersion) {
+		const weight = CONFIG.MODEL_WEIGHTS[currentModel] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
+		const baseFutureCost = conversationData.isCurrentlyCached(currentModelVersion) ? conversationData.futureCost : conversationData.uncachedFutureCost;
+		const interpolatedFutureCost = baseFutureCost +
+			CONFIG.EXTRA_USAGE_CACHING_MULTIPLIER * (conversationData.uncachedFutureCost - baseFutureCost);
+		return Math.round(interpolatedFutureCost * weight) / 1_000_000;
 	}
 
 	renderTitleContainer() {
@@ -309,13 +311,12 @@ class LengthUI {
 		const messageCost = conversationData.getWeightedFutureCost(currentModel, currentModelVersion);
 		const limiting = usageData.getLimitingFactor(messageCost);
 
-		// If regular limits are maxed but extra usage is available, estimate from dollars
-		if ((!limiting || limiting.messagesLeft <= 0) && usageData.hasExtraUsage()) {
-			const weight = CONFIG.MODEL_WEIGHTS[currentModel] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
-			const baseFutureCost = conversationData.isCurrentlyCached(currentModelVersion) ? conversationData.futureCost : conversationData.uncachedFutureCost;
-			const interpolatedFutureCost = baseFutureCost +
-				CONFIG.EXTRA_USAGE_CACHING_MULTIPLIER * (conversationData.uncachedFutureCost - baseFutureCost);
-			const costPerMessageDollars = Math.round(interpolatedFutureCost * weight) / 1_000_000;
+		// Estimate from dollars when credits are what's actually being spent — either the regular
+		// limits are exhausted, or the model is credit-funded (in which case `limiting` reports a
+		// healthy plan limit the message will never consume).
+		const spendingCredits = usageData.isSpendingCredits(currentModel);
+		if ((spendingCredits || !limiting || limiting.messagesLeft <= 0) && usageData.hasExtraUsage()) {
+			const costPerMessageDollars = this.extraUsageDollars(conversationData, currentModel, currentModelVersion);
 
 			if (costPerMessageDollars > 0) {
 				const remainingDollars = usageData.getExtraUsageRemaining() / 100;
@@ -327,8 +328,9 @@ class LengthUI {
 			}
 		}
 
-		// Regular limits estimate
-		if (limiting && limiting.messagesLeft > 0) {
+		// Regular limits estimate — skipped for a credit-funded model, whose messages don't draw
+		// on the plan limits at all, so falling back to them would report a plausible but wrong number.
+		if (!usageData.isModelCreditFunded(currentModel) && limiting && limiting.messagesLeft > 0) {
 			const estimateValue = limiting.messagesLeft.toFixed(1);
 			const color = parseFloat(estimateValue) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
 			estimate.innerHTML = `${msgPrefix} <span style="color: ${color}">${estimateValue}</span>`;

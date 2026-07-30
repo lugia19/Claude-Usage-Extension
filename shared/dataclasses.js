@@ -209,7 +209,9 @@ export class UsageData {
 	// Get effective extra usage remaining (cents)
 	getExtraUsageRemaining() {
 		if (!this.extraUsage?.isEnabled) return null;
-		const monthlyRemaining = this.extraUsage.monthlyLimit - this.extraUsage.usedCredits;
+		// Clamped: usedCredits can overshoot monthlyLimit, and a negative remaining
+		// would push the displayed percentage past 100.
+		const monthlyRemaining = Math.max(0, this.extraUsage.monthlyLimit - this.extraUsage.usedCredits);
 		if (this.creditBalance === null) return monthlyRemaining;
 		return Math.min(monthlyRemaining, this.creditBalance);
 	}
@@ -221,9 +223,39 @@ export class UsageData {
 		return this.extraUsage.usedCredits + remaining;
 	}
 
+	// Can this account use extra usage at all? Free accounts can't buy credits,
+	// so they never get a credits bar regardless of what /usage reports.
+	canUseExtraUsage() {
+		return !!this.extraUsage?.isEnabled && this.subscriptionTier !== 'claude_free';
+	}
+
 	// Is extra usage active and available?
 	hasExtraUsage() {
-		return this.extraUsage?.isEnabled && this.getExtraUsageRemaining() > 0;
+		return this.canUseExtraUsage() && this.getExtraUsageRemaining() > 0;
+	}
+
+	// Is extra usage set up at all? Render gate for the credits bar — independent of
+	// remaining budget, so the bar stays visible (at 100%) once credits run out.
+	hasExtraUsageConfigured() {
+		return this.canUseExtraUsage() && this.getExtraUsageEffectiveTotal() > 0;
+	}
+
+	// Is this model funded by credits rather than by the plan? A model that is pay-per-use
+	// on the current tier has no plan-scoped weekly limit entry in /usage.
+	// Checked for Fable specifically: Sonnet legitimately has no sonnetWeekly entry on
+	// non-Max tiers (it's covered by the general weekly limit) and would be misclassified.
+	isModelCreditFunded(modelName) {
+		if (!modelName?.toLowerCase().includes('fable')) return false;
+		return this.limits.fableWeekly === null;
+	}
+
+	// Are messages for this model currently billed against credits rather than the plan?
+	// Either the model is inherently credit-funded, or the plan limits it draws on are maxed.
+	isSpendingCredits(modelName) {
+		if (!this.hasExtraUsageConfigured()) return false;
+		if (this.isModelCreditFunded(modelName)) return true;
+		return this.limits.session?.percentage >= 100 ||
+			this.getBindingWeeklyLimit(modelName)?.percentage >= 100;
 	}
 
 	toJSON() {

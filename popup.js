@@ -115,9 +115,8 @@ function renderOrgUsage(orgResult, showLabel) {
 		wrapper.appendChild(createLimitRow(limit.key, limit));
 	}
 
-	// Extra usage bar when any limit is maxed
-	const hasMaxedLimit = activeLimits.some(l => l.percentage >= 100);
-	if (hasMaxedLimit && usageData.hasExtraUsage()) {
+	// Extra usage bar whenever extra usage is set up (credits can be spent before limits max out)
+	if (usageData.hasExtraUsageConfigured()) {
 		const effectiveTotal = usageData.getExtraUsageEffectiveTotal();
 		const used = usageData.extraUsage.usedCredits;
 		const pct = effectiveTotal > 0 ? (used / effectiveTotal) * 100 : 0;

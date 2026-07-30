@@ -112,9 +112,9 @@ class UsageSection {
 			resetTime.innerHTML = this.formatResetTime(limit.resetsAt);
 		}
 
-		// Extra usage bar (shown when any limit is maxed and extra usage is available)
-		const hasMaxedLimit = activeLimits.some(l => l.percentage >= 100);
-		if (hasMaxedLimit && usageData.hasExtraUsage()) {
+		// Extra usage bar (shown whenever extra usage is set up, even before limits are maxed —
+		// credits can be spent before normal usage runs out)
+		if (usageData.hasExtraUsageConfigured()) {
 			seenKeys.add('extraUsage');
 			let barElements = this.limitBars.get('extraUsage');
 
@@ -499,10 +499,15 @@ class UsageUI {
 		const session = usageData.limits.session;
 		if (!session) return;
 
-		const sessionMaxed = session.percentage >= 100;
+		// Read the picker directly rather than this.state.currentModel, which stays null until
+		// checkModelChange() first polls (up to 1s after mount). Reused for the weekly marker below.
+		const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
+		const modelName = modelSelector?.textContent?.trim() || null;
 
-		// When session is maxed and extra usage is available, show extra usage instead
-		if (sessionMaxed && usageData.hasExtraUsage()) {
+		// Show extra usage instead of the session bar whenever credits are what's being spent —
+		// either the plan limits are maxed, or the selected model is credit-funded (e.g. Fable
+		// on a tier where it has no plan-scoped weekly limit).
+		if (usageData.isSpendingCredits(modelName)) {
 			const effectiveTotal = usageData.getExtraUsageEffectiveTotal();
 			const used = usageData.extraUsage.usedCredits;
 			const pct = effectiveTotal > 0 ? (used / effectiveTotal) * 100 : 0;
@@ -546,8 +551,6 @@ class UsageUI {
 			}
 
 			// Add weekly marker (filter by current model)
-			const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
-			const modelName = modelSelector?.textContent?.trim() || null;
 			const weeklyLimit = usageData.getBindingWeeklyLimit(modelName);
 			if (weeklyLimit) {
 				const markerKeys = { weekly: 'usage.marker_all', sonnetWeekly: 'usage.marker_sonnet', opusWeekly: 'usage.marker_opus', fableWeekly: 'usage.marker_fable' };
