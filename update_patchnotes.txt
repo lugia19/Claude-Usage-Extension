@@ -1,2 +1,2 @@
-Support Opus 5
-The default model is now based on your plan (Max: Opus, otherwise Sonnet)
+Always display Extra Usage in the sidebar
+Display Extra Usage in messagebox if using Fable on Pro
