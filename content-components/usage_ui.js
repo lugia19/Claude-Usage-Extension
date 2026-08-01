@@ -190,6 +190,7 @@ class UsageUI {
 			usageData: null,
 			currentModel: null,
 			refreshedExpiredLimits: new Set(), // track which expired limits we've already requested a refresh for
+			collapsed: false,
 		};
 
 		// Element references
@@ -225,6 +226,14 @@ class UsageUI {
 				this.handleUsageUpdate(message.data.usageData);
 			}
 		});
+
+		// Keep the collapsed state in sync across tabs
+		browser.storage.onChanged.addListener((changes, area) => {
+			if (area !== 'local' || !changes.usageSectionCollapsed) return;
+			const collapsed = changes.usageSectionCollapsed.newValue === true;
+			if (!this.uiReady || collapsed === this.state.collapsed) return;
+			this.setCollapsed(collapsed, false);
+		});
 	}
 
 	async init() {
@@ -234,11 +243,15 @@ class UsageUI {
 			await sleep(100);
 		}
 
+		const stored = await browser.storage.local.get('usageSectionCollapsed');
+		this.state.collapsed = stored.usageSectionCollapsed === true;
+
 		this.usageSection = new UsageSection();
 		this.elements.sidebar = await this.createSidebarElements();
 		this.elements.chat = this.createChatElements();
 		this.elements.tooltips = this.createTooltips();
 		this.attachTooltips();
+		this.setCollapsed(this.state.collapsed, false);
 
 		this.uiReady = true;
 		await Log('UsageUI: Ready');
@@ -257,9 +270,9 @@ class UsageUI {
 
 	async createSidebarElements() {
 		const container = document.createElement('div');
-		container.className = 'flex flex-col mb-6';
+		container.className = 'ut-usage-sidebar flex flex-col mb-6';
 
-		const header = this.createHeader();
+		const { header, toggle } = this.createHeader();
 		const content = document.createElement('div');
 		content.className = 'flex min-h-0 flex-col pl-2';
 		content.style.paddingRight = '0.25rem';
@@ -287,16 +300,38 @@ class UsageUI {
 		container.appendChild(header);
 		container.appendChild(content);
 
-		return { container };
+		const elements = { container, content, toggle };
+		toggle.addEventListener('click', () => this.setCollapsed(!this.state.collapsed));
+
+		return elements;
 	}
 
 	createHeader() {
 		const header = document.createElement('div');
 		header.className = 'ut-row ut-justify-between';
 
+		// Collapse toggle - mirrors the site's own sidebar section headers (label + chevron
+		// that only shows on hover while expanded, and stays visible while collapsed).
+		const toggle = document.createElement('button');
+		toggle.type = 'button';
+		toggle.className = 'ut-usage-toggle';
+		toggle.setAttribute('aria-expanded', String(!this.state.collapsed));
+
 		const title = document.createElement('h3');
 		title.textContent = localize('usage.header');
-		title.className = 'text-text-500 pb-2 mt-1 text-xs select-none pl-2 pr-2';
+		title.className = 'text-text-500 text-xs select-none';
+
+		const chevron = document.createElement('span');
+		chevron.className = 'ut-collapse-chevron text-text-500';
+		chevron.setAttribute('aria-hidden', 'true');
+		chevron.innerHTML = `
+			<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M9 18l6-6-6-6"/>
+			</svg>
+		`;
+
+		toggle.appendChild(title);
+		toggle.appendChild(chevron);
 
 		const settingsButton = document.createElement('button');
 		settingsButton.className = 'ut-button ut-button-icon hover:bg-bg-400 hover:text-text-100';
@@ -317,9 +352,23 @@ class UsageUI {
 			}));
 		});
 
-		header.appendChild(title);
+		header.appendChild(toggle);
 		header.appendChild(settingsButton);
-		return header;
+		return { header, toggle };
+	}
+
+	setCollapsed(collapsed, persist = true) {
+		this.state.collapsed = collapsed;
+
+		const { container, content, toggle } = this.elements.sidebar;
+		content.style.display = collapsed ? 'none' : '';
+		// mb-6 exists to separate the bars from the recents list; with nothing below the
+		// header there's nothing to separate, so claw the space back.
+		container.style.marginBottom = collapsed ? '0.5rem' : '';
+		container.classList.toggle('ut-collapsed', collapsed);
+		toggle.setAttribute('aria-expanded', String(!collapsed));
+
+		if (persist) browser.storage.local.set({ usageSectionCollapsed: collapsed });
 	}
 
 	createDesktopFooter() {

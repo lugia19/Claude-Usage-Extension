@@ -268,6 +268,45 @@
     border-top: 8px solid var(--marker-color);
 }
 
+/* Sidebar section collapse toggle - matches the site's own "Pinned"/"Recents" headers:
+   the chevron only fades in while the section is hovered, points right when collapsed
+   and rotates down when expanded, and stays visible while collapsed. */
+.ut-usage-toggle {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	background: none;
+	border: none;
+	cursor: pointer;
+	text-align: left;
+	padding: 0 0.5rem 0.5rem 0.5rem;
+	margin-top: 0.25rem;
+}
+
+.ut-usage-toggle:hover h3 {
+	color: hsl(var(--text-300));
+}
+
+.ut-collapse-chevron {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	opacity: 0;
+	transform: rotate(90deg);
+	transition: opacity 150ms, transform 150ms;
+}
+
+.ut-usage-sidebar:hover .ut-collapse-chevron,
+.ut-usage-toggle:focus-visible .ut-collapse-chevron,
+.ut-usage-sidebar.ut-collapsed .ut-collapse-chevron {
+	opacity: 1;
+}
+
+.ut-usage-sidebar.ut-collapsed .ut-collapse-chevron {
+	transform: none;
+}
+
 .ut-desktop-footer {
     font-size: 0.75rem;
     color: var(--text-400);
