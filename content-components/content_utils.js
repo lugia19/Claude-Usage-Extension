@@ -269,34 +269,6 @@ function isCodePage() {
 	return window.location.pathname.includes('claude-code-desktop') || window.location.pathname.includes('/code');
 }
 
-async function setupRequestInterception(patterns) {
-	// Set up event listeners in content script context
-	window.addEventListener('interceptedRequest', async (event) => {
-		await Log("Intercepted request", event.detail);
-		browser.runtime.sendMessage({
-			type: 'interceptedRequest',
-			details: event.detail
-		});
-	});
-
-	window.addEventListener('interceptedResponse', async (event) => {
-		await Log("Intercepted response", event.detail);
-		browser.runtime.sendMessage({
-			type: 'interceptedResponse',
-			details: event.detail
-		});
-	});
-
-	// Inject external request interception script with patterns as data attribute
-	const script = document.createElement('script');
-	script.src = browser.runtime.getURL('injections/webrequest-polyfill.js');
-	script.dataset.patterns = JSON.stringify(patterns);
-	script.onload = function () {
-		this.remove();
-	};
-	(document.head || document.documentElement).appendChild(script);
-}
-
 
 // Pin the active UI locale and persist it as lastLang so the popup and background (which have
 // no claude.ai DOM) can localize too. Normally fetched from /api/account_profile at boot. But

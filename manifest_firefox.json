@@ -6,7 +6,8 @@
 	"author": "lugia19",
 	"browser_specific_settings": {
 		"gecko": {
-			"id": "claude_usage_tracker@lugia19.com"
+			"id": "claude_usage_tracker@lugia19.com",
+			"strict_min_version": "128.0"
 		}
 	},
 	"background": {
@@ -25,12 +26,23 @@
 				"lib/o200k_base.js",
 				"content-components/localization.js",
 				"content-components/content_utils.js",
+				"content-components/sse_bridge.js",
 				"content-components/electron_reciever.js",
 				"content-components/ui_dataclasses.js",
 				"content-components/notification_card.js",
 				"content-components/usage_ui.js",
 				"content-components/length_ui.js"
 			]
+		},
+		{
+			"matches": [
+				"https://claude.ai/*"
+			],
+			"js": [
+				"injections/usage-sse-watcher.js"
+			],
+			"world": "MAIN",
+			"run_at": "document_start"
 		}
 	],
 	"permissions": [
@@ -60,7 +72,6 @@
 				"debug.html",
 				"update_patchnotes.txt",
 				"tracker-styles.css",
-				"injections/rate-limit-watcher.js",
 				"injections/webrequest-polyfill.js",
 				"qol-badge.png",
 				"rate-badge.png"

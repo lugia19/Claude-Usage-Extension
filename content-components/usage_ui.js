@@ -1,7 +1,7 @@
 /* global CONFIG, Log, ProgressBar, sendBackgroundMessage, getActiveOrgId,
    setupTooltip, getTooltipPortal, getResetTimeHTML, sleep, isMobileView, isCodePage, UsageData, isPeakHours,
    RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS, LayoutManager, mountToAnchor,
-   localize, fmtNum, localeForIntl */
+   localize, fmtNum, localeForIntl, onSsePartialUsage, shouldApplySseSession */
 'use strict';
 
 // Usage section with multiple limit bars
@@ -226,6 +226,8 @@ class UsageUI {
 				this.handleUsageUpdate(message.data.usageData);
 			}
 		});
+
+		onSsePartialUsage((update) => this.handleSsePartialUsage(update));
 
 		// Keep the collapsed state in sync across tabs
 		browser.storage.onChanged.addListener((changes, area) => {
@@ -638,6 +640,18 @@ class UsageUI {
 		}
 
 		this.state.usageData = UsageData.fromJSON(usageDataJSON);
+		this.state.refreshedExpiredLimits.clear();
+		this.renderAll();
+	}
+
+	// Session usage read straight off the completion stream, about a second ahead of the full
+	// fetch. Overwrites the one field it knows and leaves everything else alone; if no usage has
+	// arrived yet there is nothing to overwrite, so we just wait for the full fetch.
+	handleSsePartialUsage({ session }) {
+		if (!this.uiReady || !this.state.usageData) return;
+		if (!shouldApplySseSession(this.state.usageData.limits.session, session)) return;
+
+		this.state.usageData.limits.session = session;
 		this.state.refreshedExpiredLimits.clear();
 		this.renderAll();
 	}

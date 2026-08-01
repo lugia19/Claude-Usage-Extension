@@ -1,7 +1,7 @@
 /* global CONFIG, Log, setupTooltip, getTooltipPortal, getResetTimeHTML, sleep, sendBackgroundMessage, getActiveOrgId,
    isMobileView, isCodePage, UsageData, ConversationData, getConversationId, getCurrentModel,
    getCurrentModelVersion, RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS,
-   LayoutManager, mountToAnchor, localize, fmtNum */
+   LayoutManager, mountToAnchor, localize, fmtNum, onSsePartialUsage, shouldApplySseSession */
 'use strict';
 
 // Length UI actor - handles all conversation-related displays
@@ -51,6 +51,8 @@ class LengthUI {
 				this.handleConversationUpdate(message.data.conversationData);
 			}
 		});
+
+		onSsePartialUsage((update) => this.handleSsePartialUsage(update));
 	}
 
 	async init() {
@@ -354,6 +356,17 @@ class LengthUI {
 		if (this.state.conversationData) {
 			this.renderCostAndLength();
 		}
+		this.renderEstimate();
+	}
+
+	// Session usage read straight off the completion stream, about a second ahead of the full
+	// fetch. Only the estimate depends on it — the cost display keys off the fields the stream
+	// doesn't carry, so it can wait.
+	handleSsePartialUsage({ session }) {
+		if (!this.uiReady || !this.state.usageData) return;
+		if (!shouldApplySseSession(this.state.usageData.limits.session, session)) return;
+
+		this.state.usageData.limits.session = session;
 		this.renderEstimate();
 	}
 
