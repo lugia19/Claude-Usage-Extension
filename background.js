@@ -331,6 +331,13 @@ messageRegistry.register('setAPIKey', async (message) => {
 messageRegistry.register('getResetNotifEnabled', () => getStorageValue('resetNotifEnabled', false));
 messageRegistry.register('setResetNotifEnabled', (message) => setStorageValue('resetNotifEnabled', message.value));
 
+messageRegistry.register('getResetNotifThreshold', () => getStorageValue('resetNotifThreshold', 100));
+messageRegistry.register('setResetNotifThreshold', (message) => {
+	const n = Number(message.value);
+	const clamped = Number.isFinite(n) ? Math.min(100, Math.max(1, Math.round(n))) : 100;
+	return setStorageValue('resetNotifThreshold', clamped);
+});
+
 messageRegistry.register('getLanguageOverride', () => getStorageValue('languageOverride', null));
 messageRegistry.register('setLanguageOverride', (message) => setStorageValue('languageOverride', message.value));
 
@@ -651,7 +658,8 @@ async function logUsageDelta(orgId, previousUsage, currentUsage, conversationLen
 }
 
 async function scheduleResetNotifications(orgId, usageData) {
-	const maxedLimits = usageData.getMaxedLimits();
+	const threshold = await getStorageValue('resetNotifThreshold', 100);
+	const maxedLimits = usageData.getMaxedLimits(threshold);
 
 	for (const limit of maxedLimits) {
 		// Skip limits whose reset time has already passed

@@ -455,12 +455,20 @@ class SettingsCard extends FloatingCard {
 			location.reload();
 		});
 
-		// Reset notification toggle
-		const toggleContainer = document.createElement('div');
-		toggleContainer.className = 'ut-row';
-		toggleContainer.style.alignItems = 'start';
-		toggleContainer.style.gap = '6px';
-		toggleContainer.style.marginBottom = '8px';
+		// Reset notification section: heading, then "Enabled" + the arming threshold on one row
+		const resetContainer = document.createElement('div');
+		resetContainer.className = 'ut-container';
+
+		const resetHeading = document.createElement('label');
+		resetHeading.className = 'ut-label text-sm';
+		resetHeading.textContent = localize('card.reset_notif_toggle');
+
+		const resetRow = document.createElement('div');
+		resetRow.className = 'ut-row';
+
+		const toggleGroup = document.createElement('div');
+		toggleGroup.className = 'ut-row';
+		toggleGroup.style.gap = '6px';
 
 		const checkbox = document.createElement('input');
 		checkbox.type = 'checkbox';
@@ -468,15 +476,65 @@ class SettingsCard extends FloatingCard {
 		checkbox.checked = await sendBackgroundMessage({ type: 'getResetNotifEnabled' }) || false;
 		checkbox.addEventListener('change', () => {
 			sendBackgroundMessage({ type: 'setResetNotifEnabled', value: checkbox.checked });
+			setThresholdEnabled(checkbox.checked);
 		});
 
 		const toggleLabel = document.createElement('label');
 		toggleLabel.htmlFor = 'ut-reset-notif-toggle';
 		toggleLabel.className = 'text-sm';
-		toggleLabel.textContent = localize('card.reset_notif_toggle');
+		toggleLabel.textContent = localize('card.reset_notif_enabled');
 
-		toggleContainer.appendChild(checkbox);
-		toggleContainer.appendChild(toggleLabel);
+		toggleGroup.appendChild(checkbox);
+		toggleGroup.appendChild(toggleLabel);
+
+		// Usage % at which the reset notification gets armed
+		const thresholdGroup = document.createElement('div');
+		thresholdGroup.className = 'ut-row';
+		thresholdGroup.style.gap = '6px';
+		thresholdGroup.style.marginLeft = 'auto';
+
+		const thresholdLabel = document.createElement('label');
+		thresholdLabel.htmlFor = 'ut-reset-notif-threshold';
+		thresholdLabel.className = 'text-sm';
+		thresholdLabel.textContent = localize('card.reset_notif_threshold');
+
+		const thresholdInput = document.createElement('input');
+		thresholdInput.type = 'number';
+		thresholdInput.id = 'ut-reset-notif-threshold';
+		thresholdInput.min = '1';
+		thresholdInput.max = '100';
+		thresholdInput.step = '1';
+		thresholdInput.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input text-sm';
+		thresholdInput.style.width = '56px';
+		thresholdInput.style.marginBottom = '0'; // ut-input's bottom margin would break the row's alignment
+		thresholdInput.value = await sendBackgroundMessage({ type: 'getResetNotifThreshold' }) ?? 100;
+
+		thresholdInput.addEventListener('change', () => {
+			const n = Number(thresholdInput.value);
+			const clamped = Number.isFinite(n) ? Math.min(100, Math.max(1, Math.round(n))) : 100;
+			thresholdInput.value = clamped;
+			sendBackgroundMessage({ type: 'setResetNotifThreshold', value: clamped });
+		});
+
+		const thresholdSuffix = document.createElement('span');
+		thresholdSuffix.className = 'text-sm';
+		thresholdSuffix.textContent = '%';
+
+		// The threshold only means anything while notifications are on
+		const setThresholdEnabled = (enabled) => {
+			thresholdInput.disabled = !enabled;
+			thresholdGroup.style.opacity = enabled ? '1' : '0.5';
+		};
+		setThresholdEnabled(checkbox.checked);
+
+		thresholdGroup.appendChild(thresholdLabel);
+		thresholdGroup.appendChild(thresholdInput);
+		thresholdGroup.appendChild(thresholdSuffix);
+
+		resetRow.appendChild(toggleGroup);
+		resetRow.appendChild(thresholdGroup);
+		resetContainer.appendChild(resetHeading);
+		resetContainer.appendChild(resetRow);
 
 		// Language override dropdown
 		const langContainer = document.createElement('div');
@@ -523,7 +581,7 @@ class SettingsCard extends FloatingCard {
 		this.element.appendChild(input);
 		buttonContainer.appendChild(saveButton);
 		buttonContainer.appendChild(debugButton);
-		this.element.appendChild(toggleContainer);
+		this.element.appendChild(resetContainer);
 		this.element.appendChild(langContainer);
 		this.element.appendChild(buttonContainer);
 

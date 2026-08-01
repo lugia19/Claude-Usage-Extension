@@ -169,9 +169,9 @@ export class UsageData {
 			.map(([key, limit]) => ({ key, ...limit }));
 	}
 
-	// Get limits that are at 100% (for notification scheduling)
-	getMaxedLimits() {
-		return this.getActiveLimits().filter(limit => limit.percentage >= 100);
+	// Get limits at or above the notification threshold (for notification scheduling)
+	getMaxedLimits(threshold = 100) {
+		return this.getActiveLimits().filter(limit => limit.percentage >= threshold);
 	}
 
 	// For chat area: most constraining weekly-type limit (for marker)
