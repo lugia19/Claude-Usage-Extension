@@ -1,2 +1,3 @@
-Always display Extra Usage in the sidebar
-Display Extra Usage in messagebox if using Fable on Pro
+Make Usage section collapsible
+Fetch 5h usage from SSE stream to make the UI more responsive
+Allow customizing the % after which the usage reset notification appears
