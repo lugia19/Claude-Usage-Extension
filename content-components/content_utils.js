@@ -282,18 +282,10 @@ async function getSidebarDisplayPrefs() {
 	return (prefs && typeof prefs === 'object') ? prefs : {};
 }
 
-// Writes are serialized: this is a read-modify-write, and two checkboxes ticked in quick
-// succession would otherwise both read the pre-change object and the second would clobber
-// the first.
-let sidebarDisplayWrite = Promise.resolve();
-
-function setSidebarDisplayPref(key, visible) {
-	sidebarDisplayWrite = sidebarDisplayWrite.then(async () => {
-		const prefs = await getSidebarDisplayPrefs();
-		prefs[key] = visible;
-		await browser.storage.local.set({ [SIDEBAR_DISPLAY_KEY]: prefs });
-	});
-	return sidebarDisplayWrite;
+// Written whole, once, when the settings card is saved — never per-checkbox, so there is no
+// read-modify-write for concurrent edits to race over.
+async function setSidebarDisplayPrefs(prefs) {
+	await browser.storage.local.set({ [SIDEBAR_DISPLAY_KEY]: prefs });
 }
 
 function isSidebarItemVisible(prefs, key) {

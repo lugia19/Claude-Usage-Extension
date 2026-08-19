@@ -1,5 +1,5 @@
 /* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, localize, SUPPORTED_LOCALES,
-   usageUI, getSidebarDisplayPrefs, setSidebarDisplayPref, isSidebarItemVisible */
+   usageUI, getSidebarDisplayPrefs, setSidebarDisplayPrefs, isSidebarItemVisible */
 'use strict';
 
 const DONATION_1M = 1000000;
@@ -415,8 +415,9 @@ class SettingsCard extends FloatingCard {
 		return heading;
 	}
 
-	// Checkbox + clickable label pair, as used by every toggle in the card.
-	static checkboxRow(id, labelText, checked, onChange) {
+	// Checkbox + clickable label pair, as used by every toggle in the card. onChange is optional —
+	// most toggles are staged and only read back on Save.
+	static checkboxRow(id, labelText, checked, onChange = null) {
 		const row = document.createElement('div');
 		row.className = 'ut-row';
 		row.style.gap = '6px';
@@ -425,7 +426,7 @@ class SettingsCard extends FloatingCard {
 		checkbox.type = 'checkbox';
 		checkbox.id = id;
 		checkbox.checked = checked;
-		checkbox.addEventListener('change', () => onChange(checkbox.checked));
+		if (onChange) checkbox.addEventListener('change', () => onChange(checkbox.checked));
 
 		const label = document.createElement('label');
 		label.htmlFor = id;
@@ -467,6 +468,7 @@ class SettingsCard extends FloatingCard {
 		input.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input ut-w-full text-sm';
 		let apiKey = await sendBackgroundMessage({ type: 'getAPIKey' })
 		if (apiKey) input.value = apiKey
+		const initialApiKey = input.value;
 
 		const saveButton = document.createElement('button');
 		saveButton.textContent = localize('card.save');
@@ -491,20 +493,37 @@ class SettingsCard extends FloatingCard {
 			this.remove();
 		});
 
+		// Nothing in this card persists until Save. Every control just holds its value in the DOM,
+		// so closing the card discards (it is rebuilt from storage on each open), and Save commits
+		// the lot and reloads — the reload is what re-applies everything, instead of each control
+		// having to patch the live UI itself.
 		saveButton.addEventListener('click', async () => {
-			let result = await sendBackgroundMessage({ type: 'setAPIKey', newKey: input.value });
+			// The key is the only setting that can fail, and validating it hits the network, so
+			// only touch it when it actually changed — a language-only edit shouldn't wait on
+			// (or be rejected by) that round trip.
+			if (input.value !== initialApiKey) {
+				const result = await sendBackgroundMessage({ type: 'setAPIKey', newKey: input.value });
 
-			if (!result) {
-				const errorMsg = document.createElement('div');
-				errorMsg.className = 'text-sm';
-				errorMsg.style.color = RED_WARNING;
-				errorMsg.textContent = input.value.startsWith('sk-ant')
-					? localize('card.api_key_inactive')
-					: localize('card.api_key_invalid');
-				input.after(errorMsg);
-				setTimeout(() => errorMsg.remove(), 3000);
-				return;
+				if (!result) {
+					const errorMsg = document.createElement('div');
+					errorMsg.className = 'text-sm';
+					errorMsg.style.color = RED_WARNING;
+					errorMsg.textContent = input.value.startsWith('sk-ant')
+						? localize('card.api_key_inactive')
+						: localize('card.api_key_invalid');
+					input.after(errorMsg);
+					setTimeout(() => errorMsg.remove(), 3000);
+					return; // abort before anything else is written, so the card never half-commits
+				}
 			}
+
+			await Promise.all([
+				sendBackgroundMessage({ type: 'setResetNotifEnabled', value: checkbox.checked }),
+				sendBackgroundMessage({ type: 'setResetNotifThreshold', value: Number(thresholdInput.value) }),
+				sendBackgroundMessage({ type: 'setLanguageOverride', value: langSelect.value || null }),
+				setSidebarDisplayPrefs(this.collectSidebarDisplayPrefs()),
+			]);
+
 			location.reload();
 		});
 
@@ -525,10 +544,7 @@ class SettingsCard extends FloatingCard {
 			'ut-reset-notif-toggle',
 			localize('card.reset_notif_enabled'),
 			await sendBackgroundMessage({ type: 'getResetNotifEnabled' }) || false,
-			(enabled) => {
-				sendBackgroundMessage({ type: 'setResetNotifEnabled', value: enabled });
-				setThresholdEnabled(enabled);
-			}
+			(enabled) => setThresholdEnabled(enabled) // purely local; persisted on Save
 		);
 
 		// Usage % at which the reset notification gets armed
@@ -554,11 +570,10 @@ class SettingsCard extends FloatingCard {
 		thresholdInput.style.marginBottom = '0'; // ut-input's bottom margin would break the row's alignment
 		thresholdInput.value = await sendBackgroundMessage({ type: 'getResetNotifThreshold' }) ?? 100;
 
+		// Clamped as you type for immediate feedback; the value is persisted on Save.
 		thresholdInput.addEventListener('change', () => {
 			const n = Number(thresholdInput.value);
-			const clamped = Number.isFinite(n) ? Math.min(100, Math.max(1, Math.round(n))) : 100;
-			thresholdInput.value = clamped;
-			sendBackgroundMessage({ type: 'setResetNotifThreshold', value: clamped });
+			thresholdInput.value = Number.isFinite(n) ? Math.min(100, Math.max(1, Math.round(n))) : 100;
 		});
 
 		const thresholdSuffix = document.createElement('span');
@@ -608,11 +623,6 @@ class SettingsCard extends FloatingCard {
 		const currentOverride = await sendBackgroundMessage({ type: 'getLanguageOverride' });
 		langSelect.value = currentOverride || '';
 
-		langSelect.addEventListener('change', async () => {
-			await sendBackgroundMessage({ type: 'setLanguageOverride', value: langSelect.value || null });
-			location.reload();
-		});
-
 		langContainer.appendChild(langHeading);
 		langContainer.appendChild(langSelect);
 
@@ -640,7 +650,11 @@ class SettingsCard extends FloatingCard {
 		container.className = 'ut-container';
 		container.appendChild(SettingsCard.sectionHeading(localize('card.section_sidebar_display')));
 
-		const prefs = await getSidebarDisplayPrefs();
+		// Kept so the save handler can read the boxes back, and so the stored object can be merged
+		// rather than replaced (a pref for a limit not listed this session must survive).
+		this.storedSidebarPrefs = await getSidebarDisplayPrefs();
+		this.sidebarDisplayBoxes = new Map();
+		const prefs = this.storedSidebarPrefs;
 
 		// Union with the stored keys: if usage data hasn't landed yet, a bar hidden earlier would
 		// otherwise have no checkbox and no way back on.
@@ -649,33 +663,42 @@ class SettingsCard extends FloatingCard {
 			...Object.keys(prefs).filter(key => key !== 'desktopLink'),
 		])];
 
+		const addToggle = (key, label) => {
+			const { row, checkbox } = SettingsCard.checkboxRow(
+				`ut-sidebar-display-${key}`,
+				label,
+				isSidebarItemVisible(prefs, key) // no onChange: staged, written on Save
+			);
+			this.sidebarDisplayBoxes.set(key, checkbox);
+			return row;
+		};
+
 		for (const key of limitKeys) {
 			// Reuse the sidebar's own labels, minus their trailing colon, so each checkbox reads
 			// exactly like the bar it controls. French writes " :", the rest a bare colon.
 			const label = (usageUI.usageSection?.getLimitLabel(key) ?? key).replace(/\s*[:：]\s*$/, '');
-			const { row } = SettingsCard.checkboxRow(
-				`ut-sidebar-display-${key}`,
-				label,
-				isSidebarItemVisible(prefs, key),
-				(visible) => setSidebarDisplayPref(key, visible)
-			);
-			container.appendChild(row);
+			container.appendChild(addToggle(key, label));
 		}
 
 		// Electron never builds the desktop-version footer, so there's nothing to toggle there.
 		const isElectron = await sendBackgroundMessage({ type: 'isElectron' });
 		if (!isElectron) {
-			const { row } = SettingsCard.checkboxRow(
-				'ut-sidebar-display-desktopLink',
-				localize('card.sidebar_desktop_link'),
-				isSidebarItemVisible(prefs, 'desktopLink'),
-				(visible) => setSidebarDisplayPref('desktopLink', visible)
-			);
+			const row = addToggle('desktopLink', localize('card.sidebar_desktop_link'));
 			if (limitKeys.length) row.style.marginTop = '8px'; // it isn't a limit; set it apart
 			container.appendChild(row);
 		}
 
 		return container;
+	}
+
+	// Checkbox states merged over the stored object, so prefs for bars not listed this session
+	// (a limit whose usage data hadn't loaded, or the desktop link on Electron) are preserved.
+	collectSidebarDisplayPrefs() {
+		const prefs = { ...this.storedSidebarPrefs };
+		for (const [key, checkbox] of this.sidebarDisplayBoxes) {
+			prefs[key] = checkbox.checked;
+		}
+		return prefs;
 	}
 
 	show(position) {
