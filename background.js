@@ -436,6 +436,112 @@ async function requestData(message, sender, orgId) {
 }
 messageRegistry.register(requestData);
 
+// A provisional conversation update, built from the completion stream rather than the network, so
+// the length/cost/cached figures move the moment generation ends instead of ~1-2s later. Reported
+// by content-components/sse_bridge.js, which counts the reply's tokens in-page.
+//
+// HARD CONSTRAINT: this handler makes no network calls. Everything it needs is already in
+// pendingRequests (written when the POST went out) and conversationCache (written by the last
+// authoritative pass). A single fetch here would put it back in the latency it exists to avoid.
+//
+// It also skips every side effect the authoritative pass has - no scheduleResetNotifications, no
+// addToTotalTokens, no debugLogMessageCost. An estimate must never fire a notification or land in
+// the lifetime token counter.
+async function reportStreamCompletion(message, sender, orgId) {
+	const conversationId = message.conversationId;
+	if (!conversationId || !orgId || !sender?.tab) return false;
+
+	const pending = await pendingRequests.get(`${orgId}:${conversationId}`);
+	const cached = await conversationCache.get(conversationId);
+	// No baseline, no estimate. Synthesizing one from BASE_SYSTEM_PROMPT_LENGTH would miss feature
+	// costs (web search alone is 10250) and profile tokens, and read wildly wrong - a brand-new
+	// conversation is better off waiting the second for the real numbers.
+	if (!pending || !cached) {
+		await Log("Stream completion: no baseline for", conversationId, "- skipping estimate");
+		return false;
+	}
+
+	// Copy first: StoredMap.get hands back the live in-memory object, so mutating it in place
+	// would quietly corrupt the cached entry for every later reader.
+	const provisional = { ...cached };
+
+	const assistantTokens = Math.max(0, message.assistantTokens || 0);
+	// A regeneration has no new human message; its body carries no prompt, so this is already 0,
+	// but be explicit rather than relying on that.
+	const promptTokens = pending.isRetry ? 0 : Math.max(0, pending.promptTokens || 0);
+
+	// Tool definitions are re-sent with every request at full price. Counted here, from the
+	// definitions pendingRequests already holds, so the handler stays network-free even when an
+	// API key is configured.
+	let toolTokens = 0;
+	for (const tool of pending.toolDefinitions || []) {
+		toolTokens += tokenCounter.countTextLocal(`${tool.name} ${tool.description} ${tool.schema}`);
+	}
+
+	// A regeneration replaces the previous reply rather than appending to it, so adding both would
+	// double-count. We don't know the replaced message's size, so hold the length and let the
+	// estimate asterisk say so.
+	const appendOk = !pending.isRetry;
+	if (appendOk) {
+		provisional.length = (cached.length || 0) + promptTokens + assistantTokens;
+	}
+
+	// futureCost is NOT a running total, and this is the easiest thing in the file to get wrong.
+	// getInfo adds every message on the trunk (claude-api.js:707) and then subtracts the entire
+	// cached prefix straight back out (:715, since 1 - CACHING_MULTIPLIER is 1), so once a reply
+	// lands the only survivor is that reply. Hence assign, never +=. Adding to the previous value
+	// would carry the last turn's reply forward and roughly double the displayed cost each message.
+	//
+	// This deliberately targets what the cost SHOULD be, which today's authoritative pass does not
+	// agree with, for two separate reasons both tracked as follow-up work:
+	//   1. It folds in profileTokens at full price (see the modifierCost block in processResponse).
+	//      Preferences live in the cached prefix, so under CACHING_MULTIPLIER 0 they should be free.
+	//   2. processResponse runs TWICE per message - claude.ai issues two tree GETs that both match
+	//      the onCompleted filter - and the first run deletes the pendingRequests entry. So the
+	//      second run finds no toolDefinitions and drops tool tokens entirely, meaning the settled
+	//      number depends on which pass ran last.
+	// Measured on one message: this estimate 2856, first pass 4937, settled 2321. Tools are kept
+	// here because they genuinely are re-sent every request; once the two issues above are fixed
+	// the authoritative value should converge on this one.
+	provisional.futureCost = Math.round((1 + CONFIG.OUTPUT_TOKEN_MULTIPLIER) * assistantTokens + toolTokens);
+	provisional.cost = provisional.futureCost;
+
+	// uncachedCost genuinely IS cumulative - it never subtracts a cached prefix - so it keeps
+	// accumulating. It only surfaces while the conversation reads as uncached, which never happens
+	// immediately after a reply, so its drift stays invisible until the real pass corrects it.
+	provisional.uncachedFutureCost = (cached.uncachedFutureCost || 0) + promptTokens + assistantTokens;
+	provisional.uncachedCost = provisional.uncachedFutureCost;
+
+	// The reply just created an anchor at the end of the new human message, so the conversation is
+	// cached from now, whatever it was before.
+	provisional.conversationIsCachedUntil = Date.now() + CONFIG.TOKEN_CACHING_DURATION_MS;
+	provisional.costUsedCache = true;
+	provisional.lastMessageTimestamp = Date.now();
+	// isCurrentlyCached() compares modelVersion against the picker, so a stale one hides the cache
+	// indicator. pendingRequests took this from the request body, which is authoritative.
+	provisional.model = pending.model || provisional.model;
+	provisional.modelVersion = pending.modelVersion || provisional.modelVersion;
+	provisional.orgId = orgId;
+	provisional.conversationId = conversationId;
+	provisional.lengthIsEstimate = !!(cached.lengthIsEstimate || message.unreliable ||
+		pending.hasAttachments || !appendOk);
+
+	// Short TTL, unlike the authoritative 60 minutes: if the real pass never lands, requestData
+	// would otherwise serve this estimate as fact for the rest of the hour.
+	await conversationCache.set(conversationId, provisional, PROVISIONAL_CACHE_TTL);
+
+	await Log("Stream completion: provisional length", provisional.length,
+		"futureCost", provisional.futureCost, "(assistant", assistantTokens,
+		"prompt", promptTokens, "tools", toolTokens, ")");
+
+	await sendTabMessage(sender.tab.id, {
+		type: 'updateConversationData',
+		data: { conversationData: provisional }
+	});
+	return true;
+}
+messageRegistry.register(reportStreamCompletion);
+
 async function getPopupUsageData() {
 	// The active strategy owns discovery: it returns [{ orgId, ctx }] for this platform's container model.
 	const accounts = await getStrategy().listAccounts();
@@ -745,6 +851,23 @@ async function onBeforeRequestHandler(details) {
 		})) || [];
 		await Log("Tool definitions:", toolDefs);
 
+		// Size of the outgoing message, for the provisional estimate in reportStreamCompletion.
+		// This is the only place the prompt is visible - by the time the stream ends it is gone.
+		// Deliberately a COUNT and not the text: pendingRequests is a StoredMap, so anything put
+		// here is written to storage.local, and PRIVACY.md promises message content never is.
+		// Counted locally rather than via countText so no request body is shipped to the
+		// token-count API just to feed a display estimate.
+		let promptTokens = 0;
+		let hasAttachments = false;
+		try {
+			promptTokens = tokenCounter.countTextLocal(requestBodyJSON?.prompt || '');
+			// Attachments and files are real tokens the estimate can't see, so they only mark the
+			// result as an estimate rather than being counted.
+			hasAttachments = !!(requestBodyJSON?.attachments?.length || requestBodyJSON?.files?.length);
+		} catch (error) {
+			await Log("warn", "Failed to size outgoing message:", error);
+		}
+
 		// Store pending request with all data
 		await Log('onBeforeRequest: storing modelVersion:', modelVersion, '| class:', model);
 		await pendingRequests.set(key, {
@@ -755,7 +878,10 @@ async function onBeforeRequestHandler(details) {
 			modelVersion: modelVersion,
 			requestTimestamp: Date.now(),
 			toolDefinitions: toolDefs,
-			previousUsage: previousUsage
+			previousUsage: previousUsage,
+			promptTokens: promptTokens,
+			hasAttachments: hasAttachments,
+			isRetry: details.url.includes("/retry_completion")
 		});
 	}
 
@@ -929,6 +1055,10 @@ pendingRequests = new StoredMap("pendingRequests"); // conversationId -> {userId
 scheduledNotifications = new StoredMap('scheduledNotifications');
 const conversationCache = new StoredMap("conversationCache");	// This is for convo stats
 const CONVERSATION_CACHE_TTL = 60 * 60 * 1000; // 60 minutes
+// Provisional entries written by reportStreamCompletion expire far sooner than real ones. The
+// authoritative pass normally overwrites them within a second or two; this only bounds how long a
+// stream-derived estimate can be served as fact if that pass never arrives.
+const PROVISIONAL_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 const branchSwitchTimers = new Map(); // conversationId → timeoutId (debounce)
 
 // Set up repeating alarm for reset notification polling (every 3 minutes)

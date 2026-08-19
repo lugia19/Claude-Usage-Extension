@@ -1,10 +1,21 @@
-/* global Log, getActiveOrgId */
+/* global Log, CONFIG, getActiveOrgId, sendBackgroundMessage, GPTTokenizer_o200k_base */
 'use strict';
 
-// Bridges the session usage that injections/usage-sse-watcher.js reads out of the completion
-// stream (page world) to the UI actors, which overwrite that one field on the usage data they
-// already hold. The background is deliberately not involved: it has no state the actors don't,
-// and its authoritative update follows about a second later anyway.
+// Consumes the single `claudeUsageTrackerStream` message that injections/usage-sse-watcher.js
+// emits per completion, and splits it two ways:
+//
+//   * session usage -> straight to the UI actors in this same page, which overwrite that one
+//     field on the usage data they already hold. No background hop, so the bars move with zero
+//     added latency even if the service worker is asleep.
+//   * the reply's token count -> to the background, which owns the cached ConversationData and
+//     turns it into a provisional length/cost estimate (see reportStreamCompletion in
+//     background.js). The background answers on the normal updateConversationData channel.
+//
+// The reply TEXT never leaves this file: it is tokenized here and only the resulting number is
+// sent. That keeps message content out of the background's heap and off disk entirely, which is
+// what PRIVACY.md promises. It also finally puts lib/o200k_base.js to use - it has been loaded
+// into every claude.ai page by the manifest, and unused, all along.
+//
 // Plain callback registry rather than a DOM CustomEvent: every subscriber is a content script
 // sharing this scope, so there is no reason to route through the page's window (which would also
 // let page scripts listen in) or to worry about how detail objects cross worlds in Firefox.
@@ -19,9 +30,29 @@ function onSsePartialUsage(listener) {
 // utilization is a 0-1 fraction rather than a 0-100 percent, and resets_at is unix seconds rather
 // than an ISO string. ADAPT HERE if that changes.
 //
-// Only the 5h window is taken. `7d` moves by a fraction of a percent per message, and `7d_oi` is
-// the weekly scoped to whichever model served the request - which model that is differs per
-// account, and the stream never says - so both are left to the full fetch.
+// Full message_limit payload, as observed 2026-08-20 on a within-limit response (see
+// injections/usage-sse-watcher.js for the surrounding stream):
+//   type, overageStatus          "within_limit"; other states not captured
+//   resetsAt, remaining, perModelLimit   all null while within limit
+//   representativeClaim          "five_hour" - names the limit `resolved` describes
+//   overageResetsAt, overageInUse
+//   windows                      { "5h", "7d", "7d_oi", "overage" }, each
+//                                { status, resets_at (unix seconds), utilization (0-1) }
+//   resolved                     { status, limit, spend, disabled_reason, notice }
+//
+// `resolved.limit` is the single limit the server considers representative, and unlike `windows`
+// it IS shaped like a /usage `limits[]` entry: { kind, group, percent (0-100 integer), severity,
+// resets_at (ISO string), scope, is_active }. Tempting, but it only ever describes one limit, so
+// it cannot stand in for the /usage fetch. (`spend` was null here even with extra usage enabled.)
+//
+// utilization is rounded to 2 decimals - whole-percent granularity, matching /usage's integer
+// percent. Neither side is more precise than the other; they just round independently.
+//
+// Only the 5h window is taken. `7d` moves by a fraction of a percent per message. `7d_oi` looks
+// like the weekly scoped to whichever model served the request - which model that is differs per
+// account, and the stream never says - and its value disagreed with /usage's weekly_scoped by a
+// point when checked (0.1 against percent 11), so both are left to the full fetch. `overage` is
+// the extra-usage spend, which the UI sources from /usage and /credits instead.
 function parseSseSessionLimit(messageLimit) {
 	const session = messageLimit?.windows?.['5h'];
 	if (!session || typeof session.utilization !== 'number' || !session.resets_at) return null;
@@ -44,10 +75,25 @@ function shouldApplySseSession(current, incoming) {
 	return !sameWindow || incoming.percentage > current.percentage;
 }
 
+// countTokens is synchronous and runs on the page's main thread, so a very long reply would jank
+// the tab at exactly the wrong moment. Past this we count a prefix and let the caller flag the
+// result as an estimate; the authoritative pass corrects it a second later either way.
+const MAX_TOKENIZED_CHARS = 400 * 1000;
+
+function countAssistantTokens(text) {
+	if (!text) return { tokens: 0, truncated: false };
+	const truncated = text.length > MAX_TOKENIZED_CHARS;
+	const counted = truncated ? text.slice(0, MAX_TOKENIZED_CHARS) : text;
+	// Same arithmetic as TokenCounter's local path in bg-components/tokenManagement.js, sharing
+	// ESTIMATION_MULTIPLIER through CONFIG so the two can't drift apart.
+	const tokens = Math.round(GPTTokenizer_o200k_base.countTokens(counted) * CONFIG.ESTIMATION_MULTIPLIER);
+	return { tokens, truncated };
+}
+
 function initSseBridge() {
 	window.addEventListener('message', (event) => {
 		if (event.source !== window || event.origin !== window.location.origin) return;
-		if (event.data?.type !== 'claudeUsageTrackerSSE') return;
+		if (event.data?.type !== 'claudeUsageTrackerStream') return;
 
 		// The stream came from this tab, so it is this tab's org unless the user switched orgs
 		// mid-generation. Cheap to rule out.
@@ -55,17 +101,46 @@ function initSseBridge() {
 		if (event.data.streamOrgId && myOrgId && event.data.streamOrgId !== myOrgId) return;
 
 		const session = parseSseSessionLimit(event.data.messageLimit);
-		if (!session) return;
-
-		Log('SSE session usage:', session.percentage + '%');
-		for (const listener of ssePartialUsageListeners) {
-			try {
-				listener({ session });
-			} catch (error) {
-				Log('warn', 'SSE partial usage listener failed:', error);
+		if (session) {
+			Log('SSE session usage:', session.percentage + '%');
+			for (const listener of ssePartialUsageListeners) {
+				try {
+					listener({ session });
+				} catch (error) {
+					Log('warn', 'SSE partial usage listener failed:', error);
+				}
 			}
 		}
+
+		// Deferred a tick: the page is mid-repaint as the stream closes, and there is most of a
+		// second of budget before the authoritative pass lands, so there is no reason to compete.
+		setTimeout(() => reportStreamToBackground(event.data), 0);
 	});
+}
+
+function reportStreamToBackground(data) {
+	if (!data.conversationId) return;
+	// CONFIG arrives asynchronously at boot; without it the multiplier is unknown, and a count
+	// that silently omits it would read ~17% low.
+	if (!CONFIG) return;
+
+	let counted;
+	try {
+		counted = countAssistantTokens(data.assistantText);
+	} catch (error) {
+		Log('warn', 'SSE token count failed:', error);
+		return;
+	}
+
+	sendBackgroundMessage({
+		type: 'reportStreamCompletion',
+		conversationId: data.conversationId,
+		isRetry: !!data.isRetry,
+		assistantTokens: counted.tokens,
+		unreliable: !!data.sawNonTextBlock || counted.truncated,
+		assistantUuid: data.assistantUuid || null,
+		parentUuid: data.parentUuid || null
+	}).catch(error => Log('warn', 'Failed to report stream completion:', error));
 }
 
 initSseBridge();

@@ -54,6 +54,10 @@ const CONFIG = {
 	},
 	"BASE_SYSTEM_PROMPT_LENGTH": 3200,
 	"CACHING_MULTIPLIER": 0, // Seems to be free.
+	// o200k undercounts against Claude's real tokenizer; this closes the gap. Lives in CONFIG
+	// rather than on TokenCounter so the content script gets the same figure via getConfig —
+	// sse_bridge.js counts the streamed reply locally and must agree with the background.
+	"ESTIMATION_MULTIPLIER": 1.4,
 	"EXTRA_USAGE_CACHING_MULTIPLIER": 0.1, // Cache reads cost 10% of input during extra usage
 	"TOKEN_CACHING_DURATION_MS": 60 * 60 * 1000, // 1 hour
 	"ESTIMATED_CAPS": {
