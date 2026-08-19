@@ -466,6 +466,10 @@ class SettingsCard extends FloatingCard {
 		const input = document.createElement('input');
 		input.type = 'password';
 		input.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input ut-w-full text-sm';
+		// Not localized on purpose: it's the literal key prefix, the same in every language. It also
+		// doubles as the "you have no key set" tell - a password field with a value renders dots, so
+		// the placeholder only ever shows when the field is genuinely empty.
+		input.placeholder = 'sk-ant-...';
 		let apiKey = await sendBackgroundMessage({ type: 'getAPIKey' })
 		if (apiKey) input.value = apiKey
 		const initialApiKey = input.value;
