@@ -1,4 +1,5 @@
-/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, localize, SUPPORTED_LOCALES */
+/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, localize, SUPPORTED_LOCALES,
+   usageUI, getSidebarDisplayPrefs, setSidebarDisplayPref, isSidebarItemVisible */
 'use strict';
 
 const DONATION_1M = 1000000;
@@ -396,7 +397,44 @@ class SettingsCard extends FloatingCard {
 	constructor() {
 		super();
 		this.element.classList.add('settings-panel'); // Add the class for easier querying
-		this.element.style.maxWidth = '350px';
+		// Sized to its content rather than to a fixed width, so the right edge sits just past the
+		// longest label instead of leaving a gutter. The cap keeps it on-screen on a phone, at
+		// which point the columns wrap (see build()).
+		this.element.style.width = 'fit-content';
+		this.element.style.maxWidth = 'calc(100vw - 16px)';
+	}
+
+	// Section heading. Deliberately heavier than the plain field labels next to inputs, so the
+	// four blocks read as groups rather than as more fields.
+	static sectionHeading(text) {
+		const heading = document.createElement('label');
+		heading.className = 'ut-label text-text-100 text-sm select-none';
+		heading.style.fontWeight = '600';
+		heading.style.marginBottom = '6px';
+		heading.textContent = text;
+		return heading;
+	}
+
+	// Checkbox + clickable label pair, as used by every toggle in the card.
+	static checkboxRow(id, labelText, checked, onChange) {
+		const row = document.createElement('div');
+		row.className = 'ut-row';
+		row.style.gap = '6px';
+
+		const checkbox = document.createElement('input');
+		checkbox.type = 'checkbox';
+		checkbox.id = id;
+		checkbox.checked = checked;
+		checkbox.addEventListener('change', () => onChange(checkbox.checked));
+
+		const label = document.createElement('label');
+		label.htmlFor = id;
+		label.className = 'text-sm';
+		label.textContent = labelText;
+
+		row.appendChild(checkbox);
+		row.appendChild(label);
+		return { row, checkbox };
 	}
 
 	async build() {
@@ -405,9 +443,24 @@ class SettingsCard extends FloatingCard {
 		dragHandle.textContent = localize('card.settings_title');
 		this.element.appendChild(dragHandle);
 
-		const label = document.createElement('label');
-		label.className = 'ut-label text-sm';
-		label.textContent = localize('card.api_key_label');
+		// Flex rather than grid: each column takes only the width its content needs (a grid's 1fr
+		// tracks would split the card evenly and leave the short right column padded out). Wrapping
+		// drops the right column below the left once the viewport cap squeezes the card.
+		const columns = document.createElement('div');
+		columns.style.display = 'flex';
+		columns.style.flexWrap = 'wrap';
+		columns.style.gap = '0 20px';
+		columns.style.alignItems = 'flex-start';
+
+		const leftColumn = document.createElement('div');
+		leftColumn.style.flex = '0 1 auto';
+		leftColumn.style.minWidth = '210px';
+
+		const rightColumn = document.createElement('div');
+		rightColumn.style.flex = '0 1 auto';
+
+		columns.appendChild(leftColumn);
+		columns.appendChild(rightColumn);
 
 		const input = document.createElement('input');
 		input.type = 'password';
@@ -459,33 +512,24 @@ class SettingsCard extends FloatingCard {
 		const resetContainer = document.createElement('div');
 		resetContainer.className = 'ut-container';
 
-		const resetHeading = document.createElement('label');
-		resetHeading.className = 'ut-label text-sm';
-		resetHeading.textContent = localize('card.reset_notif_toggle');
+		const resetHeading = SettingsCard.sectionHeading(localize('card.reset_notif_toggle'));
 
 		const resetRow = document.createElement('div');
 		resetRow.className = 'ut-row';
+		// "Enabled" and the threshold share a line in English, but locales with longer labels
+		// (German's "Benachrichtigen ab:") overflow the column — let the threshold drop below.
+		resetRow.style.flexWrap = 'wrap';
+		resetRow.style.rowGap = '6px';
 
-		const toggleGroup = document.createElement('div');
-		toggleGroup.className = 'ut-row';
-		toggleGroup.style.gap = '6px';
-
-		const checkbox = document.createElement('input');
-		checkbox.type = 'checkbox';
-		checkbox.id = 'ut-reset-notif-toggle';
-		checkbox.checked = await sendBackgroundMessage({ type: 'getResetNotifEnabled' }) || false;
-		checkbox.addEventListener('change', () => {
-			sendBackgroundMessage({ type: 'setResetNotifEnabled', value: checkbox.checked });
-			setThresholdEnabled(checkbox.checked);
-		});
-
-		const toggleLabel = document.createElement('label');
-		toggleLabel.htmlFor = 'ut-reset-notif-toggle';
-		toggleLabel.className = 'text-sm';
-		toggleLabel.textContent = localize('card.reset_notif_enabled');
-
-		toggleGroup.appendChild(checkbox);
-		toggleGroup.appendChild(toggleLabel);
+		const { row: toggleGroup, checkbox } = SettingsCard.checkboxRow(
+			'ut-reset-notif-toggle',
+			localize('card.reset_notif_enabled'),
+			await sendBackgroundMessage({ type: 'getResetNotifEnabled' }) || false,
+			(enabled) => {
+				sendBackgroundMessage({ type: 'setResetNotifEnabled', value: enabled });
+				setThresholdEnabled(enabled);
+			}
+		);
 
 		// Usage % at which the reset notification gets armed
 		const thresholdGroup = document.createElement('div');
@@ -496,6 +540,7 @@ class SettingsCard extends FloatingCard {
 		const thresholdLabel = document.createElement('label');
 		thresholdLabel.htmlFor = 'ut-reset-notif-threshold';
 		thresholdLabel.className = 'text-sm';
+		thresholdLabel.style.whiteSpace = 'nowrap'; // it would wrap to two lines in the narrow column
 		thresholdLabel.textContent = localize('card.reset_notif_threshold');
 
 		const thresholdInput = document.createElement('input');
@@ -538,19 +583,14 @@ class SettingsCard extends FloatingCard {
 
 		// Language override dropdown
 		const langContainer = document.createElement('div');
-		langContainer.className = 'ut-row';
-		langContainer.style.alignItems = 'center';
-		langContainer.style.gap = '6px';
-		langContainer.style.marginBottom = '8px';
+		langContainer.className = 'ut-container';
 
-		const langLabel = document.createElement('label');
-		langLabel.htmlFor = 'ut-language-override';
-		langLabel.className = 'text-sm';
-		langLabel.textContent = localize('card.language_label');
+		const langHeading = SettingsCard.sectionHeading(localize('card.section_language'));
 
 		const langSelect = document.createElement('select');
 		langSelect.id = 'ut-language-override';
 		langSelect.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input text-sm';
+		langSelect.style.width = '100%';
 
 		const autoOpt = document.createElement('option');
 		autoOpt.value = '';
@@ -573,20 +613,69 @@ class SettingsCard extends FloatingCard {
 			location.reload();
 		});
 
-		langContainer.appendChild(langLabel);
+		langContainer.appendChild(langHeading);
 		langContainer.appendChild(langSelect);
 
 		// Assemble
-		this.element.appendChild(label);
-		this.element.appendChild(input);
+		leftColumn.appendChild(SettingsCard.sectionHeading(localize('card.section_api_key')));
+		leftColumn.appendChild(input);
+		leftColumn.appendChild(resetContainer);
+		leftColumn.appendChild(langContainer);
+
+		rightColumn.appendChild(await this.buildSidebarDisplaySection());
+
 		buttonContainer.appendChild(saveButton);
 		buttonContainer.appendChild(debugButton);
-		this.element.appendChild(resetContainer);
-		this.element.appendChild(langContainer);
+		this.element.appendChild(columns);
 		this.element.appendChild(buttonContainer);
 
 		this.addCloseButton();
 		this.makeCardDraggable(dragHandle);
+	}
+
+	// One checkbox per bar this account actually has, plus the desktop link. Built from the live
+	// usage data rather than a fixed list, so nobody gets a toggle for a bar they never see.
+	async buildSidebarDisplaySection() {
+		const container = document.createElement('div');
+		container.className = 'ut-container';
+		container.appendChild(SettingsCard.sectionHeading(localize('card.section_sidebar_display')));
+
+		const prefs = await getSidebarDisplayPrefs();
+
+		// Union with the stored keys: if usage data hasn't landed yet, a bar hidden earlier would
+		// otherwise have no checkbox and no way back on.
+		const limitKeys = [...new Set([
+			...usageUI.availableLimitKeys(),
+			...Object.keys(prefs).filter(key => key !== 'desktopLink'),
+		])];
+
+		for (const key of limitKeys) {
+			// Reuse the sidebar's own labels, minus their trailing colon, so each checkbox reads
+			// exactly like the bar it controls. French writes " :", the rest a bare colon.
+			const label = (usageUI.usageSection?.getLimitLabel(key) ?? key).replace(/\s*[:：]\s*$/, '');
+			const { row } = SettingsCard.checkboxRow(
+				`ut-sidebar-display-${key}`,
+				label,
+				isSidebarItemVisible(prefs, key),
+				(visible) => setSidebarDisplayPref(key, visible)
+			);
+			container.appendChild(row);
+		}
+
+		// Electron never builds the desktop-version footer, so there's nothing to toggle there.
+		const isElectron = await sendBackgroundMessage({ type: 'isElectron' });
+		if (!isElectron) {
+			const { row } = SettingsCard.checkboxRow(
+				'ut-sidebar-display-desktopLink',
+				localize('card.sidebar_desktop_link'),
+				isSidebarItemVisible(prefs, 'desktopLink'),
+				(visible) => setSidebarDisplayPref('desktopLink', visible)
+			);
+			if (limitKeys.length) row.style.marginTop = '8px'; // it isn't a limit; set it apart
+			container.appendChild(row);
+		}
+
+		return container;
 	}
 
 	show(position) {

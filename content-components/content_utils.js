@@ -270,6 +270,37 @@ function isCodePage() {
 }
 
 
+// Which pieces of the sidebar section the user wants shown. Purely content-side UI state — the
+// background never reads it — so it lives in storage.local directly, like usageSectionCollapsed.
+// Keys are limit keys ('session', 'weekly', 'fableWeekly', 'extraUsage') plus 'desktopLink'.
+// A missing key means visible, so an empty object is the default "show everything".
+const SIDEBAR_DISPLAY_KEY = 'sidebarDisplay';
+
+async function getSidebarDisplayPrefs() {
+	const stored = await browser.storage.local.get(SIDEBAR_DISPLAY_KEY);
+	const prefs = stored[SIDEBAR_DISPLAY_KEY];
+	return (prefs && typeof prefs === 'object') ? prefs : {};
+}
+
+// Writes are serialized: this is a read-modify-write, and two checkboxes ticked in quick
+// succession would otherwise both read the pre-change object and the second would clobber
+// the first.
+let sidebarDisplayWrite = Promise.resolve();
+
+function setSidebarDisplayPref(key, visible) {
+	sidebarDisplayWrite = sidebarDisplayWrite.then(async () => {
+		const prefs = await getSidebarDisplayPrefs();
+		prefs[key] = visible;
+		await browser.storage.local.set({ [SIDEBAR_DISPLAY_KEY]: prefs });
+	});
+	return sidebarDisplayWrite;
+}
+
+function isSidebarItemVisible(prefs, key) {
+	return prefs[key] !== false;
+}
+
+
 // Pin the active UI locale and persist it as lastLang so the popup and background (which have
 // no claude.ai DOM) can localize too. Normally fetched from /api/account_profile at boot. But
 // right after a language change, the background pins the authoritative value (from the PUT body)

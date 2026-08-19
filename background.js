@@ -123,6 +123,17 @@ async function handleAlarm(alarmName) {
 	await Log("Alarm triggered:", alarmName);
 
 	if (alarmName === 'checkResetNotifications') {
+		// Heartbeat: the only other things that refresh a tab's usage are sending a message and
+		// loading a conversation, so a tab left sitting on an expired limit has no way back on its
+		// own if its refresh request failed. Push fresh data every tick regardless of whether reset
+		// notifications are enabled. Electron already polls on its own interval.
+		if (!isElectron) {
+			try {
+				await updateAllTabsWithUsage();
+			} catch (error) {
+				await Log("warn", "Usage heartbeat failed:", error);
+			}
+		}
 		await checkResetNotifications();
 	}
 }
@@ -246,22 +257,34 @@ async function updateAllTabsWithUsage(usageData = null) {
 	await Log("Updating all tabs with usage data");
 	const tabs = await browser.tabs.query({ url: "*://claude.ai/*" });
 
+	// Several tabs commonly share one org; fetch once per org rather than once per tab.
+	const fetchesByOrg = new Map();
+
 	for (const tab of tabs) {
-		let data = usageData;
+		// One tab failing (org lookup, fetch, or a tab that closed mid-loop) must not cost every
+		// remaining tab its update - this runs unattended from the heartbeat.
+		try {
+			let data = usageData;
 
-		// If no usageData provided, fetch fresh
-		if (!data) {
-			const orgId = await requestActiveOrgId(tab);
-			const api = getStrategy().apiForTab(tab, orgId);
-			data = await api.getUsageData();
-		}
-
-		sendTabMessage(tab.id, {
-			type: 'updateUsage',
-			data: {
-				usageData: data.toJSON()
+			// If no usageData provided, fetch fresh
+			if (!data) {
+				const orgId = await requestActiveOrgId(tab);
+				if (!fetchesByOrg.has(orgId)) {
+					const api = getStrategy().apiForTab(tab, orgId);
+					fetchesByOrg.set(orgId, api.getUsageData());
+				}
+				data = await fetchesByOrg.get(orgId);
 			}
-		});
+
+			sendTabMessage(tab.id, {
+				type: 'updateUsage',
+				data: {
+					usageData: data.toJSON()
+				}
+			}).catch(error => Log("warn", `Failed to push usage to tab ${tab.id}:`, error));
+		} catch (error) {
+			await Log("warn", `Failed to update tab ${tab.id} with usage data:`, error);
+		}
 	}
 }
 

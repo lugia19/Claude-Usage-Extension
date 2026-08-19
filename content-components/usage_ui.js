@@ -1,14 +1,25 @@
 /* global CONFIG, Log, ProgressBar, sendBackgroundMessage, getActiveOrgId,
    setupTooltip, getTooltipPortal, getResetTimeHTML, sleep, isMobileView, isCodePage, UsageData, isPeakHours,
    RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS, LayoutManager, mountToAnchor,
-   localize, fmtNum, localeForIntl, onSsePartialUsage, shouldApplySseSession */
+   localize, fmtNum, localeForIntl, onSsePartialUsage, shouldApplySseSession,
+   SIDEBAR_DISPLAY_KEY, getSidebarDisplayPrefs, isSidebarItemVisible */
 'use strict';
+
+// A limit whose reset time has passed needs fresh data from the server to clear. The server does
+// not always have it yet - it can keep reporting the window that just expired - so this retries on
+// a backoff instead of asking once. Both bounds matter: asking once and giving up leaves the bar
+// stuck on "Resetting..." forever if the request fails, and asking every frame turns a window the
+// server hasn't rolled over yet into a request per second.
+const EXPIRY_GRACE_MS = 60 * 1000;			// how far past the reset before we ask at all
+const EXPIRY_RETRY_BASE_MS = 30 * 1000;		// first retry delay, doubling per attempt
+const EXPIRY_RETRY_MAX_MS = 5 * 60 * 1000;	// ceiling for that backoff
 
 // Usage section with multiple limit bars
 class UsageSection {
 	constructor() {
 		this.elements = this.createElement();
 		this.limitBars = new Map(); // limitKey -> { row, percentage, resetTime, progressBar }
+		this.hiddenKeys = new Set(); // limit keys the user switched off in settings
 	}
 
 	createElement() {
@@ -82,6 +93,9 @@ class UsageSection {
 		const seenKeys = new Set();
 
 		for (const limit of activeLimits) {
+			// Hidden bars are left out of seenKeys, so the teardown pass below removes them.
+			if (this.hiddenKeys.has(limit.key)) continue;
+
 			seenKeys.add(limit.key);
 			let barElements = this.limitBars.get(limit.key);
 
@@ -114,7 +128,7 @@ class UsageSection {
 
 		// Extra usage bar (shown whenever extra usage is set up, even before limits are maxed —
 		// credits can be spent before normal usage runs out)
-		if (usageData.hasExtraUsageConfigured()) {
+		if (usageData.hasExtraUsageConfigured() && !this.hiddenKeys.has('extraUsage')) {
 			seenKeys.add('extraUsage');
 			let barElements = this.limitBars.get('extraUsage');
 
@@ -148,6 +162,12 @@ class UsageSection {
 				barElements.row.remove();
 				this.limitBars.delete(key);
 			}
+		}
+
+		// Re-append in limit order (seenKeys keeps insertion order). Without this a bar switched
+		// back on in settings is appended at the end instead of returning to its old position.
+		for (const key of seenKeys) {
+			barsContainer.appendChild(this.limitBars.get(key).row);
 		}
 	}
 
@@ -189,8 +209,11 @@ class UsageUI {
 		this.state = {
 			usageData: null,
 			currentModel: null,
-			refreshedExpiredLimits: new Set(), // track which expired limits we've already requested a refresh for
+			// limitKey -> { requestedAt, attempts } for expired limits we've asked to refresh.
+			// Cleared for a limit once its reset time is in the future again.
+			expiryRefreshes: new Map(),
 			collapsed: false,
+			sidebarDisplay: {},
 		};
 
 		// Element references
@@ -229,12 +252,22 @@ class UsageUI {
 
 		onSsePartialUsage((update) => this.handleSsePartialUsage(update));
 
-		// Keep the collapsed state in sync across tabs
+		// Keep the collapsed state and the display toggles in sync across tabs. The settings card
+		// writes storage from this same page, so this doubles as the in-page live-update path.
 		browser.storage.onChanged.addListener((changes, area) => {
-			if (area !== 'local' || !changes.usageSectionCollapsed) return;
-			const collapsed = changes.usageSectionCollapsed.newValue === true;
-			if (!this.uiReady || collapsed === this.state.collapsed) return;
-			this.setCollapsed(collapsed, false);
+			if (area !== 'local') return;
+
+			if (changes.usageSectionCollapsed) {
+				const collapsed = changes.usageSectionCollapsed.newValue === true;
+				if (this.uiReady && collapsed !== this.state.collapsed) {
+					this.setCollapsed(collapsed, false);
+				}
+			}
+
+			if (changes[SIDEBAR_DISPLAY_KEY] && this.uiReady) {
+				this.state.sidebarDisplay = changes[SIDEBAR_DISPLAY_KEY].newValue || {};
+				this.applySidebarDisplay();
+			}
 		});
 	}
 
@@ -247,6 +280,7 @@ class UsageUI {
 
 		const stored = await browser.storage.local.get('usageSectionCollapsed');
 		this.state.collapsed = stored.usageSectionCollapsed === true;
+		this.state.sidebarDisplay = await getSidebarDisplayPrefs();
 
 		this.usageSection = new UsageSection();
 		this.elements.sidebar = await this.createSidebarElements();
@@ -254,6 +288,7 @@ class UsageUI {
 		this.elements.tooltips = this.createTooltips();
 		this.attachTooltips();
 		this.setCollapsed(this.state.collapsed, false);
+		this.applySidebarDisplay();
 
 		this.uiReady = true;
 		await Log('UsageUI: Ready');
@@ -285,9 +320,10 @@ class UsageUI {
 		content.appendChild(sectionsContainer);
 
 		// Add footers
+		let desktopFooter = null;
 		const isElectron = await sendBackgroundMessage({ type: 'isElectron' });
 		if (!isElectron) {
-			const desktopFooter = this.createDesktopFooter();
+			desktopFooter = this.createDesktopFooter();
 			content.appendChild(desktopFooter);
 
 			const qolFooter = this.createQoLFooter();
@@ -302,7 +338,7 @@ class UsageUI {
 		container.appendChild(header);
 		container.appendChild(content);
 
-		const elements = { container, content, toggle };
+		const elements = { container, content, toggle, desktopFooter };
 		toggle.addEventListener('click', () => this.setCollapsed(!this.state.collapsed));
 
 		return elements;
@@ -357,6 +393,38 @@ class UsageUI {
 		header.appendChild(toggle);
 		header.appendChild(settingsButton);
 		return { header, toggle };
+	}
+
+	// Push the display prefs into the DOM. Hidden bars drop out of the next render (the section's
+	// teardown pass removes their rows), and re-checking one rebuilds it on the render after that.
+	applySidebarDisplay() {
+		const prefs = this.state.sidebarDisplay;
+
+		this.usageSection.hiddenKeys = new Set(
+			Object.keys(prefs).filter(key => key !== 'desktopLink' && !isSidebarItemVisible(prefs, key))
+		);
+
+		// Absent on Electron, where the footer is never built.
+		const desktopFooter = this.elements.sidebar?.desktopFooter;
+		if (desktopFooter) {
+			desktopFooter.style.display = isSidebarItemVisible(prefs, 'desktopLink') ? '' : 'none';
+		}
+
+		if (this.state.usageData) this.renderAll();
+	}
+
+	// Keys the settings card builds its checkbox list from, ignoring the hide prefs.
+	//
+	// Limits are listed only when the account actually has them — an account's set of limit bars
+	// is fixed by its tier, so a toggle for one it never gets would be dead UI. Extra usage is
+	// different: it's a baseline switch, always offered, because the credits bar appears the
+	// moment extra usage is enabled and someone who never wants to see it should be able to say
+	// so in advance. Off means never; on means show it if and when it becomes relevant.
+	availableLimitKeys() {
+		const usageData = this.state.usageData;
+		const keys = usageData ? usageData.getActiveLimits().map(limit => limit.key) : [];
+		keys.push('extraUsage');
+		return keys;
 	}
 
 	setCollapsed(collapsed, persist = true) {
@@ -640,7 +708,6 @@ class UsageUI {
 		}
 
 		this.state.usageData = UsageData.fromJSON(usageDataJSON);
-		this.state.refreshedExpiredLimits.clear();
 		this.renderAll();
 	}
 
@@ -652,7 +719,6 @@ class UsageUI {
 		if (!shouldApplySseSession(this.state.usageData.limits.session, session)) return;
 
 		this.state.usageData.limits.session = session;
-		this.state.refreshedExpiredLimits.clear();
 		this.renderAll();
 	}
 
@@ -662,13 +728,47 @@ class UsageUI {
 		const { usageData } = this.state;
 		if (!usageData) return;
 
-		for (const limit of usageData.getActiveLimits()) {
-			if (limit.resetsAt && limit.resetsAt <= Date.now() && !this.state.refreshedExpiredLimits.has(limit.key)) {
-				this.state.refreshedExpiredLimits.add(limit.key);
-				Log(`UsageUI: Limit "${limit.key}" expired, requesting fresh data`);
-				sendBackgroundMessage({ type: 'requestData' });
-				return; // one request is enough, it fetches all limits
+		const now = Date.now();
+		const activeLimits = usageData.getActiveLimits();
+
+		// Forget limits that are no longer reported, so their records can't suppress a later request.
+		const activeKeys = new Set(activeLimits.map(limit => limit.key));
+		for (const key of this.state.expiryRefreshes.keys()) {
+			if (!activeKeys.has(key)) this.state.expiryRefreshes.delete(key);
+		}
+
+		for (const limit of activeLimits) {
+			if (!limit.resetsAt || limit.resetsAt > now - EXPIRY_GRACE_MS) {
+				// Not expired - the window rolled over (or never lapsed), so drop any backoff and let
+				// the next expiry ask immediately.
+				this.state.expiryRefreshes.delete(limit.key);
+				continue;
 			}
+
+			// Note the backoff is per limit, not per reset timestamp: a server that hands back a
+			// *different* still-expired timestamp each time is exactly the case we must not answer
+			// with a request per frame. Only a reset time that has actually moved into the future
+			// (handled above) earns an immediate request.
+			const previous = this.state.expiryRefreshes.get(limit.key);
+			if (previous) {
+				const wait = Math.min(EXPIRY_RETRY_BASE_MS * 2 ** previous.attempts, EXPIRY_RETRY_MAX_MS);
+				if (now - previous.requestedAt < wait) continue;
+				previous.requestedAt = now;
+				previous.attempts++;
+			} else {
+				this.state.expiryRefreshes.set(limit.key, { requestedAt: now, attempts: 0 });
+			}
+
+			Log(`UsageUI: Limit "${limit.key}" expired, requesting fresh data`);
+			sendBackgroundMessage({ type: 'requestData' }).catch(async (error) => {
+				// The request never reached the background (or it threw). Undo the attempt bump so we
+				// keep retrying at the base interval instead of backing off toward the ceiling - a
+				// failed request tells us nothing about whether the server has rolled the window over.
+				const record = this.state.expiryRefreshes.get(limit.key);
+				if (record && record.attempts > 0) record.attempts--;
+				await Log("warn", `UsageUI: Refresh request for expired limit "${limit.key}" failed:`, error);
+			});
+			return; // one request is enough, it fetches all limits
 		}
 	}
 
