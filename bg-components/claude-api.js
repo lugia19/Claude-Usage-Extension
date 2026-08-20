@@ -749,15 +749,10 @@ class ConversationAPI {
 			// Text content
 			const textContent = await message.getTextContent(false, this, this.orgId);
 
-			// group 0: cached for both cost and futureCost
-			// group 1: uncached now, cached next (the messages between the two boundaries)
-			// group 2: uncached for both
-			const group = message.isCached ? 0 : (isCachedNext ? 1 : 2);
-
 			if (message.sender === "human") {
-				humanMessageData.push({ content: textContent, group });
+				humanMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext });
 			} else {
-				assistantMessageData.push({ content: textContent, group });
+				assistantMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext });
 			}
 
 			// Last message output tokens (or second to last if last is human)
@@ -784,34 +779,39 @@ class ConversationAPI {
 			}
 		}
 
-		// Batch token counting. The two boundaries cut the trunk into three contiguous groups, so
-		// counting each group once and composing the sums covers the conversation exactly once —
-		// where the old code counted everything, then counted the cached prefix again to subtract
-		// it, and then the recursion did both a second time.
-		const countGroup = async (g) => {
-			const humans = humanMessageData.filter(m => m.group === g).map(m => m.content);
-			const assistants = assistantMessageData.filter(m => m.group === g).map(m => m.content);
+		// Batch token counting: the whole trunk, then each figure's cached prefix so it can be
+		// subtracted back out.
+		//
+		// Counted as PREFIXES rather than as the three disjoint groups the two boundaries imply,
+		// even though disjoint groups would touch each message only once. A cache boundary always
+		// sits on a human message, so a prefix is always [human, assistant, ... human] — well-formed
+		// for the count-tokens API, which requires messages to start with the user role and
+		// alternate. The middle group (between the two boundaries) starts with an *assistant*, so
+		// sending it alone would be rejected, and `countMessages` would silently fall back to local
+		// estimation for that slice only — an API-key-only inaccuracy that would be invisible here.
+		// Overlapping prefixes cost more tokenizer passes; correctness for both paths is worth it.
+		const countSlice = async (predicate) => {
+			const humans = humanMessageData.filter(predicate).map(m => m.content);
+			const assistants = assistantMessageData.filter(predicate).map(m => m.content);
 			if (humans.length === 0 && assistants.length === 0) return 0;
 			return tokenCounter.countMessages(humans, assistants);
 		};
-		const [cachedBothTokens, cachedNextOnlyTokens, uncachedGroupTokens] = [
-			await countGroup(0), await countGroup(1), await countGroup(2)
-		];
+		const allMessageTokens = await countSlice(() => true);
+		const cachedNowTokens = await countSlice(m => m.isCachedNow);
+		const cachedNextTokens = await countSlice(m => m.isCachedNext);
 
-		const allMessageTokens = cachedBothTokens + cachedNextOnlyTokens + uncachedGroupTokens;
 		lengthTokens += allMessageTokens;
 		costTokens += allMessageTokens;
 		futureCostTokens += allMessageTokens;
 		uncachedCostTokens += allMessageTokens;
 		uncachedFutureCostTokens += allMessageTokens;
 
-		// Subtract each figure's own cached prefix. `cost` gets back the messages cached NOW (group
-		// 0); `futureCost` gets back everything cached by the time the next message goes out, which
-		// is group 0 plus the messages between the two boundaries (group 1).
-		if (cachedBothTokens > 0) {
-			costTokens -= cachedBothTokens * (1 - CONFIG.CACHING_MULTIPLIER);
+		// Subtract each figure's own cached prefix. `cost` gets back what is cached NOW;
+		// `futureCost` gets back everything that will be cached once the next message goes out,
+		// which reaches one boundary further along the trunk.
+		if (cachedNowTokens > 0) {
+			costTokens -= cachedNowTokens * (1 - CONFIG.CACHING_MULTIPLIER);
 		}
-		const cachedNextTokens = cachedBothTokens + cachedNextOnlyTokens;
 		if (cachedNextTokens > 0) {
 			futureCostTokens -= cachedNextTokens * (1 - CONFIG.CACHING_MULTIPLIER);
 		}
