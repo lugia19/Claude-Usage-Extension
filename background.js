@@ -341,9 +341,13 @@ async function setPendingRequest(orgId, conversationId, turnUuid, entry) {
 
 // Tool definitions are appended to every request, so the next message in this conversation will
 // carry them whether or not we are the ones who just sent one. Reading them back from the last
-// request keeps a conversation you navigated to priced the same as one you just sent in — without
-// this, the same chat reports a cost ~3,000 tokens lower via requestData than via the stream.
-// Returns null once the pending entry expires, which is the honest answer: we no longer know.
+// request keeps a conversation priced the same however you arrived at it.
+//
+// Narrower than it looks: conversationCache lives 60 minutes and pendingRequests 10, so whenever an
+// entry is fresh enough to consult here, the cache is fresh too and requestData never reaches its
+// miss path. The one route that does reach it is a BRANCH SWITCH, which deletes conversationCache
+// explicitly — that is what this is keeping alive. Returns null once the entry expires, which is
+// the honest answer: we no longer know what tools were sent.
 async function lastToolDefinitions(orgId, conversationId) {
 	const pending = newestPending(await getPendingBucket(orgId, conversationId));
 	return pending?.toolDefinitions?.length ? pending.toolDefinitions : null;
