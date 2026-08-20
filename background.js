@@ -1,6 +1,6 @@
 import './lib/browser-polyfill.min.js';
 import './lib/o200k_base.js';
-import { CONFIG, isElectron, sleep, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './bg-components/utils.js';
+import { CONFIG, isElectron, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './bg-components/utils.js';
 import { tokenStorageManager, tokenCounter } from './bg-components/tokenManagement.js';
 import { getStrategy, initContainerStrategy, setBrave } from './bg-components/container-strategy.js';
 import { UsageData, modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier } from './shared/dataclasses.js';
@@ -295,18 +295,67 @@ async function updateAllTabsWithUsage(usageData = null) {
 // fresh. Bounded by time because pending entries now expire rather than being deleted on use.
 const PENDING_MODEL_TRUST_MS = 5 * 60 * 1000;
 
+// pendingRequests is two layers: the outer StoredMap key is the conversation, and each value is a
+// bucket of { [turn assistant uuid]: entry }.
+//
+// The inner key comes from turn_message_uuids.assistant_message_uuid in the completion request body
+// - claude.ai pre-generates the uuid the assistant message WILL have, and it is the same uuid the
+// SSE stream reports as message_start.message.uuid and the tree reports as
+// current_leaf_message_uuid. So both the provisional and the authoritative pass can name exactly
+// which message they are talking about, instead of "whatever is pending for this conversation".
+//
+// That ambiguity is what made a second message sent moments after the first read the previous
+// message's prompt/tools/model and skip its own accounting. Keeping the conversation as the OUTER
+// key preserves StoredMap's per-key TTL at the granularity that matters for eviction, and keeps the
+// two consumers that legitimately want "the newest request here" on a single get.
+const PENDING_BUCKET_MAX = 5;
+
+async function getPendingBucket(orgId, conversationId) {
+	return (await pendingRequests.get(`${orgId}:${conversationId}`)) || {};
+}
+
+// The one entry for a specific generation. Falls back to the newest when the caller has no uuid.
+async function getPendingRequest(orgId, conversationId, turnUuid) {
+	const bucket = await getPendingBucket(orgId, conversationId);
+	if (turnUuid && bucket[turnUuid]) return bucket[turnUuid];
+	return turnUuid ? undefined : newestPending(bucket);
+}
+
+function newestPending(bucket) {
+	let newest;
+	for (const entry of Object.values(bucket)) {
+		if (!newest || (entry.requestTimestamp || 0) > (newest.requestTimestamp || 0)) newest = entry;
+	}
+	return newest;
+}
+
+// Writes one generation's entry, pruning siblings that have aged out or overflowed the cap so a
+// rapid back-and-forth can't grow the bucket without bound.
+async function setPendingRequest(orgId, conversationId, turnUuid, entry) {
+	const bucket = await getPendingBucket(orgId, conversationId);
+	bucket[turnUuid] = entry;
+
+	const cutoff = Date.now() - PENDING_REQUEST_TTL;
+	const kept = Object.entries(bucket)
+		.filter(([, e]) => (e.requestTimestamp || 0) > cutoff)
+		.sort((a, b) => (b[1].requestTimestamp || 0) - (a[1].requestTimestamp || 0))
+		.slice(0, PENDING_BUCKET_MAX);
+
+	await pendingRequests.set(`${orgId}:${conversationId}`, Object.fromEntries(kept), PENDING_REQUEST_TTL);
+}
+
 // Tool definitions are appended to every request, so the next message in this conversation will
 // carry them whether or not we are the ones who just sent one. Reading them back from the last
 // request keeps a conversation you navigated to priced the same as one you just sent in — without
 // this, the same chat reports a cost ~3,000 tokens lower via requestData than via the stream.
 // Returns null once the pending entry expires, which is the honest answer: we no longer know.
 async function lastToolDefinitions(orgId, conversationId) {
-	const pending = await pendingRequests.get(`${orgId}:${conversationId}`);
+	const pending = newestPending(await getPendingBucket(orgId, conversationId));
 	return pending?.toolDefinitions?.length ? pending.toolDefinitions : null;
 }
 
 async function applyPendingModel(conversationData, orgId, conversationId) {
-	const pending = await pendingRequests.get(`${orgId}:${conversationId}`);
+	const pending = newestPending(await getPendingBucket(orgId, conversationId));
 	if (!pending || Date.now() - (pending.requestTimestamp || 0) > PENDING_MODEL_TRUST_MS) return;
 
 	if (pending.model) conversationData.model = pending.model;
@@ -459,7 +508,11 @@ async function reportStreamCompletion(message, sender, orgId) {
 	const conversationId = message.conversationId;
 	if (!conversationId || !orgId || !sender?.tab) return false;
 
-	const pending = await pendingRequests.get(`${orgId}:${conversationId}`);
+	// Indexed by the assistant uuid the stream just reported, so this reads THIS generation's
+	// prompt/tools/model even if the next message went out while the previous pass was still
+	// running. Without the uuid (shouldn't happen - message_start always carries it) fall back to
+	// the newest entry, which is the pre-uuid behaviour.
+	const pending = await getPendingRequest(orgId, conversationId, message.assistantUuid);
 	const cached = await conversationCache.get(conversationId);
 	// No baseline, no estimate. Synthesizing one from BASE_SYSTEM_PROMPT_LENGTH would miss feature
 	// costs (web search alone is 10250) and profile tokens, and read wildly wrong - a brand-new
@@ -540,40 +593,29 @@ async function reportStreamCompletion(message, sender, orgId) {
 		data: { conversationData: provisional }
 	});
 
-	// The estimate is out; now start the real thing. The stream ending IS the signal that a message
-	// completed — the background never had one before, and had to wait for claude.ai to go looking
-	// for the conversation tree on its own. Queued rather than awaited so the provisional return
-	// isn't held up behind it.
-	queueAuthoritativePass({
-		orgId,
-		conversationId,
-		api: getStrategy().apiForTab(sender.tab, orgId),
-		tabId: sender.tab.id,
-		expectedLeafUuid: message.assistantUuid || null
-	});
-
+	// Deliberately does NOT kick off the authoritative pass. That was tried, and the 200ms of head
+	// start it bought (claude.ai refetches the tree ~0.2s after the stream ends) was invisible —
+	// the provisional above already landed at ~50ms with values that converge exactly. What it cost
+	// was a second trigger source for the same message, and with it a stale-tree retry, a dedupe
+	// window, an in-flight/deferral dance, and two bugs. onCompletedHandler's tree GET is the one
+	// trigger, and its completing is proof the tree exists.
 	return true;
 }
 messageRegistry.register(reportStreamCompletion);
 
-// Serialises the authoritative pass onto the existing task queue.
+// Serialises the authoritative pass onto the existing task queue, one at a time per conversation.
 //
-// Two pieces of state, deliberately separate: `authoritativeInFlight` means "queued or running",
-// `lastAuthoritativePass` means "actually finished, at this time". Suppression must never outlive
-// a pass that didn't happen — an earlier version stamped the timestamp up front, which meant a
-// queued-but-never-run pass could silently suppress both of claude.ai's tree GETs and leave the
-// display showing the previous message's numbers. The in-flight flag is cleared in a finally, so
-// there is no path that leaves a conversation permanently suppressed.
+// Dropping (rather than queueing) an overlapping trigger is safe here because every trigger is a
+// tree GET, and overlapping tree GETs are always about the same message: claude.ai's own refetch
+// and Claude QoL's TTS interceptor arrive ~0.1s apart, while the next message's GET cannot arrive
+// until a whole generation later. The flag is cleared in a finally, so nothing stays suppressed.
 function queueAuthoritativePass(options) {
 	const conversationId = options.conversationId;
 	if (authoritativeInFlight.has(conversationId)) return;
 	authoritativeInFlight.add(conversationId);
 	pendingTasks.push(async () => {
 		try {
-			// A false return means it declined (stale tree) — no stamp, so the fallback still covers it.
-			if (await runAuthoritativePass(options)) {
-				lastAuthoritativePass.set(conversationId, Date.now());
-			}
+			await runAuthoritativePass(options);
 		} catch (error) {
 			await logError(error);
 		} finally {
@@ -669,17 +711,29 @@ async function parseRequestBody(requestBody) {
 	}
 }
 
-// The authoritative pass. One per sent message.
+// The authoritative pass. One per sent message, triggered by claude.ai's post-message tree GET.
 //
-// `api` is passed in rather than derived, because the two triggers reach it differently: the stream
-// arrives as a message from a tab (apiForTab), the fallback as a webRequest (apiForRequest).
-// `expectedLeafUuid`, when given, is the assistant message the completion stream just produced —
-// see the leaf check below.
-async function runAuthoritativePass({ orgId, conversationId, api, tabId, expectedLeafUuid = null }) {
-	const responseKey = `${orgId}:${conversationId}`;
+// `api` is passed in rather than derived because the caller is a webRequest handler and has to
+// build it from `details` via the active container strategy.
+async function runAuthoritativePass({ orgId, conversationId, api, tabId }) {
 	await Log("Running authoritative pass for", conversationId);
 
-	const pendingRequest = await pendingRequests.get(responseKey);
+	// Fetch current usage limits from endpoint
+	const usageData = await api.getUsageData();
+
+	// Fetch conversation data
+	const conversation = await api.getConversation(conversationId);
+
+	// Which generation this pass is about. The tree GET that triggered us has already completed, so
+	// the tree is guaranteed to contain the new reply and its leaf IS that reply — no staleness
+	// check needed, which is the main reason this is triggered from the tree GET rather than from
+	// the completion stream. getData memoizes per shape, so getInfo below reuses this fetch.
+	const tree = await conversation.getData(true);
+	const turnUuid = tree?.current_leaf_message_uuid || null;
+
+	// Scoped to this generation rather than "whatever is pending for this conversation", so a
+	// message sent while a previous pass was still running can't have its data read here.
+	const pendingRequest = await getPendingRequest(orgId, conversationId, turnUuid);
 	const isNewMessage = pendingRequest !== undefined;
 	// The entry is no longer deleted after the first pass — deleting it is what made the second run
 	// disagree with the first, dropping the tool definitions and changing the displayed cost. It is
@@ -687,30 +741,7 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId, expecte
 	// one-shot side effects (lifetime token counter, usage delta log) fire exactly once.
 	const alreadyCounted = !!pendingRequest?.settled;
 
-	// Fetch current usage limits from endpoint
-	const usageData = await api.getUsageData();
-
 	const model = pendingRequest?.model || defaultModelForTier(usageData.subscriptionTier);
-
-	// Fetch conversation data
-	const conversation = await api.getConversation(conversationId);
-
-	// Triggered from the stream, we now ask for the tree BEFORE claude.ai does, so it may not have
-	// been written yet. The stream told us which assistant message to expect, so we can check rather
-	// than guess. One retry, then give up and let the tree-GET fallback handle it — a stale tree
-	// would silently report the conversation one message short.
-	if (expectedLeafUuid) {
-		let tree = await conversation.getData(true);
-		if (!tree.chat_messages?.some(m => m.uuid === expectedLeafUuid)) {
-			await Log("Tree does not have", expectedLeafUuid.substring(0, 8), "yet — retrying once");
-			await sleep(300);
-			tree = await conversation.getData(true, true);
-			if (!tree.chat_messages?.some(m => m.uuid === expectedLeafUuid)) {
-				await Log("warn", "Tree still stale after retry, deferring to the tree-GET fallback");
-				return false;
-			}
-		}
-	}
 
 	const conversationData = await conversation.getInfo(isNewMessage, {
 		toolDefinitions: pendingRequest?.toolDefinitions || null
@@ -744,8 +775,13 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId, expecte
 		await debugLogMessageCost(usageData, conversationData);
 	}
 
-	if (isNewMessage && !alreadyCounted) {
-		await pendingRequests.set(responseKey, { ...pendingRequest, settled: true }, PENDING_REQUEST_TTL);
+	// Marks THIS generation settled and nothing else. The previous version wrote the whole
+	// conversation's entry back from a snapshot taken at the top of the pass, so a message sent
+	// during the pass had its freshly-stored data reverted and pre-marked settled — losing its
+	// prompt/tools/model and skipping its own accounting.
+	if (isNewMessage && !alreadyCounted && pendingRequest.turnUuid) {
+		await setPendingRequest(orgId, conversationId, pendingRequest.turnUuid,
+			{ ...pendingRequest, settled: true });
 	}
 
 	// Schedule notifications for any maxed limits
@@ -757,7 +793,6 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId, expecte
 
 	await conversationCache.set(conversationId, conversationData.toJSON(), CONVERSATION_CACHE_TTL);
 
-	// The caller stamps lastAuthoritativePass on a true return — see queueAuthoritativePass.
 	return true;
 }
 
@@ -871,7 +906,10 @@ async function onBeforeRequestHandler(details) {
 		(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
 		await Log("Request sent - URL:", details.url);
 		const requestBodyJSON = await parseRequestBody(details.requestBody);
-		await Log("Request sent - Body:", requestBodyJSON);
+		// Tools are collapsed to a count on purpose. Their full schemas run to ~15KB, which would
+		// bury everything after them under RawLog's 2000-char per-entry cap - and that cap is what
+		// keeps debug_logs inside the storage quota, so trimming here beats raising it.
+		await Log("Request sent - Body:", { ...requestBodyJSON, tools: requestBodyJSON?.tools?.length ?? 0 });
 		// Extract IDs from URL - we can refine these regexes
 		const urlParts = details.url.split('/');
 		const orgId = urlParts[urlParts.indexOf('organizations') + 1];
@@ -895,8 +933,15 @@ async function onBeforeRequestHandler(details) {
 		const model = modelFamilyFromVersion(modelVersion) || defaultModelForTier(subscriptionTier);
 		await Log("Model from request:", model, modelVersion);
 
-		const key = `${orgId}:${conversationId}`;
-		await Log(`Message sent - Key: ${key}`);
+		// The uuid this generation's assistant message will have, declared by the client before the
+		// message exists. Present on /completion and /retry_completion alike (a regeneration gets a
+		// fresh one, so retries key distinctly rather than colliding). Verified against the tree:
+		// it comes back as current_leaf_message_uuid, and the SSE stream reports the same value.
+		// The timestamp fallback keeps the bucket usable if the field ever disappears - exact
+		// matching degrades to newest-wins, which is the old behaviour.
+		const turnUuid = requestBodyJSON?.turn_message_uuids?.assistant_message_uuid
+			|| `ts:${Date.now()}`;
+		await Log(`Message sent - conversation ${conversationId}, turn ${turnUuid}`);
 
 		// Process tool definitions if present
 		const toolDefs = requestBodyJSON?.tools?.filter(tool =>
@@ -906,7 +951,7 @@ async function onBeforeRequestHandler(details) {
 			description: tool.description || '',
 			schema: JSON.stringify(tool.input_schema || {})
 		})) || [];
-		await Log("Tool definitions:", toolDefs);
+		await Log("Tool definitions:", toolDefs.map(t => t.name));
 
 		// Size of the outgoing message, for the provisional estimate in reportStreamCompletion.
 		// This is the only place the prompt is visible - by the time the stream ends it is gone.
@@ -927,9 +972,10 @@ async function onBeforeRequestHandler(details) {
 
 		// Store pending request with all data
 		await Log('onBeforeRequest: storing modelVersion:', modelVersion, '| class:', model);
-		await pendingRequests.set(key, {
+		await setPendingRequest(orgId, conversationId, turnUuid, {
 			orgId: orgId,
 			conversationId: conversationId,
+			turnUuid: turnUuid,
 			tabId: details.tabId,
 			model: model,
 			modelVersion: modelVersion,
@@ -939,7 +985,7 @@ async function onBeforeRequestHandler(details) {
 			promptTokens: promptTokens,
 			hasAttachments: hasAttachments,
 			isRetry: details.url.includes("/retry_completion")
-		}, PENDING_REQUEST_TTL);
+		});
 	}
 
 	if (details.method === "PUT" && details.url.includes("/account_profile")) {
@@ -1002,31 +1048,31 @@ async function onCompletedHandler(details) {
 		const urlParts = details.url.split('/');
 		const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
 
-		// FALLBACK ONLY. The completion stream is the primary trigger now (see
-		// reportStreamCompletion), and it fires seconds earlier. claude.ai issues TWO of these tree
-		// GETs per sent message, which is why the pass used to run twice and disagree with itself —
-		// the first run deleted the pendingRequests entry, so the second lost the tool definitions.
+		// The only trigger for the authoritative pass. claude.ai refetches the tree ~0.2s after a
+		// completion stream ends, and that GET completing is proof the new reply is in the tree —
+		// which is why triggering here needs no staleness check.
 		//
-		// This still has to work: it is the only trigger when the page-world watcher is off via the
-		// claude_usage_sse_off kill-switch, or when a message was sent somewhere we have no content
-		// script.
-		const settledAt = lastAuthoritativePass.get(conversationId);
+		// Measured with every extension disabled: claude.ai issues exactly ONE of these per message
+		// (plus one on page load, distinguishable by consistency=strong vs eventual). A second one
+		// used to show up and get blamed on claude.ai; it is actually Claude QoL's TTS interceptor
+		// (Claude-Toolbox content/main/tts-interceptor.js), which fetches the same URL shape. It
+		// lands ~0.1s after claude.ai's, so the in-flight check below collapses the two.
+		//
+		// Deliberately matched broadly rather than on consistency=eventual: filtering on an
+		// undocumented query param would silently kill the only trigger if claude.ai dropped it.
 		if (authoritativeInFlight.has(conversationId)) {
 			Log("Tree GET for", conversationId, "— a pass is already in flight, skipping");
 			return;
 		}
-		if (settledAt && Date.now() - settledAt < AUTHORITATIVE_DEDUPE_MS) {
-			Log("Tree GET for", conversationId, "— settled", Date.now() - settledAt, "ms ago, skipping");
-			return;
-		}
 
+		const treeOrgId = urlParts[urlParts.indexOf('organizations') + 1];
 		queueAuthoritativePass({
-			orgId: urlParts[urlParts.indexOf('organizations') + 1],
+			orgId: treeOrgId,
 			conversationId,
-			api: getStrategy().apiForRequest(details, urlParts[urlParts.indexOf('organizations') + 1]),
+			api: getStrategy().apiForRequest(details, treeOrgId),
 			tabId: details.tabId
 		});
-		tokenStorageManager.addOrgId(urlParts[urlParts.indexOf('organizations') + 1]);
+		tokenStorageManager.addOrgId(treeOrgId);
 	}
 
 	// Branch switch — debounce, then invalidate cache and fetch fresh data
@@ -1133,14 +1179,9 @@ const CONVERSATION_CACHE_TTL = 60 * 60 * 1000; // 60 minutes
 const PROVISIONAL_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 const branchSwitchTimers = new Map(); // conversationId → timeoutId (debounce)
 
-// conversationId → timestamp of the last authoritative pass that was queued or completed. The
-// completion stream triggers the pass now, and claude.ai then issues its own tree GETs a second or
-// two later; this is what stops those from redoing work that is already done.
-const lastAuthoritativePass = new Map();
-// Queued or running. Kept apart from the timestamp above so suppression can never outlive a pass
-// that never actually ran.
+// Conversations with a pass queued or running. Overlapping tree GETs are always about the same
+// message, so a second trigger arriving while one is in flight is a duplicate and gets dropped.
 const authoritativeInFlight = new Set();
-const AUTHORITATIVE_DEDUPE_MS = 15 * 1000;
 
 // pendingRequests entries used to be deleted by the first pass that consumed them. They now expire
 // instead — long enough that any fallback pass for the same message still sees the tool definitions

@@ -441,11 +441,10 @@ class ConversationAPI {
 	// the memo precisely in the expensive case, and one pass hits the tree several times.
 	//
 	// A ConversationAPI is constructed per pass, so its lifetime is a single logical read and the
-	// data cannot go stale underneath it. `force` exists for the one caller that genuinely needs to
-	// see the server change: the post-stream leaf check, where the point is to re-ask.
-	async getData(full_tree = false, force = false) {
+	// data cannot go stale underneath it.
+	async getData(full_tree = false) {
 		const slot = full_tree ? "tree" : "flat";
-		if (!this.dataCache[slot] || force) {
+		if (!this.dataCache[slot]) {
 			this.dataCache[slot] = await this.api.getRequest(
 				`/organizations/${this.api.orgId}/chat_conversations/${this.conversationId}?tree=${full_tree}&rendering_mode=messages&render_all_tools=true`
 			);

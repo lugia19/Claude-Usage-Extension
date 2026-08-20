@@ -205,7 +205,25 @@ async function RawLog(sender, ...args) {
 		if (typeof arg === 'object') {
 			if (arg === null) return 'null';
 			try {
-				return JSON.stringify(arg, Object.getOwnPropertyNames(arg), 2);
+				// The replacer used to be Object.getOwnPropertyNames(arg), which JSON.stringify treats
+				// as a property ALLOWLIST APPLIED AT EVERY NESTING LEVEL - not a depth hint. Nested
+				// objects silently kept only keys that happened to also exist at the top level, so
+				// every logged payload came out hollowed: the completion body logged its tools as 30
+				// empty {}, and turn_message_uuids read as {} when it was populated. It was presumably
+				// there so Errors would serialise, but the `arg instanceof Error` branch above already
+				// covers that.
+				//
+				// The seen-set is what the allowlist accidentally provided: a guard against circular
+				// graphs. Without it a self-referencing object throws and lands in the catch below as
+				// a useless "[object Object]".
+				const seen = new WeakSet();
+				return JSON.stringify(arg, (key, value) => {
+					if (typeof value === 'object' && value !== null) {
+						if (seen.has(value)) return '[Circular]';
+						seen.add(value);
+					}
+					return value;
+				}, 2);
 			} catch (e) {
 				return String(arg);
 			}
