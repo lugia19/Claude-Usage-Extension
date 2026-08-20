@@ -1,3 +1,4 @@
-Make Usage section collapsible
-Fetch 5h usage from SSE stream to make the UI more responsive
-Allow customizing the % after which the usage reset notification appears
+Add toggling of sidebar elements in the settings
+Fix minor UI bugs
+Make the UI more responsive
+Various performance improvements
