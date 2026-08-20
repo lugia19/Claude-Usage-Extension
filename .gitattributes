@@ -1,0 +1,6 @@
+# Shell scripts must stay LF — bash chokes on a CRLF shebang, and these are run through Git Bash
+# on Windows where core.autocrlf would otherwise hand them back with CRLF on checkout.
+*.sh text eol=lf
+
+# Batch files are the mirror case: cmd.exe wants CRLF.
+*.bat text eol=crlf

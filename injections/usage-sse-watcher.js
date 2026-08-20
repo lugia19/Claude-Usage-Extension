@@ -59,7 +59,7 @@
 //     number this extension reports already excludes them. The stream is no worse off, and is
 //     the only place that even hints thinking happened.
 //   * No cache information. Whether this prompt hit the cache, and how much of it did, is never
-//     reported; it still has to be inferred from message timestamps (getCachingInfoV2).
+//     reported; it still has to be inferred from message timestamps (getCachingInfo).
 //
 // Delivery is bursty, not token-by-token: an entire short response can arrive as a single
 // text_delta. Do not assume deltas are small or numerous.

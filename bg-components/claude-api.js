@@ -30,15 +30,25 @@ export async function invalidateAccountSettings(orgId) {
 	await accountSettingsCache.delete(orgId);
 	await Log("Invalidated account settings cache for:", orgId);
 }
+
+// Called from the background webRequest hook on PUT /account_profile - the same request that
+// carries a language change also carries edited conversation preferences.
+export async function invalidateProfileTokens(orgId) {
+	if (!orgId) return;
+	await profileTokensCache.delete(orgId);
+	await Log("Invalidated profile tokens cache for:", orgId);
+}
 const subscriptionTiersCache = new StoredMap("subscriptionTiers");
 const syncTokenCache = new StoredMap("syncTokens");
 const projectCache = new StoredMap("projectCache");
 const accountSettingsCache = new StoredMap("accountSettings");
+const profileTokensCache = new StoredMap("profileTokens");
 
 // Short — feature flags are user-toggleable, so a stale read visibly misprices the
 // conversation. This only exists to absorb the burst of getInfo() calls per message;
 // the webRequest hook in background.js invalidates on an actual settings write.
 const ACCOUNT_SETTINGS_TTL = 5 * 60 * 1000;
+const PROFILE_TOKENS_TTL = 5 * 60 * 1000;
 
 // Pure HTTP/API layer
 class ClaudeAPI {
@@ -104,9 +114,17 @@ class ClaudeAPI {
 		const projectStats = await this.getRequest(`/organizations/${this.orgId}/projects/${projectId}/kb/stats`);
 		const projectSize = projectStats.use_project_knowledge_search ? 0 : projectStats.knowledge_size;
 
-		// Check cache
+		// projectCache records "knowledge of this size was last sent at time T", TTL'd to the cache
+		// lifetime. Matching size means nothing has changed since, so it is still in the prefix.
 		const cachedAmount = await projectCache.get(projectId) || -1;
-		const isCached = cachedAmount == projectSize;
+		const isCachedNow = cachedAmount == projectSize;
+
+		// After a new message the knowledge has just been sent, so it is in the prefix from here on
+		// regardless of what it was before. This used to happen by accident: getInfo(true) wrote the
+		// cache below, then its getInfo(false) recursion read the fresh value back and concluded the
+		// same thing. With the recursion gone that feedback loop is gone too, so say it outright -
+		// otherwise project knowledge silently starts being charged to futureCost.
+		const isCachedNext = isNewMessage ? true : isCachedNow;
 
 		// Update cache if this is a new message
 		if (isNewMessage) {
@@ -117,7 +135,8 @@ class ClaudeAPI {
 			...projectStats,
 			tokenInfo: {
 				length: projectSize,
-				isCached: isCached
+				isCachedNow,
+				isCachedNext
 			}
 		};
 	}
@@ -159,13 +178,26 @@ class ClaudeAPI {
 		}
 	}
 
+	// Cached because this is a GET *plus* a countText on a ~2k-token block that changes maybe
+	// monthly, and countText is a network round trip to api.anthropic.com whenever an API key is
+	// configured. Uncached that is a fetch and a round trip on every authoritative pass, i.e. every
+	// message. (An earlier comment claimed it existed to absorb "the burst of calls per message" —
+	// there is no burst; the pass runs once.)
+	//
+	// Short TTL because preferences are user-editable, and the PUT /account_profile hook in
+	// background.js invalidates on an actual write, so the TTL is only a backstop for edits made
+	// somewhere we don't see.
 	async getProfileTokens() {
+		const cached = await profileTokensCache.get(this.orgId);
+		if (typeof cached === 'number') return cached;
+
 		const profileData = await this.getRequest('/account_profile');
 		let totalTokens = 0;
 		if (profileData.conversation_preferences) {
 			totalTokens = await tokenCounter.countText(profileData.conversation_preferences) + FEATURE_COSTS["profile_preferences"];
 		}
 		await Log(`Profile tokens: ${totalTokens}`);
+		await profileTokensCache.set(this.orgId, totalTokens, PROFILE_TOKENS_TTL);
 		return totalTokens;
 	}
 
@@ -406,17 +438,23 @@ class ConversationAPI {
 	constructor(conversationId, api) {
 		this.conversationId = conversationId;
 		this.api = api;
-		this.conversationData = null;
+		this.dataCache = { tree: null, flat: null };
 	}
 
-	// Lazy load conversation data
+	// Lazy load conversation data. Memoized PER SHAPE - the flat and tree responses are different
+	// documents, so one cache slot each. The previous `!this.conversationData || full_tree` defeated
+	// the memo precisely in the expensive case, and one pass hits the tree several times.
+	//
+	// A ConversationAPI is constructed per pass, so its lifetime is a single logical read and the
+	// data cannot go stale underneath it.
 	async getData(full_tree = false) {
-		if (!this.conversationData || full_tree) {
-			this.conversationData = await this.api.getRequest(
+		const slot = full_tree ? "tree" : "flat";
+		if (!this.dataCache[slot]) {
+			this.dataCache[slot] = await this.api.getRequest(
 				`/organizations/${this.api.orgId}/chat_conversations/${this.conversationId}?tree=${full_tree}&rendering_mode=messages&render_all_tools=true`
 			);
 		}
-		return this.conversationData;
+		return this.dataCache[slot];
 	}
 
 	async getCachingInfo(isNewMessage) {
@@ -482,110 +520,140 @@ class ConversationAPI {
 		// Step 4: Fast path — check if the latest trunk activity keeps the cache alive
 		// If the most recent assistant on trunk is <1h from now, the latest user message has an active anchor.
 		const trunkAssistants = currentTrunk.filter(m => m.sender === "assistant");
-		const trunkHumans = currentTrunk.filter(m => m.sender === "human");
-		// isNewMessage means the latest human IS the trunk leaf and just sent a message.
-		// Its anchor can't cache itself (only benefits future messages), so exclude it.
-		if (isNewMessage) trunkHumans.pop();
+		const allTrunkHumans = currentTrunk.filter(m => m.sender === "human");
 
-		let cacheEndId = null;
-		let conversationIsCached = false;
-		let conversationIsCachedUntil = null;
+		// The boundary depends only on WHICH humans are eligible to hold the anchor; everything
+		// above (tree, trunk, off-trunk leaves) is shared. So the analysis below is a function of
+		// the candidate list, and we run it twice with two different lists - see the callers at the
+		// bottom. It is pure computation over already-fetched data, so the second run is free.
+		const resolveBoundary = async (trunkHumans) => {
 
-		if (trunkAssistants.length > 0 && trunkHumans.length > 0) {
-			const lastAssistant = trunkAssistants[trunkAssistants.length - 1];
-			const lastAssistantTime = Date.parse(lastAssistant.created_at);
+			let cacheEndId = null;
+			let conversationIsCached = false;
+			let conversationIsCachedUntil = null;
 
-			if ((now - lastAssistantTime) < cache_lifetime) {
-				// Cache is active — latest candidate human is the boundary
-				const latestHuman = trunkHumans[trunkHumans.length - 1];
-				cacheEndId = latestHuman.uuid;
-				conversationIsCached = true;
+			if (trunkAssistants.length > 0 && trunkHumans.length > 0) {
+				const lastAssistant = trunkAssistants[trunkAssistants.length - 1];
+				const lastAssistantTime = Date.parse(lastAssistant.created_at);
 
-				// Find the most recent assistant child of this human (could be off-trunk regen)
-				const children = childrenMap.get(latestHuman.uuid) || [];
-				let latestChildTime = lastAssistantTime;
-				for (const child of children) {
-					if (child.sender === "assistant") {
-						const childTime = Date.parse(child.created_at);
-						if (childTime > latestChildTime) latestChildTime = childTime;
-					}
-				}
-				conversationIsCachedUntil = latestChildTime + cache_lifetime;
-
-				await Log("CacheV2: Fast path — cache active, boundary at",
-					cacheEndId.substring(0, 8), ", expires at", new Date(conversationIsCachedUntil).toISOString());
-			}
-		}
-
-		// Step 5: Slow path — check off-trunk leaves for active anchors
-		// For each recent off-trunk leaf, walk back to the trunk.
-		// Verify the chain (assistant-to-assistant gaps <1h).
-		// The trunk user message at the junction has an active anchor if chain is valid.
-		// We want the LATEST such trunk human.
-		if (!conversationIsCached && recentOffTrunkLeaves.length > 0) {
-			await Log("CacheV2: Slow path — checking", recentOffTrunkLeaves.length, "off-trunk leaves");
-
-			let latestTrunkIdx = -1; // index in currentTrunk of the best candidate
-
-			for (const leaf of recentOffTrunkLeaves) {
-				// Walk backwards from leaf to trunk, collecting assistants along the way
-				const assistantsInPath = [leaf];
-				let walkId = leaf.parent_message_uuid;
-
-				while (walkId && walkId !== rootId && !currentTrunkIds.has(walkId)) {
-					const msg = messageMap.get(walkId);
-					if (!msg) break;
-					if (msg.sender === "assistant") assistantsInPath.unshift(msg);
-					walkId = msg.parent_message_uuid;
-				}
-
-				if (!walkId || !currentTrunkIds.has(walkId)) continue;
-
-				// Verify chain: no >1h gaps between consecutive assistants
-				let chainValid = true;
-				for (let i = 1; i < assistantsInPath.length; i++) {
-					const gap = Date.parse(assistantsInPath[i].created_at) - Date.parse(assistantsInPath[i - 1].created_at);
-					if (gap >= cache_lifetime) {
-						chainValid = false;
-						break;
-					}
-				}
-				if (!chainValid) continue;
-
-				// Find the trunk user message at the junction
-				const trunkAncestor = messageMap.get(walkId);
-				const anchorHuman = trunkAncestor.sender === "human" ? trunkAncestor :
-					messageMap.get(trunkAncestor.parent_message_uuid);
-
-				if (!anchorHuman || !trunkHumans.some(h => h.uuid === anchorHuman.uuid)) continue;
-
-				const trunkIdx = trunkIndexMap.get(anchorHuman.uuid);
-				const leafTime = Date.parse(leaf.created_at);
-				const leafExpiresAt = leafTime + cache_lifetime;
-
-				if (trunkIdx > latestTrunkIdx ||
-					(trunkIdx === latestTrunkIdx && leafExpiresAt > conversationIsCachedUntil)) {
-					latestTrunkIdx = trunkIdx;
-					cacheEndId = anchorHuman.uuid;
+				if ((now - lastAssistantTime) < cache_lifetime) {
+					// Cache is active — latest candidate human is the boundary
+					const latestHuman = trunkHumans[trunkHumans.length - 1];
+					cacheEndId = latestHuman.uuid;
 					conversationIsCached = true;
-					conversationIsCachedUntil = leafExpiresAt;
 
-					await Log("CacheV2: Slow path — active anchor at",
-						anchorHuman.uuid.substring(0, 8), "via leaf",
-						leaf.uuid.substring(0, 8), "(", Math.round((now - leafTime) / 60000), "min ago)");
+					// Find the most recent assistant child of this human (could be off-trunk regen)
+					const children = childrenMap.get(latestHuman.uuid) || [];
+					let latestChildTime = lastAssistantTime;
+					for (const child of children) {
+						if (child.sender === "assistant") {
+							const childTime = Date.parse(child.created_at);
+							if (childTime > latestChildTime) latestChildTime = childTime;
+						}
+					}
+					conversationIsCachedUntil = latestChildTime + cache_lifetime;
+
+					await Log("CacheV2: Fast path — cache active, boundary at",
+						cacheEndId.substring(0, 8), ", expires at", new Date(conversationIsCachedUntil).toISOString());
 				}
 			}
-		}
 
-		return {
-			currentTrunk,
-			conversationIsCached,
-			cacheEndId,
-			conversationIsCachedUntil
+			// Step 5: Slow path — check off-trunk leaves for active anchors
+			// For each recent off-trunk leaf, walk back to the trunk.
+			// Verify the chain (assistant-to-assistant gaps <1h).
+			// The trunk user message at the junction has an active anchor if chain is valid.
+			// We want the LATEST such trunk human.
+			if (!conversationIsCached && recentOffTrunkLeaves.length > 0) {
+				await Log("CacheV2: Slow path — checking", recentOffTrunkLeaves.length, "off-trunk leaves");
+
+				let latestTrunkIdx = -1; // index in currentTrunk of the best candidate
+
+				for (const leaf of recentOffTrunkLeaves) {
+					// Walk backwards from leaf to trunk, collecting assistants along the way
+					const assistantsInPath = [leaf];
+					let walkId = leaf.parent_message_uuid;
+
+					while (walkId && walkId !== rootId && !currentTrunkIds.has(walkId)) {
+						const msg = messageMap.get(walkId);
+						if (!msg) break;
+						if (msg.sender === "assistant") assistantsInPath.unshift(msg);
+						walkId = msg.parent_message_uuid;
+					}
+
+					if (!walkId || !currentTrunkIds.has(walkId)) continue;
+
+					// Verify chain: no >1h gaps between consecutive assistants
+					let chainValid = true;
+					for (let i = 1; i < assistantsInPath.length; i++) {
+						const gap = Date.parse(assistantsInPath[i].created_at) - Date.parse(assistantsInPath[i - 1].created_at);
+						if (gap >= cache_lifetime) {
+							chainValid = false;
+							break;
+						}
+					}
+					if (!chainValid) continue;
+
+					// Find the trunk user message at the junction
+					const trunkAncestor = messageMap.get(walkId);
+					const anchorHuman = trunkAncestor.sender === "human" ? trunkAncestor :
+						messageMap.get(trunkAncestor.parent_message_uuid);
+
+					if (!anchorHuman || !trunkHumans.some(h => h.uuid === anchorHuman.uuid)) continue;
+
+					const trunkIdx = trunkIndexMap.get(anchorHuman.uuid);
+					const leafTime = Date.parse(leaf.created_at);
+					const leafExpiresAt = leafTime + cache_lifetime;
+
+					if (trunkIdx > latestTrunkIdx ||
+						(trunkIdx === latestTrunkIdx && leafExpiresAt > conversationIsCachedUntil)) {
+						latestTrunkIdx = trunkIdx;
+						cacheEndId = anchorHuman.uuid;
+						conversationIsCached = true;
+						conversationIsCachedUntil = leafExpiresAt;
+
+						await Log("CacheV2: Slow path — active anchor at",
+							anchorHuman.uuid.substring(0, 8), "via leaf",
+							leaf.uuid.substring(0, 8), "(", Math.round((now - leafTime) / 60000), "min ago)");
+					}
+				}
+			}
+
+			return { conversationIsCached, cacheEndId, conversationIsCachedUntil };
 		};
+
+		// Two boundaries from one analysis.
+		//
+		//   next - what will be cached when the NEXT message is sent. Every trunk human is a
+		//          candidate, including the most recent one. Drives futureCost.
+		//   now  - what is cached for THIS message's cost. When isNewMessage, the latest human IS
+		//          the trunk leaf and just sent; its anchor can't cache itself (it only benefits
+		//          future messages), so it is excluded.
+		//
+		// When !isNewMessage the two candidate lists are identical, so resolve once and share -
+		// which also preserves the old behaviour exactly, where futureCost fell out of the same
+		// numbers as cost.
+		const next = await resolveBoundary(allTrunkHumans);
+		const now_ = isNewMessage
+			? await resolveBoundary(allTrunkHumans.slice(0, -1))
+			: next;
+
+		return { currentTrunk, now: now_, next };
 	}
 
-	async getInfo(isNewMessage) {
+	// Single pass. Everything the conversation costs - now and next message - comes out of one tree
+	// fetch, one walk and one tokenization of each message.
+	//
+	// This used to call itself with isNewMessage=false purely to get futureCost, which meant
+	// refetching the tree, re-counting every file and re-tokenizing the whole conversation to learn
+	// one thing: where the cache boundary sits once the just-sent message is allowed to hold an
+	// anchor. getCachingInfo now returns both boundaries from one analysis, so the walk below
+	// accumulates the "now" and "next" figures side by side instead.
+	//
+	// `toolTokens` is the already-counted size of the tool definitions the request carried, taken
+	// from pendingRequests. Counted at request time rather than here so the definitions themselves
+	// never have to be stored - see onBeforeRequestHandler. Callers only reading a conversation
+	// pass nothing.
+	async getInfo(isNewMessage, { toolTokens = 0 } = {}) {
 		await Log("API: Requesting information for conversation:", this.conversationId);
 		const conversationData = await this.getData(true);
 		const cachingInfo = await this.getCachingInfo(isNewMessage);
@@ -607,12 +675,16 @@ class ConversationAPI {
 			});
 		}
 
-		const { currentTrunk, conversationIsCached, cacheEndId, conversationIsCachedUntil } = cachingInfo;
+		const { currentTrunk, now, next } = cachingInfo;
+		const conversationIsCached = now.conversationIsCached;
 
-		// Initialize token counting
-		let cacheIsActive = conversationIsCached;
+		// Initialize token counting. Two cache flags walk the trunk in parallel: `now` prices this
+		// message, `next` prices the one after it. They differ only in where the boundary sits.
+		let cacheIsActive = now.conversationIsCached;
+		let cacheIsActiveNext = next.conversationIsCached;
 		let lengthTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
 		let costTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER;
+		let futureCostTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER;
 
 		// Whether a flag appears in the conversation's own settings determines how it behaves,
 		// so this spread order handles both classes without special-casing:
@@ -633,15 +705,18 @@ class ConversationAPI {
 			if (enabled && FEATURE_COSTS[setting]) {
 				lengthTokens += FEATURE_COSTS[setting];
 				costTokens += FEATURE_COSTS[setting] * CONFIG.CACHING_MULTIPLIER;
+				futureCostTokens += FEATURE_COSTS[setting] * CONFIG.CACHING_MULTIPLIER;
 			}
 		}
 
 		if (effectiveSettings.enabled_web_search || effectiveSettings.enabled_bananagrams) {
 			lengthTokens += FEATURE_COSTS["citation_info"];
 			costTokens += FEATURE_COSTS["citation_info"] * CONFIG.CACHING_MULTIPLIER;
+			futureCostTokens += FEATURE_COSTS["citation_info"] * CONFIG.CACHING_MULTIPLIER;
 		}
 
 		let uncachedCostTokens = costTokens; // Same — system prompts are always platform-cached
+		let uncachedFutureCostTokens = costTokens;
 		// Steps 7-8: Process messages and count tokens
 		const humanMessageData = [];
 		const assistantMessageData = [];
@@ -664,20 +739,26 @@ class ConversationAPI {
 				message.getSyncTokens()
 			]);
 
+			const isCachedNext = cacheIsActiveNext;
+
 			// Then apply the calculations
 			lengthTokens += fileTokens + syncTokens;
 			costTokens += message.isCached ?
 				(fileTokens + syncTokens) * CONFIG.CACHING_MULTIPLIER :
 				(fileTokens + syncTokens);
+			futureCostTokens += isCachedNext ?
+				(fileTokens + syncTokens) * CONFIG.CACHING_MULTIPLIER :
+				(fileTokens + syncTokens);
 			uncachedCostTokens += fileTokens + syncTokens; // Always full price
+			uncachedFutureCostTokens += fileTokens + syncTokens;
 
 			// Text content
 			const textContent = await message.getTextContent(false, this, this.orgId);
 
 			if (message.sender === "human") {
-				humanMessageData.push({ content: textContent, isCached: message.isCached });
+				humanMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext });
 			} else {
-				assistantMessageData.push({ content: textContent, isCached: message.isCached });
+				assistantMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext });
 			}
 
 			// Last message output tokens (or second to last if last is human)
@@ -687,32 +768,64 @@ class ConversationAPI {
 			if ((isLastMessage && message.sender === "assistant") ||
 				(isSecondToLast && message.sender === "assistant" && currentTrunk[currentTrunk.length - 1].sender === "human")) {
 				const lastMessageContent = await message.getTextContent(true, this, this.orgId);
-				costTokens += await tokenCounter.countText(lastMessageContent) * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
-				uncachedCostTokens += await tokenCounter.countText(lastMessageContent) * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
+				const outputTokens = await tokenCounter.countText(lastMessageContent) * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
+				costTokens += outputTokens;
+				futureCostTokens += outputTokens;
+				uncachedCostTokens += outputTokens;
+				uncachedFutureCostTokens += outputTokens;
 			}
 
-			// Update cache status
-			if (message.uuid === cacheEndId) {
+			// Update cache status — each boundary flips its own flag
+			if (message.uuid === now.cacheEndId) {
 				cacheIsActive = false;
 				await Log("Hit cache boundary at message:", message.uuid);
 			}
+			if (message.uuid === next.cacheEndId) {
+				cacheIsActiveNext = false;
+			}
 		}
 
-		// Batch token counting
-		const allMessageTokens = await tokenCounter.countMessages(
-			humanMessageData.map(m => m.content),
-			assistantMessageData.map(m => m.content)
-		);
+		// Batch token counting: the whole trunk, then each figure's cached prefix so it can be
+		// subtracted back out.
+		//
+		// Counted as PREFIXES rather than as the three disjoint groups the two boundaries imply,
+		// even though disjoint groups would touch each message only once. A cache boundary always
+		// sits on a human message, so a prefix is always [human, assistant, ... human] — well-formed
+		// for the count-tokens API, which requires messages to start with the user role and
+		// alternate. The middle group (between the two boundaries) starts with an *assistant*, so
+		// sending it alone would be rejected, and `countMessages` would silently fall back to local
+		// estimation for that slice only — an API-key-only inaccuracy that would be invisible here.
+		// Overlapping prefixes cost more tokenizer passes; correctness for both paths is worth it.
+		const countSlice = async (predicate) => {
+			const humans = humanMessageData.filter(predicate).map(m => m.content);
+			const assistants = assistantMessageData.filter(predicate).map(m => m.content);
+			if (humans.length === 0 && assistants.length === 0) return 0;
+			return tokenCounter.countMessages(humans, assistants);
+		};
+		const allMessageTokens = await countSlice(() => true);
+		const cachedNowTokens = await countSlice(m => m.isCachedNow);
+		// Without a new message the two boundaries are literally the same object (getCachingInfo
+		// resolves once and shares it), so every message has isCachedNow === isCachedNext and
+		// counting again would tokenize the entire cached prefix a second time for an identical
+		// answer — on every navigation and every branch switch.
+		const cachedNextTokens = next === now
+			? cachedNowTokens
+			: await countSlice(m => m.isCachedNext);
+
 		lengthTokens += allMessageTokens;
 		costTokens += allMessageTokens;
+		futureCostTokens += allMessageTokens;
 		uncachedCostTokens += allMessageTokens;
+		uncachedFutureCostTokens += allMessageTokens;
 
-		// Subtract cached tokens
-		const cachedHuman = humanMessageData.filter(m => m.isCached).map(m => m.content);
-		const cachedAssistant = assistantMessageData.filter(m => m.isCached).map(m => m.content);
-		if (cachedHuman.length > 0 || cachedAssistant.length > 0) {
-			const cachedTokens = await tokenCounter.countMessages(cachedHuman, cachedAssistant);
-			costTokens -= cachedTokens * (1 - CONFIG.CACHING_MULTIPLIER);
+		// Subtract each figure's own cached prefix. `cost` gets back what is cached NOW;
+		// `futureCost` gets back everything that will be cached once the next message goes out,
+		// which reaches one boundary further along the trunk.
+		if (cachedNowTokens > 0) {
+			costTokens -= cachedNowTokens * (1 - CONFIG.CACHING_MULTIPLIER);
+		}
+		if (cachedNextTokens > 0) {
+			futureCostTokens -= cachedNextTokens * (1 - CONFIG.CACHING_MULTIPLIER);
 		}
 
 		// Steps 9-10: Project tokens and model detection
@@ -720,8 +833,10 @@ class ConversationAPI {
 		if (conversationData.project_uuid) {
 			projectStats = await this.api.getProjectStats(conversationData.project_uuid, isNewMessage);
 			lengthTokens += projectStats.tokenInfo.length;
-			costTokens += projectStats.tokenInfo.isCached ? 0 : projectStats.tokenInfo.length;
+			costTokens += projectStats.tokenInfo.isCachedNow ? 0 : projectStats.tokenInfo.length;
+			futureCostTokens += projectStats.tokenInfo.isCachedNext ? 0 : projectStats.tokenInfo.length;
 			uncachedCostTokens += projectStats.tokenInfo.length; // Always full price
+			uncachedFutureCostTokens += projectStats.tokenInfo.length;
 		}
 
 		// Determine if length is an estimate (features that add unknown tokens)
@@ -739,25 +854,43 @@ class ConversationAPI {
 
 		await Log(`Total tokens for conversation ${this.conversationId}: ${lengthTokens} with model ${conversationModelType}`);
 
-		// Step 11: Future cost
-		let futureCost;
-		let uncachedFutureCost;
-		let cachedUntil = conversationIsCachedUntil;
-		if (isNewMessage) {
-			const futureConversation = await this.getInfo(false);
-			futureCost = futureConversation.cost;
-			uncachedFutureCost = futureConversation.uncachedCost;
-			// getCachingInfo drops the just-sent message's anchor, because that message can't
-			// read its own cache. But conversationIsCachedUntil is forward-looking - it answers
-			// "will the next message be cached" - and the anchor exists now that the reply has
-			// been generated. So take it from the same isNewMessage=false pass the future cost
-			// comes from. Without this the first message of a conversation reports uncached
-			// (its only human message gets popped) until a reload or a second message.
-			cachedUntil = futureConversation.conversationIsCachedUntil;
-		} else {
-			futureCost = Math.round(costTokens);
-			uncachedFutureCost = Math.round(uncachedCostTokens);
+		// Step 11: Modifiers — the per-request extras that are not part of the message tree.
+		//
+		// This lives here, and not in the callers, because every caller used to patch the result
+		// afterwards with slightly different arithmetic: processResponse charged profile tokens at
+		// full price to all four figures, while requestData and the branch-switch handler multiplied
+		// them by CACHING_MULTIPLIER and never touched the future figures at all. Same conversation,
+		// different cost depending on how you arrived at it.
+		const profileTokens = await this.api.getProfileTokens();
+		lengthTokens += profileTokens;
+		// Preferences sit in the system-prompt prefix, right next to BASE_SYSTEM_PROMPT_LENGTH, which
+		// this function already prices at CACHING_MULTIPLIER. Once anything is cached they are too,
+		// and by the next message they always are.
+		costTokens += conversationIsCached ? profileTokens * CONFIG.CACHING_MULTIPLIER : profileTokens;
+		futureCostTokens += profileTokens * CONFIG.CACHING_MULTIPLIER;
+		uncachedCostTokens += profileTokens; // the "no cache at all" figure — always full price
+		uncachedFutureCostTokens += profileTokens;
+
+		// Tool definitions are appended to the CURRENT prompt rather than sitting in the cached
+		// prefix, so they are re-sent uncached with every single request. Full price everywhere,
+		// now and next, and no caching multiplier applies.
+		if (toolTokens) {
+			// Deliberately NOT added to lengthTokens: length describes the conversation, and tool
+			// definitions are a property of the request, not of the thread. Matches the old
+			// processResponse, which added only profileTokens to length.
+			costTokens += toolTokens;
+			futureCostTokens += toolTokens;
+			uncachedCostTokens += toolTokens;
+			uncachedFutureCostTokens += toolTokens;
 		}
+
+		// Step 12: Future cost — straight out of the same walk now, no second pass.
+		const futureCost = Math.round(futureCostTokens);
+		const uncachedFutureCost = Math.round(uncachedFutureCostTokens);
+		// Forward-looking: it answers "will the NEXT message be cached", so it comes from the `next`
+		// boundary, where the just-sent message is allowed to hold its anchor. Without this the first
+		// message of a conversation reports uncached until a reload or a second message.
+		const cachedUntil = next.conversationIsCachedUntil;
 
 		let lastMessageTimestamp = null;
 		const lastRawMessage = currentTrunk[currentTrunk.length - 1];

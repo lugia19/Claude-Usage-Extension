@@ -205,7 +205,25 @@ async function RawLog(sender, ...args) {
 		if (typeof arg === 'object') {
 			if (arg === null) return 'null';
 			try {
-				return JSON.stringify(arg, Object.getOwnPropertyNames(arg), 2);
+				// The replacer used to be Object.getOwnPropertyNames(arg), which JSON.stringify treats
+				// as a property ALLOWLIST APPLIED AT EVERY NESTING LEVEL - not a depth hint. Nested
+				// objects silently kept only keys that happened to also exist at the top level, so
+				// every logged payload came out hollowed: the completion body logged its tools as 30
+				// empty {}, and turn_message_uuids read as {} when it was populated. It was presumably
+				// there so Errors would serialise, but the `arg instanceof Error` branch above already
+				// covers that.
+				//
+				// The seen-set is what the allowlist accidentally provided: a guard against circular
+				// graphs. Without it a self-referencing object throws and lands in the catch below as
+				// a useless "[object Object]".
+				const seen = new WeakSet();
+				return JSON.stringify(arg, (key, value) => {
+					if (typeof value === 'object' && value !== null) {
+						if (seen.has(value)) return '[Circular]';
+						seen.add(value);
+					}
+					return value;
+				}, 2);
 			} catch (e) {
 				return String(arg);
 			}
@@ -309,6 +327,27 @@ class StoredMap {
 			]);
 		}
 		return entries;
+	}
+
+	// Drops every expired entry in one pass, with a single write.
+	//
+	// get/has/entries only evaluate expiry for the keys they happen to touch, and set() serialises
+	// the map untouched — so a TTL'd entry whose key is never read again is never reclaimed, and
+	// storage grows for as long as new keys keep arriving. Callers that write far more keys than
+	// they read back (pendingRequests: one per conversation, read only if you revisit it) need to
+	// sweep explicitly.
+	async prune() {
+		await this.ensureInitialized();
+		const now = Date.now();
+		let removed = 0;
+		for (const [key, storedValue] of [...this.map.entries()]) {
+			if (storedValue && storedValue.expires && now > storedValue.expires) {
+				this.map.delete(key);
+				removed++;
+			}
+		}
+		if (removed > 0) await setStorageValue(this.storageKey, Array.from(this.map));
+		return removed;
 	}
 
 	async clear() {
