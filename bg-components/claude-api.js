@@ -649,9 +649,11 @@ class ConversationAPI {
 	// anchor. getCachingInfo now returns both boundaries from one analysis, so the walk below
 	// accumulates the "now" and "next" figures side by side instead.
 	//
-	// `toolDefinitions` come from the request body via pendingRequests, and are only known when a
-	// message was just sent. Callers that are only reading a conversation pass nothing.
-	async getInfo(isNewMessage, { toolDefinitions = null } = {}) {
+	// `toolTokens` is the already-counted size of the tool definitions the request carried, taken
+	// from pendingRequests. Counted at request time rather than here so the definitions themselves
+	// never have to be stored - see onBeforeRequestHandler. Callers only reading a conversation
+	// pass nothing.
+	async getInfo(isNewMessage, { toolTokens = 0 } = {}) {
 		await Log("API: Requesting information for conversation:", this.conversationId);
 		const conversationData = await this.getData(true);
 		const cachingInfo = await this.getCachingInfo(isNewMessage);
@@ -872,11 +874,7 @@ class ConversationAPI {
 		// Tool definitions are appended to the CURRENT prompt rather than sitting in the cached
 		// prefix, so they are re-sent uncached with every single request. Full price everywhere,
 		// now and next, and no caching multiplier applies.
-		if (toolDefinitions) {
-			let toolTokens = 0;
-			for (const tool of toolDefinitions) {
-				toolTokens += await tokenCounter.countText(`${tool.name} ${tool.description} ${tool.schema}`);
-			}
+		if (toolTokens) {
 			// Deliberately NOT added to lengthTokens: length describes the conversation, and tool
 			// definitions are a property of the request, not of the thread. Matches the old
 			// processResponse, which added only profileTokens to length.

@@ -329,6 +329,27 @@ class StoredMap {
 		return entries;
 	}
 
+	// Drops every expired entry in one pass, with a single write.
+	//
+	// get/has/entries only evaluate expiry for the keys they happen to touch, and set() serialises
+	// the map untouched — so a TTL'd entry whose key is never read again is never reclaimed, and
+	// storage grows for as long as new keys keep arriving. Callers that write far more keys than
+	// they read back (pendingRequests: one per conversation, read only if you revisit it) need to
+	// sweep explicitly.
+	async prune() {
+		await this.ensureInitialized();
+		const now = Date.now();
+		let removed = 0;
+		for (const [key, storedValue] of [...this.map.entries()]) {
+			if (storedValue && storedValue.expires && now > storedValue.expires) {
+				this.map.delete(key);
+				removed++;
+			}
+		}
+		if (removed > 0) await setStorageValue(this.storageKey, Array.from(this.map));
+		return removed;
+	}
+
 	async clear() {
 		this.map.clear();
 		await setStorageValue(this.storageKey, []);

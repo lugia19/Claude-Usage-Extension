@@ -312,7 +312,21 @@ const PENDING_MODEL_TRUST_MS = 5 * 60 * 1000;
 const SYNTHETIC_TURN_PREFIX = 'ts:';
 
 async function getPendingBucket(orgId, conversationId) {
-	return (await pendingRequests.get(`${orgId}:${conversationId}`)) || {};
+	const stored = await pendingRequests.get(`${orgId}:${conversationId}`);
+	if (!stored || typeof stored !== 'object') return {};
+
+	// Anything that isn't a turn entry is dropped, which is what migrates installs upgrading from
+	// the single-entry shape. Those were written with no lifetime, so they never expire on their
+	// own, and read as a bucket their FIELDS look like entries — `previousUsage: null` in
+	// particular would throw the moment newestPending dereferenced it. They are pre-upgrade and
+	// stale regardless, so discarding beats migrating.
+	const bucket = {};
+	for (const [key, entry] of Object.entries(stored)) {
+		if (entry && typeof entry === 'object' && typeof entry.requestTimestamp === 'number') {
+			bucket[key] = entry;
+		}
+	}
+	return bucket;
 }
 
 // The one entry for a specific generation. Falls back to the newest when the caller has no uuid.
@@ -340,9 +354,15 @@ function newestPending(bucket) {
 	return newest;
 }
 
-// Writes one generation's entry, pruning siblings that have aged out or overflowed the cap so a
-// rapid back-and-forth can't grow the bucket without bound.
+// Writes one generation's entry, dropping siblings that have aged out. No size cap: entries are a
+// handful of numbers and short strings now that tool definitions are stored as a count, so a burst
+// of regenerations inside the TTL costs bytes rather than the ~15KB per turn it used to.
 async function setPendingRequest(orgId, conversationId, turnUuid, entry) {
+	// Sweep other conversations' expired buckets while we're writing anyway. Nothing else reads
+	// them — a conversation you never revisit is never read, so its bucket would otherwise sit in
+	// storage.local for good despite the TTL.
+	await pendingRequests.prune();
+
 	const bucket = await getPendingBucket(orgId, conversationId);
 	bucket[turnUuid] = entry;
 
@@ -361,9 +381,9 @@ async function setPendingRequest(orgId, conversationId, turnUuid, entry) {
 // miss path. The one route that does reach it is a BRANCH SWITCH, which deletes conversationCache
 // explicitly — that is what this is keeping alive. Returns null once the entry expires, which is
 // the honest answer: we no longer know what tools were sent.
-async function lastToolDefinitions(orgId, conversationId) {
+async function lastToolTokens(orgId, conversationId) {
 	const pending = newestPending(await getPendingBucket(orgId, conversationId));
-	return pending?.toolDefinitions?.length ? pending.toolDefinitions : null;
+	return pending?.toolTokens || 0;
 }
 
 async function applyPendingModel(conversationData, orgId, conversationId) {
@@ -487,7 +507,7 @@ async function requestData(message, sender, orgId) {
 			// Profile tokens are applied inside getInfo now — this used to add them here with
 			// arithmetic that disagreed with processResponse's.
 			const conversationData = await conversation.getInfo(false, {
-				toolDefinitions: await lastToolDefinitions(orgId, conversationId)
+				toolTokens: await lastToolTokens(orgId, conversationId)
 			});
 
 			if (conversationData) {
@@ -543,13 +563,9 @@ async function reportStreamCompletion(message, sender, orgId) {
 	// but be explicit rather than relying on that.
 	const promptTokens = pending.isRetry ? 0 : Math.max(0, pending.promptTokens || 0);
 
-	// Tool definitions are re-sent with every request at full price. Counted here, from the
-	// definitions pendingRequests already holds, so the handler stays network-free even when an
-	// API key is configured.
-	let toolTokens = 0;
-	for (const tool of pending.toolDefinitions || []) {
-		toolTokens += tokenCounter.countTextLocal(`${tool.name} ${tool.description} ${tool.schema}`);
-	}
+	// Tool definitions are re-sent with every request at full price. Already counted when the POST
+	// went out, so this stays network-free and costs nothing here.
+	const toolTokens = pending.toolTokens || 0;
 
 	// A regeneration replaces the previous reply rather than appending to it, so adding both would
 	// double-count. We don't know the replaced message's size, so hold the length and let the
@@ -756,7 +772,7 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId }) {
 	const model = pendingRequest?.model || defaultModelForTier(usageData.subscriptionTier);
 
 	const conversationData = await conversation.getInfo(isNewMessage, {
-		toolDefinitions: pendingRequest?.toolDefinitions || null
+		toolTokens: pendingRequest?.toolTokens || 0
 	});
 
 	if (!conversationData) {
@@ -962,7 +978,11 @@ async function onBeforeRequestHandler(details) {
 		}
 		await Log(`Message sent - conversation ${conversationId}, turn ${turnUuid}`);
 
-		// Process tool definitions if present
+		// Tool definitions, counted here and NOT stored. The definitions themselves run to ~15KB of
+		// descriptions and JSON schemas, and the only thing anything downstream ever did with them
+		// was total their tokens — so keeping the array meant parking 15KB per turn, per
+		// conversation, in storage.local, which StoredMap only reclaims if that conversation is read
+		// again. Same reasoning as promptTokens directly below: store the number, drop the text.
 		const toolDefs = requestBodyJSON?.tools?.filter(tool =>
 			tool.name && !['artifacts_v0', 'repl_v0'].includes(tool.type)
 		)?.map(tool => ({
@@ -971,6 +991,15 @@ async function onBeforeRequestHandler(details) {
 			schema: JSON.stringify(tool.input_schema || {})
 		})) || [];
 		await Log("Tool definitions:", toolDefs.map(t => t.name));
+
+		let toolTokens = 0;
+		try {
+			for (const tool of toolDefs) {
+				toolTokens += tokenCounter.countTextLocal(`${tool.name} ${tool.description} ${tool.schema}`);
+			}
+		} catch (error) {
+			await Log("warn", "Failed to size tool definitions:", error);
+		}
 
 		// Size of the outgoing message, for the provisional estimate in reportStreamCompletion.
 		// This is the only place the prompt is visible - by the time the stream ends it is gone.
@@ -999,7 +1028,7 @@ async function onBeforeRequestHandler(details) {
 			model: model,
 			modelVersion: modelVersion,
 			requestTimestamp: Date.now(),
-			toolDefinitions: toolDefs,
+			toolTokens: toolTokens,
 			previousUsage: previousUsage,
 			promptTokens: promptTokens,
 			hasAttachments: hasAttachments,
@@ -1115,7 +1144,7 @@ async function onCompletedHandler(details) {
 				const conversation = await api.getConversation(conversationId);
 				// Profile tokens applied inside getInfo — see requestData.
 				const conversationData = await conversation.getInfo(false, {
-					toolDefinitions: await lastToolDefinitions(orgId, conversationId)
+					toolTokens: await lastToolTokens(orgId, conversationId)
 				});
 
 				if (conversationData) {
