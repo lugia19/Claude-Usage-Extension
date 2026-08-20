@@ -6,7 +6,7 @@ import { getStrategy, initContainerStrategy, setBrave } from './bg-components/co
 import { UsageData, modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier } from './shared/dataclasses.js';
 import { translate, normalizeLocale } from './shared/localization.js';
 import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
-import { invalidateAccountSettings } from './bg-components/claude-api.js';
+import { invalidateAccountSettings, invalidateProfileTokens } from './bg-components/claude-api.js';
 
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
@@ -292,9 +292,18 @@ async function updateAllTabsWithUsage(usageData = null) {
 // from the API with no model at all, so getInfo() falls back to CONFIG.DEFAULT_MODEL_VERSION and
 // mislabels it - reporting Opus for a Sonnet chat, which then reads as a model change and hides
 // the cache indicator. The request body we captured is authoritative, so prefer it while it is
-// fresh. Bounded by time because a pending entry outlives its request whenever processResponse
-// bails before deleting it.
+// fresh. Bounded by time because pending entries now expire rather than being deleted on use.
 const PENDING_MODEL_TRUST_MS = 5 * 60 * 1000;
+
+// Tool definitions are appended to every request, so the next message in this conversation will
+// carry them whether or not we are the ones who just sent one. Reading them back from the last
+// request keeps a conversation you navigated to priced the same as one you just sent in — without
+// this, the same chat reports a cost ~3,000 tokens lower via requestData than via the stream.
+// Returns null once the pending entry expires, which is the honest answer: we no longer know.
+async function lastToolDefinitions(orgId, conversationId) {
+	const pending = await pendingRequests.get(`${orgId}:${conversationId}`);
+	return pending?.toolDefinitions?.length ? pending.toolDefinitions : null;
+}
 
 async function applyPendingModel(conversationData, orgId, conversationId) {
 	const pending = await pendingRequests.get(`${orgId}:${conversationId}`);
@@ -414,14 +423,13 @@ async function requestData(message, sender, orgId) {
 		} else {
 			await Log(`Cache miss for conversation: ${conversationId}`);
 			const conversation = await api.getConversation(conversationId);
-			const conversationData = await conversation.getInfo(false);
-			const profileTokens = await api.getProfileTokens();
+			// Profile tokens are applied inside getInfo now — this used to add them here with
+			// arithmetic that disagreed with processResponse's.
+			const conversationData = await conversation.getInfo(false, {
+				toolDefinitions: await lastToolDefinitions(orgId, conversationId)
+			});
 
 			if (conversationData) {
-				conversationData.length += profileTokens;
-				conversationData.cost += profileTokens * CONFIG.CACHING_MULTIPLIER;
-				conversationData.uncachedCost += profileTokens * CONFIG.CACHING_MULTIPLIER;
-
 				// Before caching, so the correction sticks for the cache's lifetime too.
 				await applyPendingModel(conversationData, orgId, conversationId);
 
@@ -492,17 +500,10 @@ async function reportStreamCompletion(message, sender, orgId) {
 	// lands the only survivor is that reply. Hence assign, never +=. Adding to the previous value
 	// would carry the last turn's reply forward and roughly double the displayed cost each message.
 	//
-	// This deliberately targets what the cost SHOULD be, which today's authoritative pass does not
-	// agree with, for two separate reasons both tracked as follow-up work:
-	//   1. It folds in profileTokens at full price (see the modifierCost block in processResponse).
-	//      Preferences live in the cached prefix, so under CACHING_MULTIPLIER 0 they should be free.
-	//   2. processResponse runs TWICE per message - claude.ai issues two tree GETs that both match
-	//      the onCompleted filter - and the first run deletes the pendingRequests entry. So the
-	//      second run finds no toolDefinitions and drops tool tokens entirely, meaning the settled
-	//      number depends on which pass ran last.
-	// Measured on one message: this estimate 2856, first pass 4937, settled 2321. Tools are kept
-	// here because they genuinely are re-sent every request; once the two issues above are fixed
-	// the authoritative value should converge on this one.
+	// Tools are included because they genuinely are re-sent, appended to every request rather than
+	// living in the cached prefix. The authoritative pass now prices them the same way, and no
+	// longer charges profile tokens to futureCost, so the two should land on the same number
+	// instead of the estimate/pass/settled disagreement this used to document.
 	provisional.futureCost = Math.round((1 + CONFIG.OUTPUT_TOKEN_MULTIPLIER) * assistantTokens + toolTokens);
 	provisional.cost = provisional.futureCost;
 
@@ -538,9 +539,49 @@ async function reportStreamCompletion(message, sender, orgId) {
 		type: 'updateConversationData',
 		data: { conversationData: provisional }
 	});
+
+	// The estimate is out; now start the real thing. The stream ending IS the signal that a message
+	// completed — the background never had one before, and had to wait for claude.ai to go looking
+	// for the conversation tree on its own. Queued rather than awaited so the provisional return
+	// isn't held up behind it.
+	queueAuthoritativePass({
+		orgId,
+		conversationId,
+		api: getStrategy().apiForTab(sender.tab, orgId),
+		tabId: sender.tab.id,
+		expectedLeafUuid: message.assistantUuid || null
+	});
+
 	return true;
 }
 messageRegistry.register(reportStreamCompletion);
+
+// Serialises the authoritative pass onto the existing task queue.
+//
+// Two pieces of state, deliberately separate: `authoritativeInFlight` means "queued or running",
+// `lastAuthoritativePass` means "actually finished, at this time". Suppression must never outlive
+// a pass that didn't happen — an earlier version stamped the timestamp up front, which meant a
+// queued-but-never-run pass could silently suppress both of claude.ai's tree GETs and leave the
+// display showing the previous message's numbers. The in-flight flag is cleared in a finally, so
+// there is no path that leaves a conversation permanently suppressed.
+function queueAuthoritativePass(options) {
+	const conversationId = options.conversationId;
+	if (authoritativeInFlight.has(conversationId)) return;
+	authoritativeInFlight.add(conversationId);
+	pendingTasks.push(async () => {
+		try {
+			// A false return means it declined (stale tree) — no stamp, so the fallback still covers it.
+			if (await runAuthoritativePass(options)) {
+				lastAuthoritativePass.set(conversationId, Date.now());
+			}
+		} catch (error) {
+			await logError(error);
+		} finally {
+			authoritativeInFlight.delete(conversationId);
+		}
+	});
+	processNextTask();
+}
 
 async function getPopupUsageData() {
 	// The active strategy owns discovery: it returns [{ orgId, ctx }] for this platform's container model.
@@ -628,13 +669,23 @@ async function parseRequestBody(requestBody) {
 	}
 }
 
-async function processResponse(orgId, conversationId, responseKey, details) {
-	const tabId = details.tabId;
-	const api = getStrategy().apiForRequest(details, orgId);
-	await Log("Processing response...");
+// The authoritative pass. One per sent message.
+//
+// `api` is passed in rather than derived, because the two triggers reach it differently: the stream
+// arrives as a message from a tab (apiForTab), the fallback as a webRequest (apiForRequest).
+// `expectedLeafUuid`, when given, is the assistant message the completion stream just produced —
+// see the leaf check below.
+async function runAuthoritativePass({ orgId, conversationId, api, tabId, expectedLeafUuid = null }) {
+	const responseKey = `${orgId}:${conversationId}`;
+	await Log("Running authoritative pass for", conversationId);
 
 	const pendingRequest = await pendingRequests.get(responseKey);
 	const isNewMessage = pendingRequest !== undefined;
+	// The entry is no longer deleted after the first pass — deleting it is what made the second run
+	// disagree with the first, dropping the tool definitions and changing the displayed cost. It is
+	// marked instead, so a repeat pass over the same message still prices it identically while the
+	// one-shot side effects (lifetime token counter, usage delta log) fire exactly once.
+	const alreadyCounted = !!pendingRequest?.settled;
 
 	// Fetch current usage limits from endpoint
 	const usageData = await api.getUsageData();
@@ -643,45 +694,46 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 
 	// Fetch conversation data
 	const conversation = await api.getConversation(conversationId);
-	const conversationData = await conversation.getInfo(isNewMessage);
+
+	// Triggered from the stream, we now ask for the tree BEFORE claude.ai does, so it may not have
+	// been written yet. The stream told us which assistant message to expect, so we can check rather
+	// than guess. One retry, then give up and let the tree-GET fallback handle it — a stale tree
+	// would silently report the conversation one message short.
+	if (expectedLeafUuid) {
+		let tree = await conversation.getData(true);
+		if (!tree.chat_messages?.some(m => m.uuid === expectedLeafUuid)) {
+			await Log("Tree does not have", expectedLeafUuid.substring(0, 8), "yet — retrying once");
+			await sleep(300);
+			tree = await conversation.getData(true, true);
+			if (!tree.chat_messages?.some(m => m.uuid === expectedLeafUuid)) {
+				await Log("warn", "Tree still stale after retry, deferring to the tree-GET fallback");
+				return false;
+			}
+		}
+	}
+
+	const conversationData = await conversation.getInfo(isNewMessage, {
+		toolDefinitions: pendingRequest?.toolDefinitions || null
+	});
 
 	if (!conversationData) {
 		await Log("warn", "Could not get conversation data, exiting...");
 		return false;
 	}
 
-	// Add modifier costs to conversation data
-	let modifierCost = 0;
-	const profileTokens = await api.getProfileTokens();
-	modifierCost += profileTokens;
-
-	if (pendingRequest?.toolDefinitions) {
-		let toolTokens = 0;
-		for (const tool of pendingRequest.toolDefinitions) {
-			toolTokens += await tokenCounter.countText(
-				`${tool.name} ${tool.description} ${tool.schema}`
-			);
-		}
-		modifierCost += toolTokens;
-	}
-
-	conversationData.cost += modifierCost;
-	conversationData.futureCost += modifierCost;
-	conversationData.uncachedCost += modifierCost;
-	conversationData.uncachedFutureCost += modifierCost;
-
-	conversationData.length += profileTokens;
+	// Profile and tool tokens are applied inside getInfo now, so there is exactly one place that
+	// knows how they are priced. Nothing to patch here.
 	conversationData.model = model;
-	await Log('processResponse: modelVersion -',
+	await Log('authoritative pass: modelVersion -',
 		'from API:', conversationData.modelVersion,
 		'| from pendingRequest:', pendingRequest?.modelVersion);
 	if (pendingRequest?.modelVersion) {
 		conversationData.modelVersion = pendingRequest.modelVersion;
 	}
-	await Log('processResponse: modelVersion final:', conversationData.modelVersion);
+	await Log('authoritative pass: modelVersion final:', conversationData.modelVersion);
 
-	// If new message: log delta and update total tokens
-	if (isNewMessage && pendingRequest.previousUsage) {
+	// If new message: log delta and update total tokens. Once per message, never on a repeat pass.
+	if (isNewMessage && !alreadyCounted && pendingRequest.previousUsage) {
 		const previousUsage = UsageData.fromJSON(pendingRequest.previousUsage);
 		await logUsageDelta(orgId, previousUsage, usageData, conversationData.length, model);
 
@@ -690,6 +742,10 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 
 		// Debug: log per-message cost keyed by limit reset timestamps
 		await debugLogMessageCost(usageData, conversationData);
+	}
+
+	if (isNewMessage && !alreadyCounted) {
+		await pendingRequests.set(responseKey, { ...pendingRequest, settled: true }, PENDING_REQUEST_TTL);
 	}
 
 	// Schedule notifications for any maxed limits
@@ -701,6 +757,7 @@ async function processResponse(orgId, conversationId, responseKey, details) {
 
 	await conversationCache.set(conversationId, conversationData.toJSON(), CONVERSATION_CACHE_TTL);
 
+	// The caller stamps lastAuthoritativePass on a true return — see queueAuthoritativePass.
 	return true;
 }
 
@@ -882,10 +939,14 @@ async function onBeforeRequestHandler(details) {
 			promptTokens: promptTokens,
 			hasAttachments: hasAttachments,
 			isRetry: details.url.includes("/retry_completion")
-		});
+		}, PENDING_REQUEST_TTL);
 	}
 
 	if (details.method === "PUT" && details.url.includes("/account_profile")) {
+		// This same request carries edited conversation preferences, which are priced into every
+		// conversation, so drop the cached token count rather than waiting out its TTL.
+		await invalidateProfileTokens(await requestActiveOrgId(details.tabId));
+
 		// Read the new UI language straight from the request body — the authoritative value the
 		// user just submitted, with no server-propagation lag (a GET right after the PUT can
 		// briefly still return the old locale). Pin it so the post-reload boot trusts it.
@@ -938,21 +999,34 @@ async function onCompletedHandler(details) {
 		details.url.includes("tree=True") &&
 		details.url.includes("render_all_tools=true")) {
 
-		pendingTasks.push(async () => {
-			const urlParts = details.url.split('/');
-			const orgId = urlParts[urlParts.indexOf('organizations') + 1];
-			await tokenStorageManager.addOrgId(orgId);
-			const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
+		const urlParts = details.url.split('/');
+		const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
 
-			const key = `${orgId}:${conversationId}`;
-			const result = await processResponse(orgId, conversationId, key, details);
+		// FALLBACK ONLY. The completion stream is the primary trigger now (see
+		// reportStreamCompletion), and it fires seconds earlier. claude.ai issues TWO of these tree
+		// GETs per sent message, which is why the pass used to run twice and disagree with itself —
+		// the first run deleted the pendingRequests entry, so the second lost the tool definitions.
+		//
+		// This still has to work: it is the only trigger when the page-world watcher is off via the
+		// claude_usage_sse_off kill-switch, or when a message was sent somewhere we have no content
+		// script.
+		const settledAt = lastAuthoritativePass.get(conversationId);
+		if (authoritativeInFlight.has(conversationId)) {
+			Log("Tree GET for", conversationId, "— a pass is already in flight, skipping");
+			return;
+		}
+		if (settledAt && Date.now() - settledAt < AUTHORITATIVE_DEDUPE_MS) {
+			Log("Tree GET for", conversationId, "— settled", Date.now() - settledAt, "ms ago, skipping");
+			return;
+		}
 
-			if (result && await pendingRequests.has(key)) {
-				await pendingRequests.delete(key);
-			}
+		queueAuthoritativePass({
+			orgId: urlParts[urlParts.indexOf('organizations') + 1],
+			conversationId,
+			api: getStrategy().apiForRequest(details, urlParts[urlParts.indexOf('organizations') + 1]),
+			tabId: details.tabId
 		});
-
-		processNextTask();
+		tokenStorageManager.addOrgId(urlParts[urlParts.indexOf('organizations') + 1]);
 	}
 
 	// Branch switch — debounce, then invalidate cache and fetch fresh data
@@ -974,14 +1048,12 @@ async function onCompletedHandler(details) {
 
 				const api = getStrategy().apiForRequest(details, orgId);
 				const conversation = await api.getConversation(conversationId);
-				const conversationData = await conversation.getInfo(false);
-				const profileTokens = await api.getProfileTokens();
+				// Profile tokens applied inside getInfo — see requestData.
+				const conversationData = await conversation.getInfo(false, {
+					toolDefinitions: await lastToolDefinitions(orgId, conversationId)
+				});
 
 				if (conversationData) {
-					conversationData.length += profileTokens;
-					conversationData.cost += profileTokens * CONFIG.CACHING_MULTIPLIER;
-					conversationData.uncachedCost += profileTokens * CONFIG.CACHING_MULTIPLIER;
-
 					await conversationCache.set(conversationId, conversationData.toJSON(), CONVERSATION_CACHE_TTL);
 					await updateTabWithConversationData(details.tabId, conversationData);
 				}
@@ -1060,6 +1132,21 @@ const CONVERSATION_CACHE_TTL = 60 * 60 * 1000; // 60 minutes
 // stream-derived estimate can be served as fact if that pass never arrives.
 const PROVISIONAL_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 const branchSwitchTimers = new Map(); // conversationId → timeoutId (debounce)
+
+// conversationId → timestamp of the last authoritative pass that was queued or completed. The
+// completion stream triggers the pass now, and claude.ai then issues its own tree GETs a second or
+// two later; this is what stops those from redoing work that is already done.
+const lastAuthoritativePass = new Map();
+// Queued or running. Kept apart from the timestamp above so suppression can never outlive a pass
+// that never actually ran.
+const authoritativeInFlight = new Set();
+const AUTHORITATIVE_DEDUPE_MS = 15 * 1000;
+
+// pendingRequests entries used to be deleted by the first pass that consumed them. They now expire
+// instead — long enough that any fallback pass for the same message still sees the tool definitions
+// and the model the request was sent with, short enough that revisiting the conversation later is
+// not mistaken for a fresh send.
+const PENDING_REQUEST_TTL = 10 * 60 * 1000;
 
 // Set up repeating alarm for reset notification polling (every 3 minutes)
 getAlarm('checkResetNotifications').then(existing => {
