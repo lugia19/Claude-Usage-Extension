@@ -308,6 +308,9 @@ const PENDING_MODEL_TRUST_MS = 5 * 60 * 1000;
 // message's prompt/tools/model and skip its own accounting. Keeping the conversation as the OUTER
 // key preserves StoredMap's per-key TTL at the granularity that matters for eviction, and keeps the
 // two consumers that legitimately want "the newest request here" on a single get.
+// Marks a bucket key that isn't a real turn uuid — see getPendingRequest.
+const SYNTHETIC_TURN_PREFIX = 'ts:';
+
 async function getPendingBucket(orgId, conversationId) {
 	return (await pendingRequests.get(`${orgId}:${conversationId}`)) || {};
 }
@@ -316,7 +319,17 @@ async function getPendingBucket(orgId, conversationId) {
 async function getPendingRequest(orgId, conversationId, turnUuid) {
 	const bucket = await getPendingBucket(orgId, conversationId);
 	if (turnUuid && bucket[turnUuid]) return bucket[turnUuid];
-	return turnUuid ? undefined : newestPending(bucket);
+	if (!turnUuid) return newestPending(bucket);
+
+	// Exact miss. Fall back ONLY to entries stored under a synthetic key: those are requests whose
+	// body carried no turn_message_uuids, so they can never match the real uuid the callers hold and
+	// would otherwise be unreachable — the fallback key would defeat the fallback. A miss against
+	// real keys is left as a miss, because borrowing another turn's tools and model would be worse
+	// than reporting none.
+	const synthetic = Object.fromEntries(
+		Object.entries(bucket).filter(([key]) => key.startsWith(SYNTHETIC_TURN_PREFIX))
+	);
+	return newestPending(synthetic);
 }
 
 function newestPending(bucket) {
@@ -945,7 +958,7 @@ async function onBeforeRequestHandler(details) {
 			// which is the behaviour the per-turn keying exists to replace.
 			await Log("warn", "No turn_message_uuids.assistant_message_uuid in the completion body —",
 				"per-turn keying is degraded to newest-wins for this request");
-			turnUuid = `ts:${Date.now()}`;
+			turnUuid = `${SYNTHETIC_TURN_PREFIX}${Date.now()}`;
 		}
 		await Log(`Message sent - conversation ${conversationId}, turn ${turnUuid}`);
 

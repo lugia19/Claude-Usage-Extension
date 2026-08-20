@@ -33,16 +33,25 @@ if [[ "$DIRECTION" != "none" ]]; then
   echo "Reacted $CONTENT on $COMMENT_ID"
 fi
 
-# Look up the thread that contains this comment and resolve it
-THREAD_ID=$(gh api graphql -f query="{
-  repository(owner:\"$OWNER\", name:\"$NAME\") {
-    pullRequest(number: $PR) {
-      reviewThreads(first: 100) {
+# Look up the thread that contains this comment and resolve it.
+#
+# Paginated: reviewThreads caps at 100 per page, and on a PR past that a thread on a later page was
+# simply unfindable — and because the reaction is applied above, the script would react and then
+# exit 1 without resolving. `gh api graphql --paginate` needs the query to declare $endCursor and
+# return pageInfo; it then walks the pages itself. --jq runs per page, so at most one line comes
+# back across the whole run, and head -1 still covers it.
+THREAD_ID=$(gh api graphql --paginate \
+  -f query='query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $pr) {
+      reviewThreads(first: 100, after: $endCursor) {
         nodes { id comments(first: 1) { nodes { id } } }
+        pageInfo { hasNextPage endCursor }
       }
     }
   }
-}" --jq ".data.repository.pullRequest.reviewThreads.nodes[] | select(.comments.nodes[].id == \"$COMMENT_ID\") | .id" | head -1)
+}' -F owner="$OWNER" -F name="$NAME" -F pr="$PR" \
+  --jq ".data.repository.pullRequest.reviewThreads.nodes[] | select(.comments.nodes[].id == \"$COMMENT_ID\") | .id" | head -1)
 
 if [[ -z "$THREAD_ID" ]]; then
   echo "Could not find thread for comment $COMMENT_ID"
