@@ -308,8 +308,6 @@ const PENDING_MODEL_TRUST_MS = 5 * 60 * 1000;
 // message's prompt/tools/model and skip its own accounting. Keeping the conversation as the OUTER
 // key preserves StoredMap's per-key TTL at the granularity that matters for eviction, and keeps the
 // two consumers that legitimately want "the newest request here" on a single get.
-const PENDING_BUCKET_MAX = 5;
-
 async function getPendingBucket(orgId, conversationId) {
 	return (await pendingRequests.get(`${orgId}:${conversationId}`)) || {};
 }
@@ -336,10 +334,7 @@ async function setPendingRequest(orgId, conversationId, turnUuid, entry) {
 	bucket[turnUuid] = entry;
 
 	const cutoff = Date.now() - PENDING_REQUEST_TTL;
-	const kept = Object.entries(bucket)
-		.filter(([, e]) => (e.requestTimestamp || 0) > cutoff)
-		.sort((a, b) => (b[1].requestTimestamp || 0) - (a[1].requestTimestamp || 0))
-		.slice(0, PENDING_BUCKET_MAX);
+	const kept = Object.entries(bucket).filter(([, e]) => (e.requestTimestamp || 0) > cutoff);
 
 	await pendingRequests.set(`${orgId}:${conversationId}`, Object.fromEntries(kept), PENDING_REQUEST_TTL);
 }
@@ -939,8 +934,15 @@ async function onBeforeRequestHandler(details) {
 		// it comes back as current_leaf_message_uuid, and the SSE stream reports the same value.
 		// The timestamp fallback keeps the bucket usable if the field ever disappears - exact
 		// matching degrades to newest-wins, which is the old behaviour.
-		const turnUuid = requestBodyJSON?.turn_message_uuids?.assistant_message_uuid
-			|| `ts:${Date.now()}`;
+		let turnUuid = requestBodyJSON?.turn_message_uuids?.assistant_message_uuid;
+		if (!turnUuid) {
+			// Loud, because the degradation is otherwise invisible: every request would get a unique
+			// key, every exact lookup would miss, and we would silently fall back to newest-wins —
+			// which is the behaviour the per-turn keying exists to replace.
+			await Log("warn", "No turn_message_uuids.assistant_message_uuid in the completion body —",
+				"per-turn keying is degraded to newest-wins for this request");
+			turnUuid = `ts:${Date.now()}`;
+		}
 		await Log(`Message sent - conversation ${conversationId}, turn ${turnUuid}`);
 
 		// Process tool definitions if present

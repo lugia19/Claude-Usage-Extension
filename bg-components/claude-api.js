@@ -178,10 +178,15 @@ class ClaudeAPI {
 		}
 	}
 
-	// Cached like account settings, and for the same reason: preferences change rarely but ARE
-	// user-editable, so a long TTL would visibly misprice the conversation until it expired. The
-	// PUT /account_profile hook in background.js invalidates on an actual write, so the TTL is only
-	// a backstop for edits made somewhere we don't see.
+	// Cached because this is a GET *plus* a countText on a ~2k-token block that changes maybe
+	// monthly, and countText is a network round trip to api.anthropic.com whenever an API key is
+	// configured. Uncached that is a fetch and a round trip on every authoritative pass, i.e. every
+	// message. (An earlier comment claimed it existed to absorb "the burst of calls per message" —
+	// there is no burst; the pass runs once.)
+	//
+	// Short TTL because preferences are user-editable, and the PUT /account_profile hook in
+	// background.js invalidates on an actual write, so the TTL is only a backstop for edits made
+	// somewhere we don't see.
 	async getProfileTokens() {
 		const cached = await profileTokensCache.get(this.orgId);
 		if (typeof cached === 'number') return cached;
@@ -797,7 +802,13 @@ class ConversationAPI {
 		};
 		const allMessageTokens = await countSlice(() => true);
 		const cachedNowTokens = await countSlice(m => m.isCachedNow);
-		const cachedNextTokens = await countSlice(m => m.isCachedNext);
+		// Without a new message the two boundaries are literally the same object (getCachingInfo
+		// resolves once and shares it), so every message has isCachedNow === isCachedNext and
+		// counting again would tokenize the entire cached prefix a second time for an identical
+		// answer — on every navigation and every branch switch.
+		const cachedNextTokens = next === now
+			? cachedNowTokens
+			: await countSlice(m => m.isCachedNext);
 
 		lengthTokens += allMessageTokens;
 		costTokens += allMessageTokens;
