@@ -673,6 +673,29 @@ function clearMobileTitleAreaOffset(headerRow) {
 	if (scroller?.style.marginTop) scroller.style.marginTop = '';
 }
 
+// How far the title's first glyph sits from the start of the title row.
+//
+// The title is a button that pokes out to the left with a negative offset and pads its text back
+// in, so its text does NOT start where the row does. Our line is a plain sibling with no such
+// padding, and used to hard-code 6px to match. claude.ai has since restyled that button - it now
+// sits 10px out with 10px of padding, i.e. an inset of 0 - so the constant became a 6px rightward
+// offset against the title. Measure it instead, and the alignment survives the next restyle.
+function getTitleTextInset(titleLine) {
+	const btn = titleLine?.querySelector('button');
+	if (!btn) return 0;
+	const wrapper = [...titleLine.children].find(child => child.contains(btn));
+	if (!wrapper) return 0;
+
+	const wrapperLeft = wrapper.getBoundingClientRect().left;
+	const btnRect = btn.getBoundingClientRect();
+	// Nothing is laid out yet (hidden tab, first paint) - 0 is the safe guess, and the anchor is
+	// recomputed on later passes anyway.
+	if (!btnRect.width) return 0;
+
+	const padding = parseFloat(getComputedStyle(btn).paddingLeft) || 0;
+	return Math.max(0, Math.round(btnRect.left + padding - wrapperLeft));
+}
+
 function getTitleAreaAnchor() {
 	const chatTitle = document.querySelector(SELECTORS.CHAT_MENU);
 	if (!chatTitle) return null;
@@ -691,7 +714,7 @@ function getTitleAreaAnchor() {
 		return {
 			parent: titleLine,
 			referenceNode: null,
-			styles: { ...TITLE_AREA_STYLE_RESET, flexBasis: '100%', paddingLeft: '6px' },
+			styles: { ...TITLE_AREA_STYLE_RESET, flexBasis: '100%', paddingLeft: `${getTitleTextInset(titleLine)}px` },
 			classes: { toggle: { 'text-text-500': true } }
 		};
 	}
@@ -722,7 +745,7 @@ const pageLayouts = {
 					return {
 						parent: titleLine,
 						referenceNode: null,
-						styles: { ...TITLE_AREA_STYLE_RESET, flexBasis: '100%', paddingLeft: '6px' },
+						styles: { ...TITLE_AREA_STYLE_RESET, flexBasis: '100%', paddingLeft: `${getTitleTextInset(titleLine)}px` },
 						classes: { toggle: { 'text-text-500': true } },
 					};
 				}
@@ -877,7 +900,11 @@ function mountToAnchor(element, anchor) {
 		needsInsert = element.nextElementSibling !== anchor.referenceNode
 			|| element.parentElement !== anchor.parent;
 	} else {
-		needsInsert = element.parentElement !== anchor.parent;
+		// A null referenceNode means "last child", so check for that and not merely for parentage.
+		// Renaming a conversation re-renders the header and React puts the title back BEFORE our
+		// line, which leaves us still a child of the right parent but now the first one - the stats
+		// render above the title until a reload. Comparing parents alone can't see that.
+		needsInsert = element.parentElement !== anchor.parent || element.nextElementSibling !== null;
 	}
 
 	if (needsInsert) {
