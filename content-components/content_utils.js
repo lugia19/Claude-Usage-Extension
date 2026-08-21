@@ -592,9 +592,18 @@ function getSidebarDesktopAnchor() {
 	const navScroll = sidebarBody.querySelector('.dframe-nav-scroll');
 	if (!navScroll) return null;
 
+	// Mount INSIDE the scroll area, above the recents, rather than as a fixed block above it.
+	// Sitting outside meant our ~220px of bars ate the scroll area's flex basis: on a short
+	// viewport the recents collapsed to a few pixels and our own content overflowed onto the
+	// bottom tray, with no way to scroll any of it back. Inside, everything scrolls together.
+	// shrink-0 keeps the bars at full height instead of being squashed by the flex column.
+	const referenceNode = Array.from(navScroll.children)
+		.find(child => !child.classList.contains('ut-usage-sidebar')) || null;
+
 	return {
-		parent: navScroll.parentElement,
-		referenceNode: navScroll,
+		parent: navScroll,
+		referenceNode,
+		classes: { add: ['shrink-0'] },
 	};
 }
 
