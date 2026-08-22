@@ -59,17 +59,61 @@ const sseUsageCache = new StoredMap("sseUsage");
 // actually decides whether it still means anything - see applySseUsageFallback.
 const SSE_USAGE_TTL = 8 * 24 * 60 * 60 * 1000;
 
-// Called from background.js when the completion stream reports usage. Merged rather than replaced:
-// a payload that omits one window must not erase what an earlier one told us about it.
+// Rate limiter for recheckTierForEmptyUsage, not a cache of anything - the value is just a marker.
+const tierRecheckCache = new StoredMap("tierRechecks");
+const TIER_RECHECK_TTL = 60 * 60 * 1000;
+
+// One window's worth of merge. Two rules, both about not losing information:
+//
+// A payload that omits a window must not erase what an earlier one told us about it, so an absent
+// incoming value keeps the previous one.
+//
+// And within a single window the stream's figure can tick backwards by a point - both sides round a
+// fractional utilization independently, and the stream is read a moment before the accounting
+// settles (observed live as 37% -> 36% -> 37%). shouldApplySseSession in sse_bridge.js already
+// refuses to show that in-page; persisting it would defeat that guard, because on the free plan
+// nothing overwrites this value the way /usage does on a paid tier, so the regressed number would
+// stand until the next message. A genuine reset also drops the number, but brings a new reset
+// timestamp with it - which is what the tolerance distinguishes.
+function mergeSseWindow(previous, incoming) {
+	if (!incoming) return previous || null;
+	if (!previous) return incoming;
+
+	const sameWindow = Math.abs((previous.resetsAt || 0) - incoming.resetsAt) < CONFIG.SSE_SAME_WINDOW_TOLERANCE_MS;
+	return sameWindow && incoming.percentage < previous.percentage ? previous : incoming;
+}
+
+// Called from background.js when the completion stream reports usage.
 export async function storeSseUsage(orgId, limits) {
 	if (!orgId || !limits) return;
 
 	const previous = await sseUsageCache.get(orgId) || {};
 	await sseUsageCache.set(orgId, {
-		session: limits.session || previous.session || null,
-		weekly: limits.weekly || previous.weekly || null
+		session: mergeSseWindow(previous.session, limits.session),
+		weekly: mergeSseWindow(previous.weekly, limits.weekly)
 	}, SSE_USAGE_TTL);
 	await Log("Stored stream usage for:", orgId, limits);
+}
+
+// Guards one edge case: a subscription that ended. getOrgInfo caches the org record - and with it
+// the tier - for 24 hours, and the ONLY thing that forces a refresh is the user visiting the
+// billing page (background.js, onBeforeRequestHandler). So a plan that lapses leaves the tier
+// reading paid for up to a day, during which /usage has already switched to the free plan's empty
+// response. Without this the account would sit staring at the empty usage UI for the rest of that
+// day - precisely the state the free-plan fallback exists to prevent.
+//
+// Throttled because the condition does not clear itself when the tier really is paid: an empty
+// /usage on a genuinely paid account is unexpected rather than impossible, and getUsageData runs on
+// every message and every heartbeat, so an unthrottled recheck would turn one odd response into an
+// app_start fetch per call. Returns null while throttled, which reads as "not free" at the caller.
+async function recheckTierForEmptyUsage(api) {
+	if (!api || await tierRecheckCache.has(api.orgId)) return null;
+
+	// Marked before the fetch, so a failure throttles too rather than retrying in a tight loop.
+	await tierRecheckCache.set(api.orgId, true, TIER_RECHECK_TTL);
+	const tier = await api.getSubscriptionTier(true);
+	await Log("Empty /usage on a non-free tier, re-resolved as:", tier);
+	return tier;
 }
 
 // claude.ai reports no limits at all on the free plan - /usage answers 200 with every field null
@@ -78,9 +122,16 @@ export async function storeSseUsage(orgId, limits) {
 //
 // Gated to claude_free deliberately. On any other tier an empty /usage means something unexpected
 // happened, and quietly serving a snapshot of unknown age would hide that rather than surface it.
-async function applySseUsageFallback(usageData) {
-	if (usageData.subscriptionTier !== 'claude_free') return;
+async function applySseUsageFallback(usageData, api) {
 	if (!usageData.hasNoReportedUsage()) return;
+
+	if (usageData.subscriptionTier !== 'claude_free') {
+		const tier = await recheckTierForEmptyUsage(api);
+		if (tier !== 'claude_free') return;
+		// The org record was stale, so the tier on the object is too. Correct it before anything
+		// downstream reads it - ESTIMATED_CAPS, the default model and the sidebar notice all key off it.
+		usageData.subscriptionTier = tier;
+	}
 
 	const stored = await sseUsageCache.get(usageData.orgId);
 	if (!stored) return;
@@ -157,7 +208,7 @@ class ClaudeAPI {
 		usageData.orgId = this.orgId;
 		// Every consumer - the tab push, the popup, reset notifications - comes through here, so the
 		// free-plan fallback is applied once, in the one place that owns building a UsageData.
-		await applySseUsageFallback(usageData);
+		await applySseUsageFallback(usageData, this);
 		return usageData;
 	}
 

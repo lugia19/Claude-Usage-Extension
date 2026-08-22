@@ -85,11 +85,15 @@ function parseSseLimits(messageLimit) {
 // is taken a moment before the accounting settles, so they can disagree by one. Observed live as
 // 37% -> 36% -> 37%, the bar ticking backwards for the ~3s until the full fetch corrected it.
 // A genuine reset does drop the number, and that always comes with a new reset timestamp.
-const SSE_SAME_WINDOW_TOLERANCE_MS = 60 * 1000;
-
+//
+// This guards the in-page update only. mergeSseWindow in bg-components/claude-api.js applies the
+// same rule to the snapshot the background persists, sharing the tolerance through CONFIG.
+//
+// CONFIG is safe to read here: both subscribers gate handleSsePartialUsage on uiReady, which their
+// init() only sets after blocking on `while (!CONFIG)`.
 function shouldApplySseSession(current, incoming) {
 	if (!current) return true;
-	const sameWindow = Math.abs((current.resetsAt || 0) - incoming.resetsAt) < SSE_SAME_WINDOW_TOLERANCE_MS;
+	const sameWindow = Math.abs((current.resetsAt || 0) - incoming.resetsAt) < CONFIG.SSE_SAME_WINDOW_TOLERANCE_MS;
 	return !sameWindow || incoming.percentage > current.percentage;
 }
 
