@@ -315,6 +315,11 @@
     padding: 2px 0 6px 0;
 }
 
+.ut-usage-notice-caveat {
+    margin-top: 4px;
+    opacity: 0.7;
+}
+
 .ut-desktop-footer {
     font-size: 0.75rem;
     color: var(--text-400);

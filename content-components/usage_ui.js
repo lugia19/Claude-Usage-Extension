@@ -195,9 +195,28 @@ class UsageSection {
 			this.elements.barsContainer.appendChild(this.notice);
 		}
 
-		this.notice.textContent = usageData.subscriptionTier === 'claude_free'
-			? localize('usage.no_limits_free')
-			: localize('usage.no_limits');
+		this.notice.replaceChildren();
+
+		// A free account reaching here has either never sent a message in the current window or has
+		// had every window lapse - and a message is genuinely all it takes, since the completion
+		// stream is where these numbers now come from. Any other tier reporting nothing is not
+		// something the user can act on, so it gets the plain statement instead.
+		if (usageData.subscriptionTier !== 'claude_free') {
+			this.notice.textContent = localize('usage.no_limits');
+			return;
+		}
+
+		const hint = document.createElement('div');
+		hint.textContent = localize('usage.free_hint');
+
+		// Sourcing usage from the stream is a workaround for claude.ai no longer reporting it, and
+		// nothing guarantees the stream keeps carrying it. Say so rather than letting the bars
+		// silently stop updating one day.
+		const caveat = document.createElement('div');
+		caveat.className = 'ut-usage-notice-caveat';
+		caveat.textContent = localize('usage.free_caveat');
+
+		this.notice.append(hint, caveat);
 	}
 
 	formatResetTime(timestamp) {

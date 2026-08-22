@@ -48,18 +48,36 @@ function onSsePartialUsage(listener) {
 // utilization is rounded to 2 decimals - whole-percent granularity, matching /usage's integer
 // percent. Neither side is more precise than the other; they just round independently.
 //
-// Only the 5h window is taken. `7d` moves by a fraction of a percent per message. `7d_oi` looks
-// like the weekly scoped to whichever model served the request - which model that is differs per
-// account, and the stream never says - and its value disagreed with /usage's weekly_scoped by a
-// point when checked (0.1 against percent 11), so both are left to the full fetch. `overage` is
-// the extra-usage spend, which the UI sources from /usage and /credits instead.
-function parseSseSessionLimit(messageLimit) {
-	const session = messageLimit?.windows?.['5h'];
-	if (!session || typeof session.utilization !== 'number' || !session.resets_at) return null;
+function parseSseWindow(win) {
+	if (!win || typeof win.utilization !== 'number' || !win.resets_at) return null;
 	return {
-		percentage: Math.round(session.utilization * 100),
-		resetsAt: session.resets_at * 1000
+		percentage: Math.round(win.utilization * 100),
+		resetsAt: win.resets_at * 1000
 	};
+}
+
+// The live in-page update takes the 5h window only. `7d` moves by a fraction of a percent per
+// message, so refreshing it a second early buys nothing.
+function parseSseSessionLimit(messageLimit) {
+	return parseSseWindow(messageLimit?.windows?.['5h']);
+}
+
+// Everything the stream reports that maps cleanly onto a /usage limit key, for the background to
+// persist. This exists for ONE case: the free plan, where /usage answers with every field null and
+// an empty `limits` array, leaving the stream as the only place usage is ever reported. On every
+// other tier the stored copy is written and never read - see applySseUsageFallback in
+// bg-components/claude-api.js, which is gated to claude_free.
+//
+// `7d_oi` is still left alone: it looks like the weekly scoped to whichever model served the
+// request - which model that is differs per account, and the stream never says - and its value
+// disagreed with /usage's weekly_scoped by a point when checked (0.1 against percent 11). It does
+// not appear in free-plan payloads at all. `overage` is extra-usage spend, which a free account
+// cannot have (canUseExtraUsage excludes claude_free), so it has no fallback to feed.
+function parseSseLimits(messageLimit) {
+	const session = parseSseWindow(messageLimit?.windows?.['5h']);
+	const weekly = parseSseWindow(messageLimit?.windows?.['7d']);
+	if (!session && !weekly) return null;
+	return { session, weekly };
 }
 
 // Session usage only ever rises within a window, so a lower number from the stream is noise: both
@@ -119,25 +137,33 @@ function initSseBridge() {
 }
 
 function reportStreamToBackground(data) {
-	if (!data.conversationId) return;
-	// CONFIG arrives asynchronously at boot; without it the multiplier is unknown, and a count
-	// that silently omits it would read ~17% low.
-	if (!CONFIG) return;
+	// Two independent payloads ride this one hop. The usage snapshot needs neither a conversation
+	// nor CONFIG, and on the free plan it is the only usage the background will ever see, so it must
+	// not be lost to the token count's preconditions - hence those guards moved inside.
+	const sseLimits = parseSseLimits(data.messageLimit);
 
-	let counted;
-	try {
-		counted = countAssistantTokens(data.assistantText);
-	} catch (error) {
-		Log('warn', 'SSE token count failed:', error);
-		return;
+	// CONFIG arrives asynchronously at boot; without it the multiplier is unknown, and a count that
+	// silently omits it would read ~17% low. With no conversation there is nothing to attach an
+	// estimate to either.
+	let counted = null;
+	if (data.conversationId && CONFIG) {
+		try {
+			counted = countAssistantTokens(data.assistantText);
+		} catch (error) {
+			Log('warn', 'SSE token count failed:', error);
+		}
 	}
+
+	if (!sseLimits && !counted) return;
 
 	sendBackgroundMessage({
 		type: 'reportStreamCompletion',
 		conversationId: data.conversationId,
 		isRetry: !!data.isRetry,
-		assistantTokens: counted.tokens,
-		unreliable: !!data.sawNonTextBlock || counted.truncated,
+		sseLimits,
+		// null rather than 0, so the handler can tell "no reply to price" from "an empty reply".
+		assistantTokens: counted ? counted.tokens : null,
+		unreliable: !!data.sawNonTextBlock || !!counted?.truncated,
 		assistantUuid: data.assistantUuid || null,
 		parentUuid: data.parentUuid || null
 	}).catch(error => Log('warn', 'Failed to report stream completion:', error));

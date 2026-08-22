@@ -50,6 +50,60 @@ const profileTokensCache = new StoredMap("profileTokens");
 const ACCOUNT_SETTINGS_TTL = 5 * 60 * 1000;
 const PROFILE_TOKENS_TTL = 5 * 60 * 1000;
 
+// Last usage the completion stream reported, per org. Not a cache of anything fetchable - on the
+// free plan it is the only copy that exists, so nothing can refill it but another message.
+const sseUsageCache = new StoredMap("sseUsage");
+
+// Garbage collection, not freshness: a 7-day window's reset can be that far out, and evicting a
+// still-live weekly would lose a figure no request can recover. Each limit's own resetsAt is what
+// actually decides whether it still means anything - see applySseUsageFallback.
+const SSE_USAGE_TTL = 8 * 24 * 60 * 60 * 1000;
+
+// Called from background.js when the completion stream reports usage. Merged rather than replaced:
+// a payload that omits one window must not erase what an earlier one told us about it.
+export async function storeSseUsage(orgId, limits) {
+	if (!orgId || !limits) return;
+
+	const previous = await sseUsageCache.get(orgId) || {};
+	await sseUsageCache.set(orgId, {
+		session: limits.session || previous.session || null,
+		weekly: limits.weekly || previous.weekly || null
+	}, SSE_USAGE_TTL);
+	await Log("Stored stream usage for:", orgId, limits);
+}
+
+// claude.ai reports no limits at all on the free plan - /usage answers 200 with every field null
+// and an empty `limits` array - while the completion stream still carries real 5h and 7d windows.
+// Stand the stored stream snapshot in when, and only when, the endpoint gave us nothing.
+//
+// Gated to claude_free deliberately. On any other tier an empty /usage means something unexpected
+// happened, and quietly serving a snapshot of unknown age would hide that rather than surface it.
+async function applySseUsageFallback(usageData) {
+	if (usageData.subscriptionTier !== 'claude_free') return;
+	if (!usageData.hasNoReportedUsage()) return;
+
+	const stored = await sseUsageCache.get(usageData.orgId);
+	if (!stored) return;
+
+	// A window whose reset has passed is not "stale data to refresh" - there is no active window at
+	// all until the next message, and its true figure is unknowable until then. Dropping it also
+	// stops UsageUI.checkExpiredLimits() asking for a refresh that can only ever return this same
+	// snapshot, which would otherwise retry on its backoff up to the five-minute ceiling forever.
+	const now = Date.now();
+	const applied = [];
+	for (const key of ['session', 'weekly']) {
+		const limit = stored[key];
+		if (!limit?.resetsAt || limit.resetsAt <= now) continue;
+		usageData.limits[key] = { ...limit };
+		applied.push(key);
+	}
+
+	// These percentages only advance when a message is sent, since sending is the only thing that
+	// refreshes them. Between messages they are a floor, never an overstatement - usage within a
+	// window only ever rises.
+	if (applied.length) await Log("Applied stream usage fallback for:", usageData.orgId, applied);
+}
+
 // Pure HTTP/API layer
 class ClaudeAPI {
 	// `fetchImpl(url, options) => Response` is supplied by the active ContainerStrategy, already bound
@@ -101,6 +155,9 @@ class ClaudeAPI {
 		}
 		const usageData = UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier, creditsResponse);
 		usageData.orgId = this.orgId;
+		// Every consumer - the tab push, the popup, reset notifications - comes through here, so the
+		// free-plan fallback is applied once, in the one place that owns building a UsageData.
+		await applySseUsageFallback(usageData);
 		return usageData;
 	}
 
