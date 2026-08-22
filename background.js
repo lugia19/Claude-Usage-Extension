@@ -547,7 +547,7 @@ async function reportStreamCompletion(message, sender, orgId) {
 	// post-message tree GET), so this write lands first and that fetch picks it up. If it ever lost
 	// that race the bars would simply wait for the next message, which is what the free-plan hint
 	// tells the user to do anyway.
-	await storeSseUsage(orgId, message.sseLimits);
+	await storeSseUsage(getStrategy().apiForTab(sender.tab, orgId), message.sseLimits);
 
 	const conversationId = message.conversationId;
 	if (!conversationId || message.assistantTokens === null) return false;

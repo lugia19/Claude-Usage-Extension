@@ -84,9 +84,24 @@ function mergeSseWindow(previous, incoming) {
 }
 
 // Called from background.js when the completion stream reports usage.
-export async function storeSseUsage(orgId, limits) {
-	if (!orgId || !limits) return;
+//
+// Only ever written on the free plan, which is the only plan that reads it back. A snapshot taken
+// on a paid plan describes different windows against different caps, and a paid weekly window stays
+// live for seven days under the eight-day TTL - so if a subscription lapsed, the fallback would
+// serve the old plan's utilization and reset times as free-plan usage until another message
+// replaced them. Not writing them at all makes "this cache holds free-plan data" true by
+// construction, rather than something the read side has to police.
+//
+// The tier read is the 24h-cached org record, so this is normally free. It does mean the first
+// message after a lapse is not stored (the record still says paid); the recheck below corrects the
+// tier, and the message after that lands.
+export async function storeSseUsage(api, limits) {
+	if (!api?.orgId || !limits) return;
 
+	const tier = await api.getSubscriptionTier();
+	if (tier !== 'claude_free') return;
+
+	const orgId = api.orgId;
 	const previous = await sseUsageCache.get(orgId) || {};
 	await sseUsageCache.set(orgId, {
 		session: mergeSseWindow(previous.session, limits.session),
