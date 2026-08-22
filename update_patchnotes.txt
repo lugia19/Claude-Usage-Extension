@@ -1,4 +1,2 @@
-Add toggling of sidebar elements in the settings
-Fix minor UI bugs
-Make the UI more responsive
-Various performance improvements
+Fix for the free tier (may be temporary, as Anthropic seems to be removing usage data from it)
+Inject UI in the scrollable part of the sidebar to fix issues on short screens
