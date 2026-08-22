@@ -199,10 +199,14 @@ class UsageSection {
 
 		// A free account reaching here has either never sent a message in the current window or has
 		// had every window lapse - and a message is genuinely all it takes, since the completion
-		// stream is where these numbers now come from. Any other tier reporting nothing is not
-		// something the user can act on, so it gets the plain statement instead.
+		// stream is where these numbers now come from.
+		//
+		// Any other tier reaching here almost certainly did not get an answer at all: getRequest does
+		// not status-check, so an HTTP error on /usage parses into an all-null UsageData that looks
+		// exactly like the free plan's genuinely empty response. Saying "no limits" would assert
+		// something we do not know, so say what we actually know instead.
 		if (usageData.subscriptionTier !== 'claude_free') {
-			this.notice.textContent = localize('usage.no_limits');
+			this.notice.textContent = localize('usage.limits_unavailable');
 			return;
 		}
 
