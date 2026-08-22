@@ -174,6 +174,19 @@ export class UsageData {
 		return this.getActiveLimits().filter(limit => limit.percentage >= threshold);
 	}
 
+	// Does the server report nothing to draw? claude.ai stopped reporting limits on the free plan:
+	// /usage answers 200 with every field null and an empty `limits` array (verified 2026-08-22,
+	// including immediately after a message the completion stream *did* report usage for, so this
+	// is deliberate for free orgs rather than "no usage yet"). The UI shows a notice instead of an
+	// empty box.
+	//
+	// Not the same as `usageData === null`, which means "not fetched yet" - that stays blank.
+	// Extra usage counts as something to draw, so an account with credits but no plan limits keeps
+	// its credits bar rather than being told there is nothing.
+	hasNoReportedUsage() {
+		return this.getActiveLimits().length === 0 && !this.hasExtraUsageConfigured();
+	}
+
 	// For chat area: most constraining weekly-type limit (for marker)
 	// model: optional model name string (e.g. "Sonnet", "Opus") to filter relevant limits
 	getBindingWeeklyLimit(model) {

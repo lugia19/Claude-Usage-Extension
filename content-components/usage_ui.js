@@ -20,6 +20,7 @@ class UsageSection {
 		this.elements = this.createElement();
 		this.limitBars = new Map(); // limitKey -> { row, percentage, resetTime, progressBar }
 		this.hiddenKeys = new Set(); // limit keys the user switched off in settings
+		this.notice = null; // stand-in shown when the server reports no limits at all
 	}
 
 	createElement() {
@@ -169,6 +170,34 @@ class UsageSection {
 		for (const key of seenKeys) {
 			barsContainer.appendChild(this.limitBars.get(key).row);
 		}
+
+		this.renderNotice(usageData);
+	}
+
+	// With nothing to draw the section is just a header sitting on top of the footers, which reads
+	// as the extension being broken rather than as claude.ai reporting nothing. Say which it is.
+	//
+	// Keyed off hasNoReportedUsage() rather than "no rows were drawn": switching every bar off in
+	// settings also empties the container, and that user must not be told the server reports
+	// nothing. Appended last so it can never land between bars.
+	renderNotice(usageData) {
+		if (!usageData.hasNoReportedUsage()) {
+			if (this.notice) {
+				this.notice.remove();
+				this.notice = null;
+			}
+			return;
+		}
+
+		if (!this.notice) {
+			this.notice = document.createElement('div');
+			this.notice.className = 'ut-usage-notice text-text-400 text-xs';
+			this.elements.barsContainer.appendChild(this.notice);
+		}
+
+		this.notice.textContent = usageData.subscriptionTier === 'claude_free'
+			? localize('usage.no_limits_free')
+			: localize('usage.no_limits');
 	}
 
 	formatResetTime(timestamp) {
@@ -609,19 +638,45 @@ class UsageUI {
 		this.usageSection.render(usageData);
 	}
 
+	// The stat line row collapses to nothing once its children are hidden, so the container itself
+	// stays in the DOM and LengthUI.mountStatLine() keeps finding #ut-stat-right.
+	setChatUsageVisible(visible) {
+		const { usageDisplay, progressBar, peakIndicator, resetDisplay } = this.elements.chat;
+		const display = visible ? '' : 'none';
+
+		usageDisplay.style.display = display;
+		if (progressBar) progressBar.container.style.display = display;
+
+		// The countdown is session-specific, so it tracks the session limit rather than the row as a
+		// whole. The credits branch renders with no session at all on a credit-funded model, and
+		// would otherwise print "Reset in: Not set" beside a perfectly good Extra usage bar. Same
+		// condition renderResetTimes() uses, so the two can't disagree about it.
+		const session = this.state.usageData?.limits.session;
+		resetDisplay.style.display = visible && session ? '' : 'none';
+
+		// Owned by the render branches below while visible; forced off here so it can't outlive them.
+		if (!visible) peakIndicator.style.display = 'none';
+	}
+
 	renderChatArea() {
 		const { usageData } = this.state;
 		const { usageDisplay, progressBar, peakIndicator, resetDisplay } = this.elements.chat;
 
 		if (!usageData) return;
 
-		const session = usageData.limits.session;
-		if (!session) return;
-
 		// Read the picker directly rather than this.state.currentModel, which stays null until
 		// checkModelChange() first polls (up to 1s after mount). Reused for the weekly marker below.
 		const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
 		const modelName = modelSelector?.textContent?.trim() || null;
+
+		// Nothing to price this against (the free plan, where /usage reports no limits at all).
+		// Returning here without touching the DOM would leave whatever was last written on screen:
+		// that is how a free account ended up showing a stale "Session: 2%" - set by an SSE partial
+		// a moment earlier - next to "Reset in: Not set". Hide the usage half outright instead.
+		const session = usageData.limits.session;
+		const hasUsage = !!session || usageData.isSpendingCredits(modelName);
+		this.setChatUsageVisible(hasUsage);
+		if (!hasUsage) return;
 
 		// Show extra usage instead of the session bar whenever credits are what's being spent —
 		// either the plan limits are maxed, or the selected model is credit-funded (e.g. Fable
@@ -693,7 +748,9 @@ class UsageUI {
 		// Sidebar
 		this.usageSection.renderResetTimes(usageData);
 
-		// Chat area
+		// Chat area. Skipped with no session limit: this runs every second and would otherwise keep
+		// writing "Reset in: Not set" into the display renderChatArea() hid.
+		if (!usageData.limits.session) return;
 		const resetInfo = usageData.getSessionResetInfo();
 		this.elements.chat.resetDisplay.innerHTML = getResetTimeHTML(resetInfo);
 	}

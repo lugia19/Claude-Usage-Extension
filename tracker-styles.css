@@ -307,6 +307,14 @@
 	transform: none;
 }
 
+/* Stand-in for the limit bars when claude.ai reports no limits (free plan). */
+.ut-usage-notice {
+    font-size: 0.75rem;
+    color: var(--text-400);
+    line-height: 1.4;
+    padding: 2px 0 6px 0;
+}
+
 .ut-desktop-footer {
     font-size: 0.75rem;
     color: var(--text-400);

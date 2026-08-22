@@ -303,6 +303,13 @@ class LengthUI {
 
 		const { usageData, conversationData, currentModel, currentModelVersion } = this.state;
 
+		// No limits reported at all (the free plan) - there is nothing to divide the cost into, and
+		// a lone "Messages left: N/A" beside the hidden usage bar reads as breakage. Drop it.
+		if (usageData?.hasNoReportedUsage()) {
+			estimate.innerHTML = '';
+			return;
+		}
+
 		const msgPrefix = isMobileView() ? localize('length.msgs_left_mobile') : localize('length.msgs_left_desktop');
 
 		if (!getConversationId() || !usageData || !conversationData) {
