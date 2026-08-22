@@ -59,6 +59,11 @@ const CONFIG = {
 	// sse_bridge.js counts the streamed reply locally and must agree with the background.
 	"ESTIMATION_MULTIPLIER": 1.4,
 	"EXTRA_USAGE_CACHING_MULTIPLIER": 0.1, // Cache reads cost 10% of input during extra usage
+	// How close two reset timestamps must be to count as the same usage window. Lives in CONFIG,
+	// like ESTIMATION_MULTIPLIER and for the same reason: content-components/sse_bridge.js gets it
+	// via getConfig, and its in-page guard must agree with what storeSseUsage persists in
+	// bg-components/claude-api.js. Two copies of this number would drift.
+	"SSE_SAME_WINDOW_TOLERANCE_MS": 60 * 1000,
 	"TOKEN_CACHING_DURATION_MS": 60 * 60 * 1000, // 1 hour
 	"ESTIMATED_CAPS": {
 		// I have no idea. This is very napkin math.

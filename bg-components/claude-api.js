@@ -50,6 +50,126 @@ const profileTokensCache = new StoredMap("profileTokens");
 const ACCOUNT_SETTINGS_TTL = 5 * 60 * 1000;
 const PROFILE_TOKENS_TTL = 5 * 60 * 1000;
 
+// Last usage the completion stream reported, per org. Not a cache of anything fetchable - on the
+// free plan it is the only copy that exists, so nothing can refill it but another message.
+const sseUsageCache = new StoredMap("sseUsage");
+
+// Garbage collection, not freshness: a 7-day window's reset can be that far out, and evicting a
+// still-live weekly would lose a figure no request can recover. Each limit's own resetsAt is what
+// actually decides whether it still means anything - see applySseUsageFallback.
+const SSE_USAGE_TTL = 8 * 24 * 60 * 60 * 1000;
+
+// Rate limiter for recheckTierForEmptyUsage, not a cache of anything - the value is just a marker.
+const tierRecheckCache = new StoredMap("tierRechecks");
+const TIER_RECHECK_TTL = 60 * 60 * 1000;
+
+// One window's worth of merge. Two rules, both about not losing information:
+//
+// A payload that omits a window must not erase what an earlier one told us about it, so an absent
+// incoming value keeps the previous one.
+//
+// And within a single window the stream's figure can tick backwards by a point - both sides round a
+// fractional utilization independently, and the stream is read a moment before the accounting
+// settles (observed live as 37% -> 36% -> 37%). shouldApplySseSession in sse_bridge.js already
+// refuses to show that in-page; persisting it would defeat that guard, because on the free plan
+// nothing overwrites this value the way /usage does on a paid tier, so the regressed number would
+// stand until the next message. A genuine reset also drops the number, but brings a new reset
+// timestamp with it - which is what the tolerance distinguishes.
+function mergeSseWindow(previous, incoming) {
+	if (!incoming) return previous || null;
+	if (!previous) return incoming;
+
+	const sameWindow = Math.abs((previous.resetsAt || 0) - incoming.resetsAt) < CONFIG.SSE_SAME_WINDOW_TOLERANCE_MS;
+	return sameWindow && incoming.percentage < previous.percentage ? previous : incoming;
+}
+
+// Called from background.js when the completion stream reports usage.
+//
+// Only ever written on the free plan, which is the only plan that reads it back. A snapshot taken
+// on a paid plan describes different windows against different caps, and a paid weekly window stays
+// live for seven days under the eight-day TTL - so if a subscription lapsed, the fallback would
+// serve the old plan's utilization and reset times as free-plan usage until another message
+// replaced them. Not writing them at all makes "this cache holds free-plan data" true by
+// construction, rather than something the read side has to police.
+//
+// The tier read is the 24h-cached org record, so this is normally free. It does mean the first
+// message after a lapse is not stored (the record still says paid); the recheck below corrects the
+// tier, and the message after that lands.
+export async function storeSseUsage(api, limits) {
+	if (!api?.orgId || !limits) return;
+
+	const tier = await api.getSubscriptionTier();
+	if (tier !== 'claude_free') return;
+
+	const orgId = api.orgId;
+	const previous = await sseUsageCache.get(orgId) || {};
+	await sseUsageCache.set(orgId, {
+		session: mergeSseWindow(previous.session, limits.session),
+		weekly: mergeSseWindow(previous.weekly, limits.weekly)
+	}, SSE_USAGE_TTL);
+	await Log("Stored stream usage for:", orgId, limits);
+}
+
+// Guards one edge case: a subscription that ended. getOrgInfo caches the org record - and with it
+// the tier - for 24 hours, and the ONLY thing that forces a refresh is the user visiting the
+// billing page (background.js, onBeforeRequestHandler). So a plan that lapses leaves the tier
+// reading paid for up to a day, during which /usage has already switched to the free plan's empty
+// response. Without this the account would sit staring at the empty usage UI for the rest of that
+// day - precisely the state the free-plan fallback exists to prevent.
+//
+// Throttled because the condition does not clear itself when the tier really is paid: an empty
+// /usage on a genuinely paid account is unexpected rather than impossible, and getUsageData runs on
+// every message and every heartbeat, so an unthrottled recheck would turn one odd response into an
+// app_start fetch per call. Returns null while throttled, which reads as "not free" at the caller.
+async function recheckTierForEmptyUsage(api) {
+	if (!api || await tierRecheckCache.has(api.orgId)) return null;
+
+	// Marked before the fetch, so a failure throttles too rather than retrying in a tight loop.
+	await tierRecheckCache.set(api.orgId, true, TIER_RECHECK_TTL);
+	const tier = await api.getSubscriptionTier(true);
+	await Log("Empty /usage on a non-free tier, re-resolved as:", tier);
+	return tier;
+}
+
+// claude.ai reports no limits at all on the free plan - /usage answers 200 with every field null
+// and an empty `limits` array - while the completion stream still carries real 5h and 7d windows.
+// Stand the stored stream snapshot in when, and only when, the endpoint gave us nothing.
+//
+// Gated to claude_free deliberately. On any other tier an empty /usage means something unexpected
+// happened, and quietly serving a snapshot of unknown age would hide that rather than surface it.
+async function applySseUsageFallback(usageData, api) {
+	if (!usageData.hasNoReportedUsage()) return;
+
+	if (usageData.subscriptionTier !== 'claude_free') {
+		const tier = await recheckTierForEmptyUsage(api);
+		if (tier !== 'claude_free') return;
+		// The org record was stale, so the tier on the object is too. Correct it before anything
+		// downstream reads it - ESTIMATED_CAPS, the default model and the sidebar notice all key off it.
+		usageData.subscriptionTier = tier;
+	}
+
+	const stored = await sseUsageCache.get(usageData.orgId);
+	if (!stored) return;
+
+	// A window whose reset has passed is not "stale data to refresh" - there is no active window at
+	// all until the next message, and its true figure is unknowable until then. Dropping it also
+	// stops UsageUI.checkExpiredLimits() asking for a refresh that can only ever return this same
+	// snapshot, which would otherwise retry on its backoff up to the five-minute ceiling forever.
+	const now = Date.now();
+	const applied = [];
+	for (const key of ['session', 'weekly']) {
+		const limit = stored[key];
+		if (!limit?.resetsAt || limit.resetsAt <= now) continue;
+		usageData.limits[key] = { ...limit };
+		applied.push(key);
+	}
+
+	// These percentages only advance when a message is sent, since sending is the only thing that
+	// refreshes them. Between messages they are a floor, never an overstatement - usage within a
+	// window only ever rises.
+	if (applied.length) await Log("Applied stream usage fallback for:", usageData.orgId, applied);
+}
+
 // Pure HTTP/API layer
 class ClaudeAPI {
 	// `fetchImpl(url, options) => Response` is supplied by the active ContainerStrategy, already bound
@@ -61,6 +181,21 @@ class ClaudeAPI {
 	}
 
 	// Core methods
+	// KNOWN: response.ok is not checked, so an HTTP error that returns a JSON body is parsed and
+	// handed back as if it were data. Network failures reject and propagate; HTTP failures do not.
+	//
+	// It bites hardest on /usage, where a 4xx/5xx error body has no `limits` and therefore becomes a
+	// UsageData with every limit null - indistinguishable from the free plan's genuinely empty
+	// response. The UI accounts for that rather than pretending it cannot happen: a non-free account
+	// with no limits is told "Usage data unavailable" instead of "no limits reported", since a failed
+	// read is the likelier cause (see renderNotice in content-components/usage_ui.js). The free-plan
+	// fallback is unaffected either way - it only ever adds limits where there were none.
+	//
+	// Not fixed here because it is a behaviour change across every endpoint, and some callers rely on
+	// the current shape - getOrgInfo catches and returns null, which getSubscriptionTier then reads
+	// as claude_free. If it is ever tightened, throwing on !ok is the right move and callers already
+	// tolerate it: every getUsageData() caller either try/catches or runs inside a wrapper that does,
+	// because a network failure already takes exactly that path.
 	async getRequest(endpoint) {
 		const response = await this.fetchImpl(`${this.baseUrl}${endpoint}`, {
 			headers: {
@@ -101,6 +236,9 @@ class ClaudeAPI {
 		}
 		const usageData = UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier, creditsResponse);
 		usageData.orgId = this.orgId;
+		// Every consumer - the tab push, the popup, reset notifications - comes through here, so the
+		// free-plan fallback is applied once, in the one place that owns building a UsageData.
+		await applySseUsageFallback(usageData, this);
 		return usageData;
 	}
 

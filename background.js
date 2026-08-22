@@ -6,7 +6,7 @@ import { getStrategy, initContainerStrategy, setBrave } from './bg-components/co
 import { UsageData, modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier } from './shared/dataclasses.js';
 import { translate, normalizeLocale } from './shared/localization.js';
 import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
-import { invalidateAccountSettings, invalidateProfileTokens } from './bg-components/claude-api.js';
+import { invalidateAccountSettings, invalidateProfileTokens, storeSseUsage } from './bg-components/claude-api.js';
 
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
@@ -537,8 +537,20 @@ messageRegistry.register(requestData);
 // addToTotalTokens, no debugLogMessageCost. An estimate must never fire a notification or land in
 // the lifetime token counter.
 async function reportStreamCompletion(message, sender, orgId) {
+	if (!orgId || !sender?.tab) return false;
+
+	// Persisted before the estimate's own preconditions, because the two payloads are independent:
+	// on the free plan /usage reports nothing, so this snapshot is the only usage that will ever
+	// exist for the account, and it must not be lost to a conversation the estimate can't price.
+	//
+	// Ordering note: the authoritative pass fetches usage ~0.2s later (its trigger is claude.ai's
+	// post-message tree GET), so this write lands first and that fetch picks it up. If it ever lost
+	// that race the bars would simply wait for the next message, which is what the free-plan hint
+	// tells the user to do anyway.
+	await storeSseUsage(getStrategy().apiForTab(sender.tab, orgId), message.sseLimits);
+
 	const conversationId = message.conversationId;
-	if (!conversationId || !orgId || !sender?.tab) return false;
+	if (!conversationId || message.assistantTokens === null) return false;
 
 	// Indexed by the assistant uuid the stream just reported, so this reads THIS generation's
 	// prompt/tools/model even if the next message went out while the previous pass was still
