@@ -50,8 +50,15 @@ function onSsePartialUsage(listener) {
 //
 function parseSseWindow(win) {
 	if (!win || typeof win.utilization !== 'number' || !win.resets_at) return null;
+
+	// A window that has actually bound still reports a fraction below one - observed 0.98 alongside
+	// status "exceeded_limit" and surpassed_threshold 1.0 (see injections/usage-sse-watcher.js).
+	// So the number cannot be trusted to reach the cap on its own, and "98%" beside a composer that
+	// refuses to send reads as the extension being wrong. Let status win.
+	const exceeded = win.status === 'exceeded_limit';
+
 	return {
-		percentage: Math.round(win.utilization * 100),
+		percentage: exceeded ? 100 : Math.round(win.utilization * 100),
 		resetsAt: win.resets_at * 1000
 	};
 }
@@ -148,9 +155,10 @@ function reportStreamToBackground(data) {
 
 	// CONFIG arrives asynchronously at boot; without it the multiplier is unknown, and a count that
 	// silently omits it would read ~17% low. With no conversation there is nothing to attach an
-	// estimate to either.
+	// estimate to either. A refused send is skipped outright: it generated no reply and created no
+	// message, so pricing its empty text would add the prompt to a conversation that never grew.
 	let counted = null;
-	if (data.conversationId && CONFIG) {
+	if (!data.rejected && data.conversationId && CONFIG) {
 		try {
 			counted = countAssistantTokens(data.assistantText);
 		} catch (error) {

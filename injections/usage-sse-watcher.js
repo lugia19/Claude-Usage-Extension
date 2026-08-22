@@ -105,6 +105,9 @@
 		} catch (e) { /* storage blocked - carry on */ }
 
 		if (!response.body || !response.headers.get('content-type')?.includes('event-stream')) {
+			// A send refused for hitting the limit answers with JSON, not a stream. It still reports
+			// usage, and on the free plan it is the last report we will ever get for that window.
+			if (!response.ok) reportRejection(response.clone(), match[1], match[2], !!match[3]);
 			return response;
 		}
 
@@ -112,6 +115,54 @@
 		pump(response.clone(), match[1], match[2], !!match[3]);
 		return response;
 	};
+
+	// The refusal carries the same message_limit payload a stream would have, one level deeper and
+	// double-encoded: { error: { message: "<JSON string>" } }. Observed 2026-08-22, free plan, 5h
+	// exceeded:
+	//
+	//   {"type":"exceeded_limit","resetsAt":1787417400,"representativeClaim":"five_hour",
+	//    "windows":{"5h":{"status":"exceeded_limit","resets_at":1787417400,"utilization":0.98,
+	//                     "surpassed_threshold":1.0},
+	//               "7d":{"status":"within_limit","resets_at":1787860800,"utilization":0.04}},
+	//    "resolved":{"status":"exceeded","limit":{"kind":"session","percent":98,
+	//                "severity":"critical","resets_at":"2026-08-22T16:50:00+00:00"},
+	//                "notice":{"title":"Limit reached",...}}}
+	//
+	// Note utilization is 0.98, NOT 1.0 - the cap binds before the fraction reaches one, so `status`
+	// is the only reliable "you are out" signal. parseSseWindow in sse_bridge.js clamps on it.
+	//
+	// Without this the free plan goes blind at exactly the wrong moment: /usage reports nothing, the
+	// last stream we saw was the previous (accepted) message, and the bars would sit just under the
+	// cap until the window rolls over. Only the FIRST refused send produces this - after it,
+	// claude.ai blocks the composer and issues no request at all.
+	async function reportRejection(clone, orgId, conversationId, isRetry) {
+		let messageLimit = null;
+		try {
+			const body = await clone.json();
+			const inner = body?.error?.message;
+			messageLimit = typeof inner === 'string' ? JSON.parse(inner) : inner || null;
+		} catch (e) {
+			return;
+		}
+		if (!messageLimit?.windows) return;
+
+		window.postMessage({
+			type: 'claudeUsageTrackerStream',
+			streamOrgId: orgId,
+			conversationId,
+			isRetry,
+			messageLimit,
+			// No reply was generated and no message was created, so there is nothing to price. The
+			// flag is what stops sse_bridge counting an empty assistantText as a real 0-token reply
+			// and charging the prompt to the conversation's length.
+			rejected: true,
+			assistantText: '',
+			sawNonTextBlock: false,
+			assistantUuid: null,
+			parentUuid: null,
+			model: null
+		}, window.location.origin);
+	}
 
 	async function pump(clone, orgId, conversationId, isRetry) {
 		const reader = clone.body.getReader();
