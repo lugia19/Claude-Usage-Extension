@@ -645,8 +645,15 @@ class UsageUI {
 		const display = visible ? '' : 'none';
 
 		usageDisplay.style.display = display;
-		resetDisplay.style.display = display;
 		if (progressBar) progressBar.container.style.display = display;
+
+		// The countdown is session-specific, so it tracks the session limit rather than the row as a
+		// whole. The credits branch renders with no session at all on a credit-funded model, and
+		// would otherwise print "Reset in: Not set" beside a perfectly good Extra usage bar. Same
+		// condition renderResetTimes() uses, so the two can't disagree about it.
+		const session = this.state.usageData?.limits.session;
+		resetDisplay.style.display = visible && session ? '' : 'none';
+
 		// Owned by the render branches below while visible; forced off here so it can't outlive them.
 		if (!visible) peakIndicator.style.display = 'none';
 	}
