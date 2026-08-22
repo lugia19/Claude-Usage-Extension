@@ -106,7 +106,11 @@ function renderOrgUsage(orgResult, showLabel) {
 	if (activeLimits.length === 0) {
 		const empty = document.createElement('div');
 		empty.className = 'popup-empty';
-		empty.textContent = localize('popup.no_active_limits');
+		// The free plan reports no limits at all, which has a specific explanation; every other
+		// tier reaching here is the ordinary "nothing active right now".
+		empty.textContent = usageData.subscriptionTier === 'claude_free'
+			? localize('usage.no_limits_free')
+			: localize('popup.no_active_limits');
 		wrapper.appendChild(empty);
 		return wrapper;
 	}
