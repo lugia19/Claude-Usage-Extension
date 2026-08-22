@@ -181,6 +181,21 @@ class ClaudeAPI {
 	}
 
 	// Core methods
+	// KNOWN: response.ok is not checked, so an HTTP error that returns a JSON body is parsed and
+	// handed back as if it were data. Network failures reject and propagate; HTTP failures do not.
+	//
+	// It bites hardest on /usage, where a 4xx/5xx error body has no `limits` and therefore becomes a
+	// UsageData with every limit null - indistinguishable from the free plan's genuinely empty
+	// response. The UI accounts for that rather than pretending it cannot happen: a non-free account
+	// with no limits is told "Usage data unavailable" instead of "no limits reported", since a failed
+	// read is the likelier cause (see renderNotice in content-components/usage_ui.js). The free-plan
+	// fallback is unaffected either way - it only ever adds limits where there were none.
+	//
+	// Not fixed here because it is a behaviour change across every endpoint, and some callers rely on
+	// the current shape - getOrgInfo catches and returns null, which getSubscriptionTier then reads
+	// as claude_free. If it is ever tightened, throwing on !ok is the right move and callers already
+	// tolerate it: every getUsageData() caller either try/catches or runs inside a wrapper that does,
+	// because a network failure already takes exactly that path.
 	async getRequest(endpoint) {
 		const response = await this.fetchImpl(`${this.baseUrl}${endpoint}`, {
 			headers: {
