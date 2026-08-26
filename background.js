@@ -781,8 +781,6 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId }) {
 	// one-shot side effects (lifetime token counter, usage delta log) fire exactly once.
 	const alreadyCounted = !!pendingRequest?.settled;
 
-	const model = pendingRequest?.model || defaultModelForTier(usageData.subscriptionTier);
-
 	const conversationData = await conversation.getInfo(isNewMessage, {
 		toolTokens: pendingRequest?.toolTokens || 0
 	});
@@ -794,19 +792,27 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId }) {
 
 	// Profile and tool tokens are applied inside getInfo now, so there is exactly one place that
 	// knows how they are priced. Nothing to patch here.
-	conversationData.model = model;
-	await Log('authoritative pass: modelVersion -',
-		'from API:', conversationData.modelVersion,
-		'| from pendingRequest:', pendingRequest?.modelVersion);
+	//
+	// Both model fields are overridden only when the request that triggered this pass actually knows
+	// better. getInfo already derives them from the conversation's own `model`, and the pass also
+	// runs on plain navigation, where there is no pendingRequest at all - assigning the tier default
+	// unconditionally there replaced a correct family (Fable) with a wrong one (Opus), leaving
+	// `model` and `modelVersion` describing different models.
+	await Log('authoritative pass: model -',
+		'from API:', conversationData.model, conversationData.modelVersion,
+		'| from pendingRequest:', pendingRequest?.model, pendingRequest?.modelVersion);
+	if (pendingRequest?.model) {
+		conversationData.model = pendingRequest.model;
+	}
 	if (pendingRequest?.modelVersion) {
 		conversationData.modelVersion = pendingRequest.modelVersion;
 	}
-	await Log('authoritative pass: modelVersion final:', conversationData.modelVersion);
+	await Log('authoritative pass: model final:', conversationData.model, conversationData.modelVersion);
 
 	// If new message: log delta and update total tokens. Once per message, never on a repeat pass.
 	if (isNewMessage && !alreadyCounted && pendingRequest.previousUsage) {
 		const previousUsage = UsageData.fromJSON(pendingRequest.previousUsage);
-		await logUsageDelta(orgId, previousUsage, usageData, conversationData.length, model);
+		await logUsageDelta(orgId, previousUsage, usageData, conversationData.length, conversationData.model);
 
 		// Add message cost to total tracked
 		await tokenStorageManager.addToTotalTokens(conversationData.cost);
