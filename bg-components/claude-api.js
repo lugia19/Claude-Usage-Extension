@@ -1,6 +1,6 @@
 import { CONFIG, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey } from './utils.js';
 import { tokenCounter, getTextFromContent } from './tokenManagement.js';
-import { UsageData, ConversationData, modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier } from '../shared/dataclasses.js';
+import { UsageData, ConversationData, modelFamilyFromVersion } from '../shared/dataclasses.js';
 
 const FEATURE_COSTS = {
 	"enabled_artifacts_attachments": 2200,	// DEPRECATED: Analysis tool
@@ -986,9 +986,13 @@ class ConversationAPI {
 			projectStats?.use_project_knowledge_search       // Project retrieval
 		);
 
-		const subscriptionTier = await this.api.getSubscriptionTier();
-		const conversationModelVersion = conversationData.model || defaultModelVersionForTier(subscriptionTier);
-		const conversationModelType = modelFamilyFromVersion(conversationModelVersion) || defaultModelForTier(subscriptionTier);
+		// Null when the API reports no model at all, which a freshly created conversation does for a
+		// short window. Substituting the tier default here used to mislabel those chats - reporting
+		// Opus for a Sonnet conversation - which read as a model change and hid the cache indicator.
+		// The honest answer is "we don't know yet"; runAuthoritativePass fills it in from the
+		// captured request body when there is one (see applyPendingModel).
+		const conversationModelVersion = conversationData.model || null;
+		const conversationModelType = modelFamilyFromVersion(conversationModelVersion);
 
 		await Log(`Total tokens for conversation ${this.conversationId}: ${lengthTokens} with model ${conversationModelType}`);
 

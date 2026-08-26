@@ -12,6 +12,18 @@ export function isPeakHours() {
 	return hour >= 12 && hour < 18;
 }
 
+// "We looked, and we could not tell which model this is" - distinct from "the caller expressed no
+// opinion about the model", which is what a null/absent override means.
+//
+// An explicit sentinel rather than an undefined-vs-null distinction on purpose: conflating those two
+// is exactly the bug this exists to prevent. The picker read as the tier's default model for weeks
+// because an unreadable picker produced a confident wrong answer instead of admitting ignorance, and
+// nothing downstream could tell the difference.
+//
+// It is only ever passed as an argument, never stored on a ConversationData - the conversation's own
+// unknown model is plain null, matching how every other absent field on that class is represented.
+export const MODEL_UNKNOWN = '__model_unknown__';
+
 // Model family (Opus/Sonnet/...) for an API model ID; null if unrecognized.
 export function modelFamilyFromVersion(modelVersion) {
 	const slug = (modelVersion || '').toLowerCase();
@@ -26,6 +38,16 @@ export function defaultModelVersionForTier(subscriptionTier) {
 
 export function defaultModelForTier(subscriptionTier) {
 	return modelFamilyFromVersion(defaultModelVersionForTier(subscriptionTier));
+}
+
+// A missing cap is a standing condition, not an event - getLimitingFactor re-derives it on every
+// usage update - so warn once per tier/limit rather than on every pass.
+const warnedMissingCaps = new Set();
+function warnMissingCapOnce(subscriptionTier, limitKey) {
+	const key = `${subscriptionTier}:${limitKey}`;
+	if (warnedMissingCaps.has(key)) return;
+	warnedMissingCaps.add(key);
+	console.warn(`No ESTIMATED_CAPS entry for ${key} - this limit is excluded from the messages-left estimate`);
 }
 
 export class UsageData {
@@ -75,13 +97,15 @@ export class UsageData {
 			extraUsage = {
 				isEnabled: true,
 				monthlyLimit: spend.limit?.amount_minor ?? spend.cap?.money?.amount_minor ?? 0,
-				usedCredits: spend.used?.amount_minor || 0
+				// `??`, not `||` - a genuine zero spend and a missing `used` object are different
+				// things, and the latter should not quietly render as "$0.00 used".
+				usedCredits: spend.used?.amount_minor ?? 0
 			};
 		} else if (apiResponse.extra_usage?.is_enabled) {
 			extraUsage = {
 				isEnabled: true,
 				monthlyLimit: apiResponse.extra_usage.monthly_limit,
-				usedCredits: apiResponse.extra_usage.used_credits || 0
+				usedCredits: apiResponse.extra_usage.used_credits ?? 0
 			};
 		}
 
@@ -123,13 +147,23 @@ export class UsageData {
 		return limits;
 	}
 
-	// Convert % to estimated tokens remaining for a limit
+	// Convert % to estimated tokens remaining for a limit.
+	//
+	// Returns null for two different reasons, and the caller (getLimitingFactor) is right to skip
+	// either way - but only one of them is normal. "This account has no such limit" is expected;
+	// "we ship no ESTIMATED_CAPS entry for this tier" is a config gap that silently drops the limit
+	// out of the messages-left estimate with nothing to show for it. Warn on that one so a missing
+	// tier stops being invisible - same reasoning as the unreadable-picker warning, and the same
+	// shape as the console.warn for an unrecognised scoped limit above.
 	getEstimatedTokensRemaining(limitKey) {
 		const limit = this.limits[limitKey];
 		if (!limit) return null;
 
 		let cap = CONFIG.ESTIMATED_CAPS?.[this.subscriptionTier]?.[limitKey];
-		if (!cap) return null;
+		if (!cap) {
+			warnMissingCapOnce(this.subscriptionTier, limitKey);
+			return null;
+		}
 
 		// During peak hours, session cap is effectively lower
 		if (limitKey === 'session' && isPeakHours()) {
@@ -297,10 +331,16 @@ export class ConversationData {
 		this.uncachedCost = data.uncachedCost || 0;       // Without caching
 		this.futureCost = data.futureCost || 0; // Estimated cost of future messages
 		this.uncachedFutureCost = data.uncachedFutureCost || 0; // Estimated future cost without caching
-		// Defensive only - the background always populates both before this is rehydrated
-		// from JSON, and it has a subscription tier available to pick a better default.
-		this.modelVersion = data.modelVersion || CONFIG.DEFAULT_MODEL_VERSION;
-		this.model = data.model || modelFamilyFromVersion(this.modelVersion);
+		// null means "the API did not tell us which model this conversation uses" - carried through
+		// rather than papered over with CONFIG.DEFAULT_MODEL_VERSION. Substituting a default here
+		// made a freshly created chat (whose record briefly has no model) claim to be Sonnet, which
+		// then read as a model change and hid the cache indicator; applyPendingModel in the
+		// background exists to fill this in from the authoritative request body.
+		//
+		// `??`, not `||`: toJSON/fromJSON round-trip this field verbatim, so an explicit null has to
+		// survive rehydration instead of being re-defaulted on the content-script side.
+		this.modelVersion = data.modelVersion ?? null;
+		this.model = data.model ?? modelFamilyFromVersion(this.modelVersion);
 
 		// Cache status
 		this.costUsedCache = data.costUsedCache || false;	//Currently unused, since now we show future_cost rather than past cost
@@ -314,10 +354,24 @@ export class ConversationData {
 		this.orgId = data.orgId || null;
 	}
 
-	// Add helper method to check if currently cached
+	// Whether the NEXT message on `currentModelVersion` will hit this conversation's cache.
+	//
+	// This is a promise made to the user, not an estimate, so it is never asserted on a guess: if
+	// either side of the comparison is unknown the answer is no. That is the opposite of how the
+	// cost figures below degrade, and deliberately so - over-reporting a cost is harmless, while
+	// promising a discount that does not exist is not, and a wrong "cached" is invisible.
+	//
+	// `currentModelVersion` has three meanings:
+	//   absent/null    - the caller has no opinion; only cache validity matters
+	//   MODEL_UNKNOWN  - the caller looked and could not tell; refuse to claim
+	//   anything else  - a real model id to compare against
 	isCurrentlyCached(currentModelVersion) {
-		return this.conversationIsCachedUntil && this.conversationIsCachedUntil > Date.now()
-			&& (!currentModelVersion || this.modelVersion === currentModelVersion);
+		if (!this.conversationIsCachedUntil || this.conversationIsCachedUntil <= Date.now()) return false;
+		if (currentModelVersion === MODEL_UNKNOWN) return false;
+		if (!currentModelVersion) return true;
+		// We know what is being sent but not what the cache holds, so we cannot say they match.
+		if (!this.modelVersion) return false;
+		return this.modelVersion === currentModelVersion;
 	}
 
 	// Add method to get time until cache expires

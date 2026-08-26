@@ -449,12 +449,18 @@ class LengthUI {
 		}
 	}
 
+	// Compared plainly rather than guarded on truthiness. The old `newModel && ...` form silently
+	// dropped any falsy reading, so a picker that went from readable to unreadable kept reporting
+	// the previous model here until the next renderAll - which assigns the reading directly and so
+	// disagreed with this path. getCurrentModelVersion now always returns something meaningful (a
+	// model id, the tier default when there is no picker, or MODEL_UNKNOWN), so there is no
+	// transient falsy value left to protect against.
 	async checkModelChange() {
 		const tier = this.state.usageData?.subscriptionTier;
 		const newModel = await getCurrentModel(200, tier);
 		const newModelVersion = await getCurrentModelVersion(200, tier);
-		if ((newModel && newModel !== this.state.currentModel) ||
-			(newModelVersion && newModelVersion !== this.state.currentModelVersion)) {
+		if (newModel !== this.state.currentModel ||
+			newModelVersion !== this.state.currentModelVersion) {
 			await Log('LengthUI: Model changed, recalculating displays');
 			this.state.currentModel = newModel;
 			this.state.currentModelVersion = newModelVersion;

@@ -1,5 +1,5 @@
 /* global localize, fmtNum, normalizeLocale, setLocaleOverride,
-   modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier */
+   modelFamilyFromVersion, defaultModelVersionForTier, MODEL_UNKNOWN */
 'use strict';
 
 // Constants
@@ -274,20 +274,25 @@ async function getCurrentModelVersion(maxWait = 3000, subscriptionTier = null) {
 	if (matchedModel) return CONFIG.MODEL_VERSION_MAP[matchedModel];
 
 	// Picker is there but unreadable - restyled again, or a model we don't ship a label for yet.
-	// Return null ("unknown") rather than the tier default: null makes ConversationData fall back to
-	// the conversation's own model (isCurrentlyCached and getWeightedFutureCost both treat a missing
-	// override that way), which is right almost always. A confident wrong guess instead disables
-	// cache tracking with no visible symptom - which is exactly how this rotted last time.
+	// MODEL_UNKNOWN, not the tier default and not a bare null: it says "we looked and could not
+	// tell", which isCurrentlyCached treats as a reason to withhold the cache claim rather than as
+	// permission to skip the check. A confident wrong guess instead disables cache tracking with no
+	// visible symptom - which is exactly how this rotted last time.
 	warnUnreadablePickerOnce(label);
-	return null;
+	return MODEL_UNKNOWN;
 }
 
-// Model family (Opus/Sonnet/...) for the picker's selection, or null when the version is unknown.
-// Delegates so there is one parser: defaultModelForTier is itself defined as
-// modelFamilyFromVersion(defaultModelVersionForTier(tier)), so the no-picker branch is unchanged.
+// Model family (Opus/Sonnet/...) for the picker's selection. Delegates so there is one parser.
+//
+// Returns null - not MODEL_UNKNOWN - when the model can't be identified, and that asymmetry with
+// getCurrentModelVersion is deliberate. This value only ever weights a cost estimate, where null
+// makes getWeightedFutureCost fall back to the conversation's own model; handing it MODEL_UNKNOWN
+// would instead land on FALLBACK_MODEL_WEIGHT and price every unknown model as Opus. Estimates may
+// degrade to something plausible, but the cache claim may not - see isCurrentlyCached.
 async function getCurrentModel(maxWait = 3000, subscriptionTier = null) {
 	const modelVersion = await getCurrentModelVersion(maxWait, subscriptionTier);
-	return modelVersion ? modelFamilyFromVersion(modelVersion) : null;
+	if (!modelVersion || modelVersion === MODEL_UNKNOWN) return null;
+	return modelFamilyFromVersion(modelVersion);
 }
 
 function isMobileView() {
