@@ -1,1 +1,1 @@
-Fixed model detection that broke due to UI changes (fixes caching status)
+Fixed messagebox usage bars for new UI
