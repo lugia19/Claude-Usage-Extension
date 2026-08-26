@@ -642,11 +642,31 @@ function getSidebarDesktopAnchor() {
 }
 
 function getChatAreaRegularAnchor() {
+	// Redesigned composer (2026-08): a rounded bg-surface-3 box whose single flow child holds the
+	// input, with the controls either absolutely positioned inside that child (home page) or moved
+	// out to a footer row below the box entirely (conversation view). Neither the picker nor a
+	// full-width toolbar row is a reliable anchor any more — the old `.flex.w-full.items-center`
+	// closest() from the picker walks past the box and false-matches the whole page column,
+	// stranding the stat line at the bottom of the page. Resolve from the input instead and sit
+	// after the flow child, which stacks the line inside the box beneath the input in both views.
+	const chatInput = document.querySelector('[data-testid="chat-input"]');
+	const composerFlowChild = chatInput?.closest('.bg-surface-3 > .relative.w-full.min-w-0');
+	if (composerFlowChild) {
+		return {
+			insertAfter: composerFlowChild,
+			styles: { paddingLeft: '6px', paddingRight: '', paddingBottom: '' },
+		};
+	}
+
+	// Pre-redesign composer: the picker sits in a full-width flex toolbar row. A real toolbar row
+	// sits beside the input, never around it — so a match that contains the input is the redesign's
+	// failure mode (the selector walking up to the whole page column), and mounting nothing beats
+	// mounting the line at the bottom of the page.
 	const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
 	if (!modelSelector) return null;
 
 	const toolbarRow = modelSelector.closest('.flex.w-full.items-center');
-	if (!toolbarRow) return null;
+	if (!toolbarRow || (chatInput && toolbarRow.contains(chatInput))) return null;
 
 	return {
 		insertAfter: toolbarRow,
