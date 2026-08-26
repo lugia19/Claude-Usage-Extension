@@ -373,12 +373,13 @@ class UsageUI {
 
 		// Add footers
 		let desktopFooter = null;
+		let qolFooter = null;
 		const isElectron = await sendBackgroundMessage({ type: 'isElectron' });
 		if (!isElectron) {
 			desktopFooter = this.createDesktopFooter();
 			content.appendChild(desktopFooter);
 
-			const qolFooter = this.createQoLFooter();
+			qolFooter = this.createQoLFooter();
 			if (qolFooter) {
 				content.appendChild(qolFooter);
 			}
@@ -390,7 +391,7 @@ class UsageUI {
 		container.appendChild(header);
 		container.appendChild(content);
 
-		const elements = { container, content, toggle, desktopFooter };
+		const elements = { container, content, toggle, desktopFooter, qolFooter };
 		toggle.addEventListener('click', () => this.setCollapsed(!this.state.collapsed));
 
 		return elements;
@@ -453,13 +454,19 @@ class UsageUI {
 		const prefs = this.state.sidebarDisplay;
 
 		this.usageSection.hiddenKeys = new Set(
-			Object.keys(prefs).filter(key => key !== 'desktopLink' && !isSidebarItemVisible(prefs, key))
+			Object.keys(prefs).filter(key => key !== 'desktopLink' && key !== 'qolLink' && !isSidebarItemVisible(prefs, key))
 		);
 
-		// Absent on Electron, where the footer is never built.
+		// Absent on Electron, where the footers are never built.
 		const desktopFooter = this.elements.sidebar?.desktopFooter;
 		if (desktopFooter) {
 			desktopFooter.style.display = isSidebarItemVisible(prefs, 'desktopLink') ? '' : 'none';
+		}
+
+		// Possibly detached by checkQoLInstalled() when QoL is present; styling it then is harmless.
+		const qolFooter = this.elements.sidebar?.qolFooter;
+		if (qolFooter) {
+			qolFooter.style.display = isSidebarItemVisible(prefs, 'qolLink') ? '' : 'none';
 		}
 
 		if (this.state.usageData) this.renderAll();

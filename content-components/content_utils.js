@@ -306,7 +306,7 @@ function isCodePage() {
 
 // Which pieces of the sidebar section the user wants shown. Purely content-side UI state — the
 // background never reads it — so it lives in storage.local directly, like usageSectionCollapsed.
-// Keys are limit keys ('session', 'weekly', 'fableWeekly', 'extraUsage') plus 'desktopLink'.
+// Keys are limit keys ('session', 'weekly', 'fableWeekly', 'extraUsage') plus 'desktopLink' and 'qolLink'.
 // A missing key means visible, so an empty object is the default "show everything".
 const SIDEBAR_DISPLAY_KEY = 'sidebarDisplay';
 

@@ -664,7 +664,7 @@ class SettingsCard extends FloatingCard {
 		// otherwise have no checkbox and no way back on.
 		const limitKeys = [...new Set([
 			...usageUI.availableLimitKeys(),
-			...Object.keys(prefs).filter(key => key !== 'desktopLink'),
+			...Object.keys(prefs).filter(key => key !== 'desktopLink' && key !== 'qolLink'),
 		])];
 
 		const addToggle = (key, label) => {
@@ -690,6 +690,13 @@ class SettingsCard extends FloatingCard {
 			const row = addToggle('desktopLink', localize('card.sidebar_desktop_link'));
 			if (limitKeys.length) row.style.marginTop = '8px'; // it isn't a limit; set it apart
 			container.appendChild(row);
+
+			// The QoL footer removes itself once the extension is detected as installed, so only
+			// offer the toggle while there's a link to hide.
+			const hasQoL = document.documentElement.hasAttribute('data-claude-qol-installed');
+			if (!hasQoL) {
+				container.appendChild(addToggle('qolLink', localize('card.sidebar_qol_link')));
+			}
 		}
 
 		return container;
