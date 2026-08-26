@@ -658,12 +658,15 @@ function getChatAreaRegularAnchor() {
 		};
 	}
 
-	// Pre-redesign composer: the picker sits in a full-width flex toolbar row.
+	// Pre-redesign composer: the picker sits in a full-width flex toolbar row. A real toolbar row
+	// sits beside the input, never around it — so a match that contains the input is the redesign's
+	// failure mode (the selector walking up to the whole page column), and mounting nothing beats
+	// mounting the line at the bottom of the page.
 	const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
 	if (!modelSelector) return null;
 
 	const toolbarRow = modelSelector.closest('.flex.w-full.items-center');
-	if (!toolbarRow) return null;
+	if (!toolbarRow || (chatInput && toolbarRow.contains(chatInput))) return null;
 
 	return {
 		insertAfter: toolbarRow,
