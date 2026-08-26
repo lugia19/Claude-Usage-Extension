@@ -235,30 +235,59 @@ async function waitForElement(target, selector, maxTime = 1000) {
 	return null;
 }
 
-// subscriptionTier decides the default when the picker can't be read - claude.ai defaults
-// Max to Opus and everyone else to Sonnet. Pass null if the tier isn't known yet.
-async function getCurrentModel(maxWait = 3000, subscriptionTier = null) {
-	const modelSelector = await waitForElement(document, SELECTORS.MODEL_PICKER, maxWait);
-	if (!modelSelector) return defaultModelForTier(subscriptionTier);
-
-	const fullModelName = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim();
-	if (!fullModelName) return defaultModelForTier(subscriptionTier);
-
-	const matchedModel = modelFamilyFromVersion(fullModelName);
-	if (matchedModel) return matchedModel;
-
-	await Log("Could not find matching model, returning default")
-	return defaultModelForTier(subscriptionTier);
+// An unreadable picker is a standing condition, not an event: checkModelChange re-reads it every
+// highUpdateFrequency ms off the rAF loop, so logging unconditionally would fill debug_logs with
+// the same line hundreds of times a minute. Warn once per distinct label instead.
+let lastWarnedPickerLabel = null;
+function warnUnreadablePickerOnce(label) {
+	if (label === lastWarnedPickerLabel) return;
+	lastWarnedPickerLabel = label;
+	Log("warn", "Model picker present but no known model in its label:", label);
 }
 
+// The API model id the NEXT message will use, read out of the picker. Returns null when the picker
+// is there but we can't make sense of it - see the fallback comment below.
+//
+// subscriptionTier decides the default when there is no picker at all - claude.ai defaults Max to
+// Opus and everyone else to Sonnet. Pass null if the tier isn't known yet.
 async function getCurrentModelVersion(maxWait = 3000, subscriptionTier = null) {
 	const modelSelector = await waitForElement(document, SELECTORS.MODEL_PICKER, maxWait);
+	// No picker at all (not rendered yet, login screen): nothing to read, and no conversation to
+	// fall back on either, so the tier default is the best guess available.
 	if (!modelSelector) return defaultModelVersionForTier(subscriptionTier);
-	const text = modelSelector.querySelector('.whitespace-nowrap')?.textContent?.trim();
-    if (!text) return defaultModelVersionForTier(subscriptionTier);
-    const normalizedText = text.toLowerCase();
-    const matchedModel = Object.keys(CONFIG.MODEL_VERSION_MAP).find(key => normalizedText.startsWith(key));
-	return matchedModel ? CONFIG.MODEL_VERSION_MAP[matchedModel] : defaultModelVersionForTier(subscriptionTier);
+
+	// Read the BUTTON's own label rather than a descendant styling class. claude.ai's CDS redesign
+	// moved `whitespace-nowrap` from an inner span onto the button itself, and querySelector never
+	// matches the element it is called on - so the old lookup silently returned null and every
+	// conversation was reported as the tier's default model, which killed cache tracking on every
+	// chat not using that model. aria-label is the primary source (semantic, and required for a11y);
+	// textContent is the backup.
+	const label = (modelSelector.getAttribute('aria-label') || modelSelector.textContent || '')
+		.trim().toLowerCase();
+
+	// Longest key first so "opus 4.5" wins over "opus 4" without depending on the insertion order of
+	// MODEL_VERSION_MAP. `includes` rather than `startsWith` because the label carries decoration on
+	// both sides: "Model: " in front, the effort level ("High", "Medium") behind.
+	const matchedModel = Object.keys(CONFIG.MODEL_VERSION_MAP)
+		.sort((a, b) => b.length - a.length)
+		.find(key => label.includes(key));
+	if (matchedModel) return CONFIG.MODEL_VERSION_MAP[matchedModel];
+
+	// Picker is there but unreadable - restyled again, or a model we don't ship a label for yet.
+	// Return null ("unknown") rather than the tier default: null makes ConversationData fall back to
+	// the conversation's own model (isCurrentlyCached and getWeightedFutureCost both treat a missing
+	// override that way), which is right almost always. A confident wrong guess instead disables
+	// cache tracking with no visible symptom - which is exactly how this rotted last time.
+	warnUnreadablePickerOnce(label);
+	return null;
+}
+
+// Model family (Opus/Sonnet/...) for the picker's selection, or null when the version is unknown.
+// Delegates so there is one parser: defaultModelForTier is itself defined as
+// modelFamilyFromVersion(defaultModelVersionForTier(tier)), so the no-picker branch is unchanged.
+async function getCurrentModel(maxWait = 3000, subscriptionTier = null) {
+	const modelVersion = await getCurrentModelVersion(maxWait, subscriptionTier);
+	return modelVersion ? modelFamilyFromVersion(modelVersion) : null;
 }
 
 function isMobileView() {
