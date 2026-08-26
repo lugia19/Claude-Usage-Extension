@@ -288,11 +288,12 @@ async function updateAllTabsWithUsage(usageData = null) {
 	}
 }
 
-// A conversation record can lag the message that created it: a freshly created chat comes back
-// from the API with no model at all, so getInfo() falls back to CONFIG.DEFAULT_MODEL_VERSION and
-// mislabels it - reporting Opus for a Sonnet chat, which then reads as a model change and hides
-// the cache indicator. The request body we captured is authoritative, so prefer it while it is
-// fresh. Bounded by time because pending entries now expire rather than being deleted on use.
+// A conversation record can lag the message that created it: a freshly created chat comes back from
+// the API with no model at all. getInfo() no longer papers over that with a tier default - it
+// reports the model as unknown - and isCurrentlyCached refuses to claim a cache hit it cannot
+// verify, so without this the indicator would stay hidden on a brand-new chat. The request body we
+// captured is authoritative, so prefer it while it is fresh. Bounded by time because pending entries
+// now expire rather than being deleted on use.
 const PENDING_MODEL_TRUST_MS = 5 * 60 * 1000;
 
 // pendingRequests is two layers: the outer StoredMap key is the conversation, and each value is a
