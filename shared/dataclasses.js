@@ -342,6 +342,13 @@ export class ConversationData {
 		this.modelVersion = data.modelVersion ?? null;
 		this.model = data.model ?? modelFamilyFromVersion(this.modelVersion);
 
+		// The picker's effort/thinking label as it read when this data was built - the second half
+		// of the cache key, alongside modelVersion. Only the content script can fill this in (the
+		// value lives nowhere the background can see: changing effort inside a conversation fires
+		// no request at all, and the picker's own wording is localized), so it stays null here and
+		// is stamped on arrival. See getCurrentEffortLabel in content_utils.js.
+		this.effortLabel = data.effortLabel ?? null;
+
 		// Cache status
 		this.costUsedCache = data.costUsedCache || false;	//Currently unused, since now we show future_cost rather than past cost
 		this.conversationIsCachedUntil = data.conversationIsCachedUntil || null;
@@ -365,8 +372,20 @@ export class ConversationData {
 	//   absent/null    - the caller has no opinion; only cache validity matters
 	//   MODEL_UNKNOWN  - the caller looked and could not tell; refuse to claim
 	//   anything else  - a real model id to compare against
-	isCurrentlyCached(currentModelVersion) {
+	//
+	// `currentEffortLabel` is the picker's effort/thinking label right now, to be compared against
+	// the one stamped on this data. Absent/null means the caller has no opinion.
+	isCurrentlyCached(currentModelVersion, currentEffortLabel) {
 		if (!this.conversationIsCachedUntil || this.conversationIsCachedUntil <= Date.now()) return false;
+		// Effort is part of the prompt the same way the model is, so changing it misses the cache
+		// just as hard. Checked first because it is independent of the model comparison below and
+		// applies even when the caller has no opinion on the model.
+		//
+		// Asymmetric with the model check on purpose: this only refuses when BOTH sides are known
+		// and differ. An unreadable picker already surfaces as MODEL_UNKNOWN below, so there is no
+		// case where the effort is the only thing we failed to read - and a null on either side
+		// here means "not observed", which is not evidence of a change.
+		if (this.effortLabel && currentEffortLabel && this.effortLabel !== currentEffortLabel) return false;
 		if (currentModelVersion === MODEL_UNKNOWN) return false;
 		if (!currentModelVersion) return true;
 		// We know what is being sent but not what the cache holds, so we cannot say they match.
@@ -398,11 +417,11 @@ export class ConversationData {
 		return Math.round(this.cost * weight);
 	}
 
-	getWeightedFutureCost(modelOverride, modelVersionOverride) {
+	getWeightedFutureCost(modelOverride, modelVersionOverride, effortLabelOverride) {
 		let model = this.model;
 		if (modelOverride) model = modelOverride;
 		const weight = CONFIG.MODEL_WEIGHTS[model] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
-		const baseCost = this.isCurrentlyCached(modelVersionOverride) ? this.futureCost : this.uncachedFutureCost;
+		const baseCost = this.isCurrentlyCached(modelVersionOverride, effortLabelOverride) ? this.futureCost : this.uncachedFutureCost;
 		return Math.round(baseCost * weight);
 	}
 
@@ -427,6 +446,7 @@ export class ConversationData {
 			uncachedFutureCost: this.uncachedFutureCost,
 			model: this.model,
 			modelVersion: this.modelVersion,
+			effortLabel: this.effortLabel,
 			costUsedCache: this.costUsedCache,
 			conversationIsCachedUntil: this.conversationIsCachedUntil,
 			projectUuid: this.projectUuid,
