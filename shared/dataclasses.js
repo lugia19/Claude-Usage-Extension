@@ -12,6 +12,44 @@ export function isPeakHours() {
 	return hour >= 12 && hour < 18;
 }
 
+// "We looked, and we could not tell which model this is" - distinct from "the caller expressed no
+// opinion about the model", which is what a null/absent override means.
+//
+// An explicit sentinel rather than an undefined-vs-null distinction on purpose: conflating those two
+// is exactly the bug this exists to prevent. The picker read as the tier's default model for weeks
+// because an unreadable picker produced a confident wrong answer instead of admitting ignorance, and
+// nothing downstream could tell the difference.
+//
+// It is only ever passed as an argument, never stored on a ConversationData - the conversation's own
+// unknown model is plain null, matching how every other absent field on that class is represented.
+export const MODEL_UNKNOWN = '__model_unknown__';
+
+// Model family (Opus/Sonnet/...) for an API model ID; null if unrecognized.
+export function modelFamilyFromVersion(modelVersion) {
+	const slug = (modelVersion || '').toLowerCase();
+	return CONFIG.MODELS.find(family => slug.includes(family.toLowerCase())) || null;
+}
+
+// The model claude.ai's picker defaults to for this plan. Pass a null/unknown tier to get
+// the tier-agnostic fallback.
+export function defaultModelVersionForTier(subscriptionTier) {
+	return CONFIG.DEFAULT_MODEL_VERSION_BY_TIER[subscriptionTier] || CONFIG.DEFAULT_MODEL_VERSION;
+}
+
+export function defaultModelForTier(subscriptionTier) {
+	return modelFamilyFromVersion(defaultModelVersionForTier(subscriptionTier));
+}
+
+// A missing cap is a standing condition, not an event - getLimitingFactor re-derives it on every
+// usage update - so warn once per tier/limit rather than on every pass.
+const warnedMissingCaps = new Set();
+function warnMissingCapOnce(subscriptionTier, limitKey) {
+	const key = `${subscriptionTier}:${limitKey}`;
+	if (warnedMissingCaps.has(key)) return;
+	warnedMissingCaps.add(key);
+	console.warn(`No ESTIMATED_CAPS entry for ${key} - this limit is excluded from the messages-left estimate`);
+}
+
 export class UsageData {
 	constructor(data = {}) {
 		// Each limit: { percentage, resetsAt } or null
@@ -59,13 +97,15 @@ export class UsageData {
 			extraUsage = {
 				isEnabled: true,
 				monthlyLimit: spend.limit?.amount_minor ?? spend.cap?.money?.amount_minor ?? 0,
-				usedCredits: spend.used?.amount_minor || 0
+				// `??`, not `||` - a genuine zero spend and a missing `used` object are different
+				// things, and the latter should not quietly render as "$0.00 used".
+				usedCredits: spend.used?.amount_minor ?? 0
 			};
 		} else if (apiResponse.extra_usage?.is_enabled) {
 			extraUsage = {
 				isEnabled: true,
 				monthlyLimit: apiResponse.extra_usage.monthly_limit,
-				usedCredits: apiResponse.extra_usage.used_credits || 0
+				usedCredits: apiResponse.extra_usage.used_credits ?? 0
 			};
 		}
 
@@ -107,13 +147,23 @@ export class UsageData {
 		return limits;
 	}
 
-	// Convert % to estimated tokens remaining for a limit
+	// Convert % to estimated tokens remaining for a limit.
+	//
+	// Returns null for two different reasons, and the caller (getLimitingFactor) is right to skip
+	// either way - but only one of them is normal. "This account has no such limit" is expected;
+	// "we ship no ESTIMATED_CAPS entry for this tier" is a config gap that silently drops the limit
+	// out of the messages-left estimate with nothing to show for it. Warn on that one so a missing
+	// tier stops being invisible - same reasoning as the unreadable-picker warning, and the same
+	// shape as the console.warn for an unrecognised scoped limit above.
 	getEstimatedTokensRemaining(limitKey) {
 		const limit = this.limits[limitKey];
 		if (!limit) return null;
 
 		let cap = CONFIG.ESTIMATED_CAPS?.[this.subscriptionTier]?.[limitKey];
-		if (!cap) return null;
+		if (!cap) {
+			warnMissingCapOnce(this.subscriptionTier, limitKey);
+			return null;
+		}
 
 		// During peak hours, session cap is effectively lower
 		if (limitKey === 'session' && isPeakHours()) {
@@ -153,9 +203,22 @@ export class UsageData {
 			.map(([key, limit]) => ({ key, ...limit }));
 	}
 
-	// Get limits that are at 100% (for notification scheduling)
-	getMaxedLimits() {
-		return this.getActiveLimits().filter(limit => limit.percentage >= 100);
+	// Get limits at or above the notification threshold (for notification scheduling)
+	getMaxedLimits(threshold = 100) {
+		return this.getActiveLimits().filter(limit => limit.percentage >= threshold);
+	}
+
+	// Does the server report nothing to draw? claude.ai stopped reporting limits on the free plan:
+	// /usage answers 200 with every field null and an empty `limits` array (verified 2026-08-22,
+	// including immediately after a message the completion stream *did* report usage for, so this
+	// is deliberate for free orgs rather than "no usage yet"). The UI shows a notice instead of an
+	// empty box.
+	//
+	// Not the same as `usageData === null`, which means "not fetched yet" - that stays blank.
+	// Extra usage counts as something to draw, so an account with credits but no plan limits keeps
+	// its credits bar rather than being told there is nothing.
+	hasNoReportedUsage() {
+		return this.getActiveLimits().length === 0 && !this.hasExtraUsageConfigured();
 	}
 
 	// For chat area: most constraining weekly-type limit (for marker)
@@ -193,7 +256,9 @@ export class UsageData {
 	// Get effective extra usage remaining (cents)
 	getExtraUsageRemaining() {
 		if (!this.extraUsage?.isEnabled) return null;
-		const monthlyRemaining = this.extraUsage.monthlyLimit - this.extraUsage.usedCredits;
+		// Clamped: usedCredits can overshoot monthlyLimit, and a negative remaining
+		// would push the displayed percentage past 100.
+		const monthlyRemaining = Math.max(0, this.extraUsage.monthlyLimit - this.extraUsage.usedCredits);
 		if (this.creditBalance === null) return monthlyRemaining;
 		return Math.min(monthlyRemaining, this.creditBalance);
 	}
@@ -205,9 +270,39 @@ export class UsageData {
 		return this.extraUsage.usedCredits + remaining;
 	}
 
+	// Can this account use extra usage at all? Free accounts can't buy credits,
+	// so they never get a credits bar regardless of what /usage reports.
+	canUseExtraUsage() {
+		return !!this.extraUsage?.isEnabled && this.subscriptionTier !== 'claude_free';
+	}
+
 	// Is extra usage active and available?
 	hasExtraUsage() {
-		return this.extraUsage?.isEnabled && this.getExtraUsageRemaining() > 0;
+		return this.canUseExtraUsage() && this.getExtraUsageRemaining() > 0;
+	}
+
+	// Is extra usage set up at all? Render gate for the credits bar — independent of
+	// remaining budget, so the bar stays visible (at 100%) once credits run out.
+	hasExtraUsageConfigured() {
+		return this.canUseExtraUsage() && this.getExtraUsageEffectiveTotal() > 0;
+	}
+
+	// Is this model funded by credits rather than by the plan? A model that is pay-per-use
+	// on the current tier has no plan-scoped weekly limit entry in /usage.
+	// Checked for Fable specifically: Sonnet legitimately has no sonnetWeekly entry on
+	// non-Max tiers (it's covered by the general weekly limit) and would be misclassified.
+	isModelCreditFunded(modelName) {
+		if (!modelName?.toLowerCase().includes('fable')) return false;
+		return this.limits.fableWeekly === null;
+	}
+
+	// Are messages for this model currently billed against credits rather than the plan?
+	// Either the model is inherently credit-funded, or the plan limits it draws on are maxed.
+	isSpendingCredits(modelName) {
+		if (!this.hasExtraUsageConfigured()) return false;
+		if (this.isModelCreditFunded(modelName)) return true;
+		return this.limits.session?.percentage >= 100 ||
+			this.getBindingWeeklyLimit(modelName)?.percentage >= 100;
 	}
 
 	toJSON() {
@@ -236,8 +331,16 @@ export class ConversationData {
 		this.uncachedCost = data.uncachedCost || 0;       // Without caching
 		this.futureCost = data.futureCost || 0; // Estimated cost of future messages
 		this.uncachedFutureCost = data.uncachedFutureCost || 0; // Estimated future cost without caching
-		this.model = data.model || CONFIG.DEFAULT_MODEL;
-		this.modelVersion = data.modelVersion || CONFIG.DEFAULT_MODEL_VERSION;
+		// null means "the API did not tell us which model this conversation uses" - carried through
+		// rather than papered over with CONFIG.DEFAULT_MODEL_VERSION. Substituting a default here
+		// made a freshly created chat (whose record briefly has no model) claim to be Sonnet, which
+		// then read as a model change and hid the cache indicator; applyPendingModel in the
+		// background exists to fill this in from the authoritative request body.
+		//
+		// `??`, not `||`: toJSON/fromJSON round-trip this field verbatim, so an explicit null has to
+		// survive rehydration instead of being re-defaulted on the content-script side.
+		this.modelVersion = data.modelVersion ?? null;
+		this.model = data.model ?? modelFamilyFromVersion(this.modelVersion);
 
 		// Cache status
 		this.costUsedCache = data.costUsedCache || false;	//Currently unused, since now we show future_cost rather than past cost
@@ -251,10 +354,24 @@ export class ConversationData {
 		this.orgId = data.orgId || null;
 	}
 
-	// Add helper method to check if currently cached
+	// Whether the NEXT message on `currentModelVersion` will hit this conversation's cache.
+	//
+	// This is a promise made to the user, not an estimate, so it is never asserted on a guess: if
+	// either side of the comparison is unknown the answer is no. That is the opposite of how the
+	// cost figures below degrade, and deliberately so - over-reporting a cost is harmless, while
+	// promising a discount that does not exist is not, and a wrong "cached" is invisible.
+	//
+	// `currentModelVersion` has three meanings:
+	//   absent/null    - the caller has no opinion; only cache validity matters
+	//   MODEL_UNKNOWN  - the caller looked and could not tell; refuse to claim
+	//   anything else  - a real model id to compare against
 	isCurrentlyCached(currentModelVersion) {
-		return this.conversationIsCachedUntil && this.conversationIsCachedUntil > Date.now()
-			&& (!currentModelVersion || this.modelVersion === currentModelVersion);
+		if (!this.conversationIsCachedUntil || this.conversationIsCachedUntil <= Date.now()) return false;
+		if (currentModelVersion === MODEL_UNKNOWN) return false;
+		if (!currentModelVersion) return true;
+		// We know what is being sent but not what the cache holds, so we cannot say they match.
+		if (!this.modelVersion) return false;
+		return this.modelVersion === currentModelVersion;
 	}
 
 	// Add method to get time until cache expires
@@ -277,14 +394,14 @@ export class ConversationData {
 	getWeightedCost(modelOverride) {
 		let model = this.model;
 		if (modelOverride) model = modelOverride;
-		const weight = CONFIG.MODEL_WEIGHTS[model] || CONFIG.MODEL_WEIGHTS[CONFIG.DEFAULT_MODEL];
+		const weight = CONFIG.MODEL_WEIGHTS[model] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
 		return Math.round(this.cost * weight);
 	}
 
 	getWeightedFutureCost(modelOverride, modelVersionOverride) {
 		let model = this.model;
 		if (modelOverride) model = modelOverride;
-		const weight = CONFIG.MODEL_WEIGHTS[model] || CONFIG.MODEL_WEIGHTS[CONFIG.DEFAULT_MODEL];
+		const weight = CONFIG.MODEL_WEIGHTS[model] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
 		const baseCost = this.isCurrentlyCached(modelVersionOverride) ? this.futureCost : this.uncachedFutureCost;
 		return Math.round(baseCost * weight);
 	}

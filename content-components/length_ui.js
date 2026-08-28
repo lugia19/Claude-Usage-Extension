@@ -1,7 +1,7 @@
 /* global CONFIG, Log, setupTooltip, getTooltipPortal, getResetTimeHTML, sleep, sendBackgroundMessage, getActiveOrgId,
    isMobileView, isCodePage, UsageData, ConversationData, getConversationId, getCurrentModel,
    getCurrentModelVersion, RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS,
-   LayoutManager, mountToAnchor, localize, fmtNum */
+   LayoutManager, mountToAnchor, localize, fmtNum, onSsePartialUsage, shouldApplySseSession */
 'use strict';
 
 // Length UI actor - handles all conversation-related displays
@@ -51,6 +51,8 @@ class LengthUI {
 				this.handleConversationUpdate(message.data.conversationData);
 			}
 		});
+
+		onSsePartialUsage((update) => this.handleSsePartialUsage(update));
 	}
 
 	async init() {
@@ -166,8 +168,9 @@ class LengthUI {
 	// ========== RENDER (state → DOM) ==========
 
 	async renderAll() {
-		this.state.currentModel = await getCurrentModel(200);
-		this.state.currentModelVersion = await getCurrentModelVersion(200);
+		const tier = this.state.usageData?.subscriptionTier;
+		this.state.currentModel = await getCurrentModel(200, tier);
+		this.state.currentModelVersion = await getCurrentModelVersion(200, tier);
 		await Log('LengthUI: renderAll - detected:', this.state.currentModelVersion,
 			'| stored on conversation:', this.state.conversationData?.modelVersion,
 			'| isCurrentlyCached:', this.state.conversationData?.isCurrentlyCached(this.state.currentModelVersion));
@@ -209,21 +212,11 @@ class LengthUI {
 			costColor = conversationData.isExpensive() ? RED_WARNING : BLUE_HIGHLIGHT;
 		}
 
-		// Check if limits are maxed - if so, display in dollars instead of credits
+		// If we're spending credits rather than plan usage, display in dollars instead of credits
 		const { usageData } = this.state;
-		const sessionMaxed = usageData?.limits?.session?.percentage >= 100;
-		const weeklyLimit = usageData?.getBindingWeeklyLimit(currentModel);
-		const weeklyMaxed = weeklyLimit?.percentage >= 100;
 
-		if (sessionMaxed || weeklyMaxed) {
-			// During extra usage, cache reads cost 10% of input (not free)
-			// Interpolate between cached (free) and uncached (full price) costs
-			// This is technically not entirely accurate, but it's accurate enough and doesn't require reworking half the codebase
-			const weight = CONFIG.MODEL_WEIGHTS[currentModel] || CONFIG.MODEL_WEIGHTS[CONFIG.DEFAULT_MODEL];
-			const baseFutureCost = conversationData.isCurrentlyCached(currentModelVersion) ? conversationData.futureCost : conversationData.uncachedFutureCost;
-			const interpolatedFutureCost = baseFutureCost +
-				CONFIG.EXTRA_USAGE_CACHING_MULTIPLIER * (conversationData.uncachedFutureCost - baseFutureCost);
-			const dollars = Math.round(interpolatedFutureCost * weight) / 1_000_000;
+		if (usageData?.isSpendingCredits(currentModel)) {
+			const dollars = this.extraUsageDollars(conversationData, currentModel, currentModelVersion);
 			cost.innerHTML = `${localize('length.cost')}: <span style="color: ${costColor}">$${dollars.toFixed(2)}</span>`;
 		} else {
 			cost.innerHTML = `${localize('length.cost')}: <span style="color: ${costColor}">${fmtNum(weightedCost)}</span> ${localize('common.unit_credits')}`;
@@ -240,6 +233,18 @@ class LengthUI {
 		}
 
 		this.renderTitleContainer();
+	}
+
+	// Dollar cost of the next message when it's billed against credits.
+	// During extra usage, cache reads cost 10% of input (not free), so interpolate between the
+	// cached (free) and uncached (full price) costs. This is technically not entirely accurate,
+	// but it's accurate enough and doesn't require reworking half the codebase.
+	extraUsageDollars(conversationData, currentModel, currentModelVersion) {
+		const weight = CONFIG.MODEL_WEIGHTS[currentModel] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
+		const baseFutureCost = conversationData.isCurrentlyCached(currentModelVersion) ? conversationData.futureCost : conversationData.uncachedFutureCost;
+		const interpolatedFutureCost = baseFutureCost +
+			CONFIG.EXTRA_USAGE_CACHING_MULTIPLIER * (conversationData.uncachedFutureCost - baseFutureCost);
+		return Math.round(interpolatedFutureCost * weight) / 1_000_000;
 	}
 
 	renderTitleContainer() {
@@ -298,6 +303,13 @@ class LengthUI {
 
 		const { usageData, conversationData, currentModel, currentModelVersion } = this.state;
 
+		// No limits reported at all (the free plan) - there is nothing to divide the cost into, and
+		// a lone "Messages left: N/A" beside the hidden usage bar reads as breakage. Drop it.
+		if (usageData?.hasNoReportedUsage()) {
+			estimate.innerHTML = '';
+			return;
+		}
+
 		const msgPrefix = isMobileView() ? localize('length.msgs_left_mobile') : localize('length.msgs_left_desktop');
 
 		if (!getConversationId() || !usageData || !conversationData) {
@@ -308,13 +320,12 @@ class LengthUI {
 		const messageCost = conversationData.getWeightedFutureCost(currentModel, currentModelVersion);
 		const limiting = usageData.getLimitingFactor(messageCost);
 
-		// If regular limits are maxed but extra usage is available, estimate from dollars
-		if ((!limiting || limiting.messagesLeft <= 0) && usageData.hasExtraUsage()) {
-			const weight = CONFIG.MODEL_WEIGHTS[currentModel] || CONFIG.MODEL_WEIGHTS[CONFIG.DEFAULT_MODEL];
-			const baseFutureCost = conversationData.isCurrentlyCached(currentModelVersion) ? conversationData.futureCost : conversationData.uncachedFutureCost;
-			const interpolatedFutureCost = baseFutureCost +
-				CONFIG.EXTRA_USAGE_CACHING_MULTIPLIER * (conversationData.uncachedFutureCost - baseFutureCost);
-			const costPerMessageDollars = Math.round(interpolatedFutureCost * weight) / 1_000_000;
+		// Estimate from dollars when credits are what's actually being spent — either the regular
+		// limits are exhausted, or the model is credit-funded (in which case `limiting` reports a
+		// healthy plan limit the message will never consume).
+		const spendingCredits = usageData.isSpendingCredits(currentModel);
+		if ((spendingCredits || !limiting || limiting.messagesLeft <= 0) && usageData.hasExtraUsage()) {
+			const costPerMessageDollars = this.extraUsageDollars(conversationData, currentModel, currentModelVersion);
 
 			if (costPerMessageDollars > 0) {
 				const remainingDollars = usageData.getExtraUsageRemaining() / 100;
@@ -326,8 +337,9 @@ class LengthUI {
 			}
 		}
 
-		// Regular limits estimate
-		if (limiting && limiting.messagesLeft > 0) {
+		// Regular limits estimate — skipped for a credit-funded model, whose messages don't draw
+		// on the plan limits at all, so falling back to them would report a plausible but wrong number.
+		if (!usageData.isModelCreditFunded(currentModel) && limiting && limiting.messagesLeft > 0) {
 			const estimateValue = limiting.messagesLeft.toFixed(1);
 			const color = parseFloat(estimateValue) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
 			estimate.innerHTML = `${msgPrefix} <span style="color: ${color}">${estimateValue}</span>`;
@@ -351,6 +363,17 @@ class LengthUI {
 		if (this.state.conversationData) {
 			this.renderCostAndLength();
 		}
+		this.renderEstimate();
+	}
+
+	// Session usage read straight off the completion stream, about a second ahead of the full
+	// fetch. Only the estimate depends on it — the cost display keys off the fields the stream
+	// doesn't carry, so it can wait.
+	handleSsePartialUsage({ session }) {
+		if (!this.uiReady || !this.state.usageData) return;
+		if (!shouldApplySseSession(this.state.usageData.limits.session, session)) return;
+
+		this.state.usageData.limits.session = session;
 		this.renderEstimate();
 	}
 
@@ -426,11 +449,18 @@ class LengthUI {
 		}
 	}
 
+	// Compared plainly rather than guarded on truthiness. The old `newModel && ...` form silently
+	// dropped any falsy reading, so a picker that went from readable to unreadable kept reporting
+	// the previous model here until the next renderAll - which assigns the reading directly and so
+	// disagreed with this path. getCurrentModelVersion now always returns something meaningful (a
+	// model id, the tier default when there is no picker, or MODEL_UNKNOWN), so there is no
+	// transient falsy value left to protect against.
 	async checkModelChange() {
-		const newModel = await getCurrentModel(200);
-		const newModelVersion = await getCurrentModelVersion(200);
-		if ((newModel && newModel !== this.state.currentModel) ||
-			(newModelVersion && newModelVersion !== this.state.currentModelVersion)) {
+		const tier = this.state.usageData?.subscriptionTier;
+		const newModel = await getCurrentModel(200, tier);
+		const newModelVersion = await getCurrentModelVersion(200, tier);
+		if (newModel !== this.state.currentModel ||
+			newModelVersion !== this.state.currentModelVersion) {
 			await Log('LengthUI: Model changed, recalculating displays');
 			this.state.currentModel = newModel;
 			this.state.currentModelVersion = newModelVersion;

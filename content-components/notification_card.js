@@ -1,4 +1,6 @@
-/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, localize, SUPPORTED_LOCALES, isFunkyWaterEnabled, getFunkyWaterPreset */
+/* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, localize, SUPPORTED_LOCALES,
+   usageUI, getSidebarDisplayPrefs, setSidebarDisplayPrefs, isSidebarItemVisible,
+   isFunkyWaterEnabled, getFunkyWaterPreset */
 'use strict';
 
 const DONATION_1M = 1000000;
@@ -396,7 +398,45 @@ class SettingsCard extends FloatingCard {
 	constructor() {
 		super();
 		this.element.classList.add('settings-panel'); // Add the class for easier querying
-		this.element.style.maxWidth = '350px';
+		// Sized to its content rather than to a fixed width, so the right edge sits just past the
+		// longest label instead of leaving a gutter. The cap keeps it on-screen on a phone, at
+		// which point the columns wrap (see build()).
+		this.element.style.width = 'fit-content';
+		this.element.style.maxWidth = 'calc(100vw - 16px)';
+	}
+
+	// Section heading. Deliberately heavier than the plain field labels next to inputs, so the
+	// four blocks read as groups rather than as more fields.
+	static sectionHeading(text) {
+		const heading = document.createElement('label');
+		heading.className = 'ut-label text-text-100 text-sm select-none';
+		heading.style.fontWeight = '600';
+		heading.style.marginBottom = '6px';
+		heading.textContent = text;
+		return heading;
+	}
+
+	// Checkbox + clickable label pair, as used by every toggle in the card. onChange is optional —
+	// most toggles are staged and only read back on Save.
+	static checkboxRow(id, labelText, checked, onChange = null) {
+		const row = document.createElement('div');
+		row.className = 'ut-row';
+		row.style.gap = '6px';
+
+		const checkbox = document.createElement('input');
+		checkbox.type = 'checkbox';
+		checkbox.id = id;
+		checkbox.checked = checked;
+		if (onChange) checkbox.addEventListener('change', () => onChange(checkbox.checked));
+
+		const label = document.createElement('label');
+		label.htmlFor = id;
+		label.className = 'text-sm';
+		label.textContent = labelText;
+
+		row.appendChild(checkbox);
+		row.appendChild(label);
+		return { row, checkbox };
 	}
 
 	async build() {
@@ -405,15 +445,35 @@ class SettingsCard extends FloatingCard {
 		dragHandle.textContent = localize('card.settings_title');
 		this.element.appendChild(dragHandle);
 
-		const label = document.createElement('label');
-		label.className = 'ut-label text-sm';
-		label.textContent = localize('card.api_key_label');
+		// Flex rather than grid: each column takes only the width its content needs (a grid's 1fr
+		// tracks would split the card evenly and leave the short right column padded out). Wrapping
+		// drops the right column below the left once the viewport cap squeezes the card.
+		const columns = document.createElement('div');
+		columns.style.display = 'flex';
+		columns.style.flexWrap = 'wrap';
+		columns.style.gap = '0 20px';
+		columns.style.alignItems = 'flex-start';
+
+		const leftColumn = document.createElement('div');
+		leftColumn.style.flex = '0 1 auto';
+		leftColumn.style.minWidth = '210px';
+
+		const rightColumn = document.createElement('div');
+		rightColumn.style.flex = '0 1 auto';
+
+		columns.appendChild(leftColumn);
+		columns.appendChild(rightColumn);
 
 		const input = document.createElement('input');
 		input.type = 'password';
 		input.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input ut-w-full text-sm';
+		// Not localized on purpose: it's the literal key prefix, the same in every language. It also
+		// doubles as the "you have no key set" tell - a password field with a value renders dots, so
+		// the placeholder only ever shows when the field is genuinely empty.
+		input.placeholder = 'sk-ant-...';
 		let apiKey = await sendBackgroundMessage({ type: 'getAPIKey' })
 		if (apiKey) input.value = apiKey
+		const initialApiKey = input.value;
 
 		const saveButton = document.createElement('button');
 		saveButton.textContent = localize('card.save');
@@ -438,45 +498,108 @@ class SettingsCard extends FloatingCard {
 			this.remove();
 		});
 
+		// Nothing in this card persists until Save. Every control just holds its value in the DOM,
+		// so closing the card discards (it is rebuilt from storage on each open), and Save commits
+		// the lot and reloads — the reload is what re-applies everything, instead of each control
+		// having to patch the live UI itself.
 		saveButton.addEventListener('click', async () => {
-			let result = await sendBackgroundMessage({ type: 'setAPIKey', newKey: input.value });
+			// The key is the only setting that can fail, and validating it hits the network, so
+			// only touch it when it actually changed — a language-only edit shouldn't wait on
+			// (or be rejected by) that round trip.
+			if (input.value !== initialApiKey) {
+				const result = await sendBackgroundMessage({ type: 'setAPIKey', newKey: input.value });
 
-			if (!result) {
-				const errorMsg = document.createElement('div');
-				errorMsg.className = 'text-sm';
-				errorMsg.style.color = RED_WARNING;
-				errorMsg.textContent = input.value.startsWith('sk-ant')
-					? localize('card.api_key_inactive')
-					: localize('card.api_key_invalid');
-				input.after(errorMsg);
-				setTimeout(() => errorMsg.remove(), 3000);
-				return;
+				if (!result) {
+					const errorMsg = document.createElement('div');
+					errorMsg.className = 'text-sm';
+					errorMsg.style.color = RED_WARNING;
+					errorMsg.textContent = input.value.startsWith('sk-ant')
+						? localize('card.api_key_inactive')
+						: localize('card.api_key_invalid');
+					input.after(errorMsg);
+					setTimeout(() => errorMsg.remove(), 3000);
+					return; // abort before anything else is written, so the card never half-commits
+				}
 			}
+
+			await Promise.all([
+				sendBackgroundMessage({ type: 'setResetNotifEnabled', value: checkbox.checked }),
+				sendBackgroundMessage({ type: 'setResetNotifThreshold', value: Number(thresholdInput.value) }),
+				sendBackgroundMessage({ type: 'setLanguageOverride', value: langSelect.value || null }),
+				setSidebarDisplayPrefs(this.collectSidebarDisplayPrefs()),
+			]);
+
 			location.reload();
 		});
 
-		// Reset notification toggle
-		const toggleContainer = document.createElement('div');
-		toggleContainer.className = 'ut-row';
-		toggleContainer.style.alignItems = 'start';
-		toggleContainer.style.gap = '6px';
-		toggleContainer.style.marginBottom = '8px';
+		// Reset notification section: heading, then "Enabled" + the arming threshold on one row
+		const resetContainer = document.createElement('div');
+		resetContainer.className = 'ut-container';
 
-		const checkbox = document.createElement('input');
-		checkbox.type = 'checkbox';
-		checkbox.id = 'ut-reset-notif-toggle';
-		checkbox.checked = await sendBackgroundMessage({ type: 'getResetNotifEnabled' }) || false;
-		checkbox.addEventListener('change', () => {
-			sendBackgroundMessage({ type: 'setResetNotifEnabled', value: checkbox.checked });
+		const resetHeading = SettingsCard.sectionHeading(localize('card.reset_notif_toggle'));
+
+		const resetRow = document.createElement('div');
+		resetRow.className = 'ut-row';
+		// "Enabled" and the threshold share a line in English, but locales with longer labels
+		// (German's "Benachrichtigen ab:") overflow the column — let the threshold drop below.
+		resetRow.style.flexWrap = 'wrap';
+		resetRow.style.rowGap = '6px';
+
+		const { row: toggleGroup, checkbox } = SettingsCard.checkboxRow(
+			'ut-reset-notif-toggle',
+			localize('card.reset_notif_enabled'),
+			await sendBackgroundMessage({ type: 'getResetNotifEnabled' }) || false,
+			(enabled) => setThresholdEnabled(enabled) // purely local; persisted on Save
+		);
+
+		// Usage % at which the reset notification gets armed
+		const thresholdGroup = document.createElement('div');
+		thresholdGroup.className = 'ut-row';
+		thresholdGroup.style.gap = '6px';
+		thresholdGroup.style.marginLeft = 'auto';
+
+		const thresholdLabel = document.createElement('label');
+		thresholdLabel.htmlFor = 'ut-reset-notif-threshold';
+		thresholdLabel.className = 'text-sm';
+		thresholdLabel.style.whiteSpace = 'nowrap'; // it would wrap to two lines in the narrow column
+		thresholdLabel.textContent = localize('card.reset_notif_threshold');
+
+		const thresholdInput = document.createElement('input');
+		thresholdInput.type = 'number';
+		thresholdInput.id = 'ut-reset-notif-threshold';
+		thresholdInput.min = '1';
+		thresholdInput.max = '100';
+		thresholdInput.step = '1';
+		thresholdInput.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input text-sm';
+		thresholdInput.style.width = '56px';
+		thresholdInput.style.marginBottom = '0'; // ut-input's bottom margin would break the row's alignment
+		thresholdInput.value = await sendBackgroundMessage({ type: 'getResetNotifThreshold' }) ?? 100;
+
+		// Clamped as you type for immediate feedback; the value is persisted on Save.
+		thresholdInput.addEventListener('change', () => {
+			const n = Number(thresholdInput.value);
+			thresholdInput.value = Number.isFinite(n) ? Math.min(100, Math.max(1, Math.round(n))) : 100;
 		});
 
-		const toggleLabel = document.createElement('label');
-		toggleLabel.htmlFor = 'ut-reset-notif-toggle';
-		toggleLabel.className = 'text-sm';
-		toggleLabel.textContent = localize('card.reset_notif_toggle');
+		const thresholdSuffix = document.createElement('span');
+		thresholdSuffix.className = 'text-sm';
+		thresholdSuffix.textContent = '%';
 
-		toggleContainer.appendChild(checkbox);
-		toggleContainer.appendChild(toggleLabel);
+		// The threshold only means anything while notifications are on
+		const setThresholdEnabled = (enabled) => {
+			thresholdInput.disabled = !enabled;
+			thresholdGroup.style.opacity = enabled ? '1' : '0.5';
+		};
+		setThresholdEnabled(checkbox.checked);
+
+		thresholdGroup.appendChild(thresholdLabel);
+		thresholdGroup.appendChild(thresholdInput);
+		thresholdGroup.appendChild(thresholdSuffix);
+
+		resetRow.appendChild(toggleGroup);
+		resetRow.appendChild(thresholdGroup);
+		resetContainer.appendChild(resetHeading);
+		resetContainer.appendChild(resetRow);
 
 		// Funky water toggle
 		const funkyContainer = document.createElement('div');
@@ -540,19 +663,14 @@ class SettingsCard extends FloatingCard {
 
 		// Language override dropdown
 		const langContainer = document.createElement('div');
-		langContainer.className = 'ut-row';
-		langContainer.style.alignItems = 'center';
-		langContainer.style.gap = '6px';
-		langContainer.style.marginBottom = '8px';
+		langContainer.className = 'ut-container';
 
-		const langLabel = document.createElement('label');
-		langLabel.htmlFor = 'ut-language-override';
-		langLabel.className = 'text-sm';
-		langLabel.textContent = localize('card.language_label');
+		const langHeading = SettingsCard.sectionHeading(localize('card.section_language'));
 
 		const langSelect = document.createElement('select');
 		langSelect.id = 'ut-language-override';
 		langSelect.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input text-sm';
+		langSelect.style.width = '100%';
 
 		const autoOpt = document.createElement('option');
 		autoOpt.value = '';
@@ -570,27 +688,96 @@ class SettingsCard extends FloatingCard {
 		const currentOverride = await sendBackgroundMessage({ type: 'getLanguageOverride' });
 		langSelect.value = currentOverride || '';
 
-		langSelect.addEventListener('change', async () => {
-			await sendBackgroundMessage({ type: 'setLanguageOverride', value: langSelect.value || null });
-			location.reload();
-		});
-
-		langContainer.appendChild(langLabel);
+		langContainer.appendChild(langHeading);
 		langContainer.appendChild(langSelect);
 
+		// Funky water controls
+		const funkyWaterContainer = document.createElement('div');
+		funkyWaterContainer.className = 'ut-container';
+		funkyWaterContainer.appendChild(funkyContainer);
+		funkyWaterContainer.appendChild(waterPresetContainer);
+
 		// Assemble
-		this.element.appendChild(label);
-		this.element.appendChild(input);
+		leftColumn.appendChild(SettingsCard.sectionHeading(localize('card.section_api_key')));
+		leftColumn.appendChild(input);
+		leftColumn.appendChild(resetContainer);
+		leftColumn.appendChild(langContainer);
+		leftColumn.appendChild(funkyWaterContainer);
+
+		rightColumn.appendChild(await this.buildSidebarDisplaySection());
+
 		buttonContainer.appendChild(saveButton);
 		buttonContainer.appendChild(debugButton);
-		this.element.appendChild(toggleContainer);
-		this.element.appendChild(funkyContainer);
-		this.element.appendChild(waterPresetContainer);
-		this.element.appendChild(langContainer);
+		this.element.appendChild(columns);
 		this.element.appendChild(buttonContainer);
 
 		this.addCloseButton();
 		this.makeCardDraggable(dragHandle);
+	}
+
+	// One checkbox per bar this account actually has, plus the desktop link. Built from the live
+	// usage data rather than a fixed list, so nobody gets a toggle for a bar they never see.
+	async buildSidebarDisplaySection() {
+		const container = document.createElement('div');
+		container.className = 'ut-container';
+		container.appendChild(SettingsCard.sectionHeading(localize('card.section_sidebar_display')));
+
+		// Kept so the save handler can read the boxes back, and so the stored object can be merged
+		// rather than replaced (a pref for a limit not listed this session must survive).
+		this.storedSidebarPrefs = await getSidebarDisplayPrefs();
+		this.sidebarDisplayBoxes = new Map();
+		const prefs = this.storedSidebarPrefs;
+
+		// Union with the stored keys: if usage data hasn't landed yet, a bar hidden earlier would
+		// otherwise have no checkbox and no way back on.
+		const limitKeys = [...new Set([
+			...usageUI.availableLimitKeys(),
+			...Object.keys(prefs).filter(key => key !== 'desktopLink' && key !== 'qolLink'),
+		])];
+
+		const addToggle = (key, label) => {
+			const { row, checkbox } = SettingsCard.checkboxRow(
+				`ut-sidebar-display-${key}`,
+				label,
+				isSidebarItemVisible(prefs, key) // no onChange: staged, written on Save
+			);
+			this.sidebarDisplayBoxes.set(key, checkbox);
+			return row;
+		};
+
+		for (const key of limitKeys) {
+			// Reuse the sidebar's own labels, minus their trailing colon, so each checkbox reads
+			// exactly like the bar it controls. French writes " :", the rest a bare colon.
+			const label = (usageUI.usageSection?.getLimitLabel(key) ?? key).replace(/\s*[:：]\s*$/, '');
+			container.appendChild(addToggle(key, label));
+		}
+
+		// Electron never builds the desktop-version footer, so there's nothing to toggle there.
+		const isElectron = await sendBackgroundMessage({ type: 'isElectron' });
+		if (!isElectron) {
+			const row = addToggle('desktopLink', localize('card.sidebar_desktop_link'));
+			if (limitKeys.length) row.style.marginTop = '8px'; // it isn't a limit; set it apart
+			container.appendChild(row);
+
+			// The QoL footer removes itself once the extension is detected as installed, so only
+			// offer the toggle while there's a link to hide.
+			const hasQoL = document.documentElement.hasAttribute('data-claude-qol-installed');
+			if (!hasQoL) {
+				container.appendChild(addToggle('qolLink', localize('card.sidebar_qol_link')));
+			}
+		}
+
+		return container;
+	}
+
+	// Checkbox states merged over the stored object, so prefs for bars not listed this session
+	// (a limit whose usage data hadn't loaded, or the desktop link on Electron) are preserved.
+	collectSidebarDisplayPrefs() {
+		const prefs = { ...this.storedSidebarPrefs };
+		for (const [key, checkbox] of this.sidebarDisplayBoxes) {
+			prefs[key] = checkbox.checked;
+		}
+		return prefs;
 	}
 
 	show(position) {

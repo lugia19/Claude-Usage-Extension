@@ -13,10 +13,15 @@ const CONFIG = {
 		"Sonnet": 3,
 		"Haiku": 1
 	},
-	"DEFAULT_MODEL": "Opus",
+	// Weight to use for a model family we don't recognize. Opus-equivalent - erring high
+	// is the safe direction for a cost estimate.
+	"FALLBACK_MODEL_WEIGHT": 5,
 	"MODEL_VERSION_MAP": {
-		// DOM labels (lowercased) → API model IDs
+		// DOM labels (lowercased) → API model IDs.
+		// Matched with startsWith() in insertion order, so a longer label must come above
+		// any shorter label that prefixes it ("opus 5.1" above "opus 5").
 		"fable 5": "claude-fable-5",
+		"opus 5": "claude-opus-5",
 		"sonnet 5": "claude-sonnet-5",
 		"opus 4.8": "claude-opus-4-8",
 		"opus 4.7": "claude-opus-4-7",
@@ -27,7 +32,19 @@ const CONFIG = {
 		"haiku 4.5": "claude-haiku-4-5-20251001",
 		"opus 3": "claude-3-opus-20240229",
 	},
-	"DEFAULT_MODEL_VERSION": "claude-opus-4-8",
+	// claude.ai's default picker selection depends on the plan: Max lands on Opus,
+	// every other tier on Sonnet.
+	"DEFAULT_MODEL_VERSION_BY_TIER": {
+		"claude_free": "claude-sonnet-5",
+		"claude_pro": "claude-sonnet-5",
+		"claude_team": "claude-sonnet-5",
+		"claude_max_5x": "claude-opus-5",
+		"claude_max_20x": "claude-opus-5"
+	},
+	// Used only when the tier isn't known yet (e.g. a content script before the first
+	// updateUsage arrives). Matches the claude_free row, which is where an unresolvable
+	// tier already degrades to.
+	"DEFAULT_MODEL_VERSION": "claude-sonnet-5",
 	"WARNING_THRESHOLD": 0.9,
 	"PEAK_SESSION_MULTIPLIER": 1.5,
 	"WARNING": {
@@ -37,7 +54,16 @@ const CONFIG = {
 	},
 	"BASE_SYSTEM_PROMPT_LENGTH": 3200,
 	"CACHING_MULTIPLIER": 0, // Seems to be free.
+	// o200k undercounts against Claude's real tokenizer; this closes the gap. Lives in CONFIG
+	// rather than on TokenCounter so the content script gets the same figure via getConfig —
+	// sse_bridge.js counts the streamed reply locally and must agree with the background.
+	"ESTIMATION_MULTIPLIER": 1.4,
 	"EXTRA_USAGE_CACHING_MULTIPLIER": 0.1, // Cache reads cost 10% of input during extra usage
+	// How close two reset timestamps must be to count as the same usage window. Lives in CONFIG,
+	// like ESTIMATION_MULTIPLIER and for the same reason: content-components/sse_bridge.js gets it
+	// via getConfig, and its in-page guard must agree with what storeSseUsage persists in
+	// bg-components/claude-api.js. Two copies of this number would drift.
+	"SSE_SAME_WINDOW_TOLERANCE_MS": 60 * 1000,
 	"TOKEN_CACHING_DURATION_MS": 60 * 60 * 1000, // 1 hour
 	"ESTIMATED_CAPS": {
 		// I have no idea. This is very napkin math.
@@ -184,7 +210,25 @@ async function RawLog(sender, ...args) {
 		if (typeof arg === 'object') {
 			if (arg === null) return 'null';
 			try {
-				return JSON.stringify(arg, Object.getOwnPropertyNames(arg), 2);
+				// The replacer used to be Object.getOwnPropertyNames(arg), which JSON.stringify treats
+				// as a property ALLOWLIST APPLIED AT EVERY NESTING LEVEL - not a depth hint. Nested
+				// objects silently kept only keys that happened to also exist at the top level, so
+				// every logged payload came out hollowed: the completion body logged its tools as 30
+				// empty {}, and turn_message_uuids read as {} when it was populated. It was presumably
+				// there so Errors would serialise, but the `arg instanceof Error` branch above already
+				// covers that.
+				//
+				// The seen-set is what the allowlist accidentally provided: a guard against circular
+				// graphs. Without it a self-referencing object throws and lands in the catch below as
+				// a useless "[object Object]".
+				const seen = new WeakSet();
+				return JSON.stringify(arg, (key, value) => {
+					if (typeof value === 'object' && value !== null) {
+						if (seen.has(value)) return '[Circular]';
+						seen.add(value);
+					}
+					return value;
+				}, 2);
 			} catch (e) {
 				return String(arg);
 			}
@@ -288,6 +332,27 @@ class StoredMap {
 			]);
 		}
 		return entries;
+	}
+
+	// Drops every expired entry in one pass, with a single write.
+	//
+	// get/has/entries only evaluate expiry for the keys they happen to touch, and set() serialises
+	// the map untouched — so a TTL'd entry whose key is never read again is never reclaimed, and
+	// storage grows for as long as new keys keep arriving. Callers that write far more keys than
+	// they read back (pendingRequests: one per conversation, read only if you revisit it) need to
+	// sweep explicitly.
+	async prune() {
+		await this.ensureInitialized();
+		const now = Date.now();
+		let removed = 0;
+		for (const [key, storedValue] of [...this.map.entries()]) {
+			if (storedValue && storedValue.expires && now > storedValue.expires) {
+				this.map.delete(key);
+				removed++;
+			}
+		}
+		if (removed > 0) await setStorageValue(this.storageKey, Array.from(this.map));
+		return removed;
 	}
 
 	async clear() {

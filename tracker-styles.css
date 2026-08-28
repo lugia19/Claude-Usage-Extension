@@ -167,6 +167,32 @@
 	flex-grow: 1;
 }
 
+/* Composer stat line: the session bar gets a fixed share of the line so it never
+   resizes when the right-hand text (messages left / reset time / PEAK) changes width. */
+.ut-statline-left {
+	flex: 0 1 35%;
+}
+
+.ut-statline-pct {
+	display: inline-block;
+	min-width: 30px;
+}
+
+/* Optical centering: flex centers the 6px track on the text's line box, but the
+   digits' visual center sits a touch above it, so the bar reads high. Nudge down.
+   .ut-progress is already position: relative (for the weekly marker). */
+.ut-statline-left .ut-progress {
+	top: 1px;
+}
+
+#ut-stat-right {
+	flex: 0 0 auto;
+}
+
+#ut-stat-right > * {
+	white-space: nowrap;
+}
+
 .ut-justify-between {
 	justify-content: space-between;
 }
@@ -314,6 +340,58 @@
     border-left: 5.5px solid transparent;
     border-right: 5.5px solid transparent;
     border-top: 8px solid var(--marker-color);
+}
+
+/* Sidebar section collapse toggle - matches the site's own "Pinned"/"Recents" headers:
+   the chevron only fades in while the section is hovered, points right when collapsed
+   and rotates down when expanded, and stays visible while collapsed. */
+.ut-usage-toggle {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	background: none;
+	border: none;
+	cursor: pointer;
+	text-align: left;
+	padding: 0 0.5rem 0.5rem 0.5rem;
+	margin-top: 0.25rem;
+}
+
+.ut-usage-toggle:hover h3 {
+	color: hsl(var(--text-300));
+}
+
+.ut-collapse-chevron {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	opacity: 0;
+	transform: rotate(90deg);
+	transition: opacity 150ms, transform 150ms;
+}
+
+.ut-usage-sidebar:hover .ut-collapse-chevron,
+.ut-usage-toggle:focus-visible .ut-collapse-chevron,
+.ut-usage-sidebar.ut-collapsed .ut-collapse-chevron {
+	opacity: 1;
+}
+
+.ut-usage-sidebar.ut-collapsed .ut-collapse-chevron {
+	transform: none;
+}
+
+/* Stand-in for the limit bars when claude.ai reports no limits (free plan). */
+.ut-usage-notice {
+    font-size: 0.75rem;
+    color: var(--text-400);
+    line-height: 1.4;
+    padding: 2px 0 6px 0;
+}
+
+.ut-usage-notice-caveat {
+    margin-top: 4px;
+    opacity: 0.7;
 }
 
 .ut-desktop-footer {

@@ -106,7 +106,11 @@ function renderOrgUsage(orgResult, showLabel) {
 	if (activeLimits.length === 0) {
 		const empty = document.createElement('div');
 		empty.className = 'popup-empty';
-		empty.textContent = localize('popup.no_active_limits');
+		// Same split as the sidebar notice: the free plan has a specific, actionable explanation,
+		// while any other tier reaching here most likely just failed to read /usage.
+		empty.textContent = usageData.subscriptionTier === 'claude_free'
+			? localize('usage.free_hint')
+			: localize('usage.limits_unavailable');
 		wrapper.appendChild(empty);
 		return wrapper;
 	}
@@ -115,9 +119,8 @@ function renderOrgUsage(orgResult, showLabel) {
 		wrapper.appendChild(createLimitRow(limit.key, limit));
 	}
 
-	// Extra usage bar when any limit is maxed
-	const hasMaxedLimit = activeLimits.some(l => l.percentage >= 100);
-	if (hasMaxedLimit && usageData.hasExtraUsage()) {
+	// Extra usage bar whenever extra usage is set up (credits can be spent before limits max out)
+	if (usageData.hasExtraUsageConfigured()) {
 		const effectiveTotal = usageData.getExtraUsageEffectiveTotal();
 		const used = usageData.extraUsage.usedCredits;
 		const pct = effectiveTotal > 0 ? (used / effectiveTotal) * 100 : 0;

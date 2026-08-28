@@ -5,7 +5,7 @@ import { CONFIG, sleep, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStor
 async function Log(...args) {
 	await RawLog("tokenManagement", ...args);
 }
-
+const API_MODEL_SLUG = "claude-opus-5";
 // Move getTextFromContent here since it's token-related
 async function getTextFromContent(content, includeEphemeral = false, api = null, orgId = null) {
 	let textPieces = [];
@@ -67,7 +67,7 @@ async function getTextFromContent(content, includeEphemeral = false, api = null,
 class TokenCounter {
 	constructor() {
 		this.tokenizer = GPTTokenizer_o200k_base;
-		this.ESTIMATION_MULTIPLIER = 1.2;
+		this.ESTIMATION_MULTIPLIER = CONFIG.ESTIMATION_MULTIPLIER;
 		this.fileTokenCache = new StoredMap("fileTokens");
 	}
 
@@ -87,6 +87,15 @@ class TokenCounter {
 		}
 
 		// Fallback to local estimation
+		return Math.round(this.tokenizer.countTokens(text) * this.ESTIMATION_MULTIPLIER);
+	}
+
+	// Local-only count: synchronous, never touches the network. For the provisional SSE estimate,
+	// where a round-trip would defeat the whole point of being fast. countText's API path gives a
+	// truer number when a key is set, so the two can disagree slightly - that's fine here, the
+	// authoritative pass follows moments later.
+	countTextLocal(text) {
+		if (!text) return 0;
 		return Math.round(this.tokenizer.countTokens(text) * this.ESTIMATION_MULTIPLIER);
 	}
 
@@ -168,7 +177,7 @@ class TokenCounter {
 			},
 			body: JSON.stringify({
 				messages,
-				model: "claude-sonnet-4-6"
+				model: API_MODEL_SLUG
 			})
 		});
 
@@ -210,7 +219,7 @@ class TokenCounter {
 			},
 			body: JSON.stringify({
 				messages,
-				model: "claude-sonnet-4-6"
+				model: API_MODEL_SLUG
 			})
 		});
 

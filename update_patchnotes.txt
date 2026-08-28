@@ -1,2 +1,1 @@
-Fixed bug that was making citation info tokens not be counted
-Tweaked tooltips to match claude.ai styling
+Fixed messagebox usage bars for new UI
