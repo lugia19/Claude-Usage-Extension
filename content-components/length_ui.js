@@ -421,8 +421,11 @@ class LengthUI {
 	// the user may have changed in that window, and since nothing follows the pass, the wrong
 	// baseline then stuck for good.
 	//
-	// Falling back to carry-forward when either uuid is missing is the safe direction: it can only
-	// hold a stale "not cached" until the next update, never invent a cache hit that isn't there.
+	// So the baseline is re-read only for a turn we can POSITIVELY identify as a different one:
+	// both uuids present and unequal. Anything short of that - either side missing - carries the
+	// old baseline forward, which is the safe direction: it can only hold a stale "not cached"
+	// until the next update, never invent a cache hit that isn't there. A missing uuid means the
+	// stream didn't report one, which onBeforeRequestHandler already warns about loudly.
 	//
 	// Left null when the picker isn't up yet; checkModelChange adopts the first real reading rather
 	// than treating it as a change, since the user can't have switched a control that isn't there.
@@ -431,7 +434,9 @@ class LengthUI {
 		if (!conversationData) return;
 
 		const sameConversation = previous && previous.conversationId === conversationData.conversationId;
-		if (sameConversation && previous.lastMessageUuid === conversationData.lastMessageUuid) {
+		const newTurn = previous?.lastMessageUuid && conversationData.lastMessageUuid &&
+			previous.lastMessageUuid !== conversationData.lastMessageUuid;
+		if (sameConversation && !newTurn) {
 			conversationData.effortLabel = previous.effortLabel;
 			return;
 		}
