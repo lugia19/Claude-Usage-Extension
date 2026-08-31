@@ -1049,6 +1049,7 @@ class ConversationAPI {
 			uncachedFutureCost: uncachedFutureCost,
 			model: conversationModelType,
 			modelVersion: conversationModelVersion,
+			lastMessageUuid: conversationData.current_leaf_message_uuid || null,
 			costUsedCache: conversationIsCached,
 			conversationIsCachedUntil: cachedUntil,
 			projectUuid: conversationData.project_uuid,

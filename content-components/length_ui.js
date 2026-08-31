@@ -414,9 +414,15 @@ class LengthUI {
 	//     user has selected but not yet sent. Re-reading it there would quietly adopt the pending
 	//     change as the baseline and put the cache indicator back on. Carry the old one forward.
 	//
-	// `lastMessageTimestamp` is the discriminator, compared for inequality rather than growth: the
-	// authoritative pass reports the assistant message's real created_at, which lands slightly
-	// BEHIND the provisional's Date.now(), and a branch switch can move it backwards outright.
+	// `lastMessageUuid` is the discriminator, NOT the timestamp. A message produces two updates -
+	// the provisional estimate off the completion stream, then the authoritative pass ~1s later -
+	// and their timestamps differ (Date.now() vs the assistant message's real created_at) even
+	// though they describe the same turn. Keying on the timestamp made the pass re-read a picker
+	// the user may have changed in that window, and since nothing follows the pass, the wrong
+	// baseline then stuck for good.
+	//
+	// Falling back to carry-forward when either uuid is missing is the safe direction: it can only
+	// hold a stale "not cached" until the next update, never invent a cache hit that isn't there.
 	//
 	// Left null when the picker isn't up yet; checkModelChange adopts the first real reading rather
 	// than treating it as a change, since the user can't have switched a control that isn't there.
@@ -425,7 +431,7 @@ class LengthUI {
 		if (!conversationData) return;
 
 		const sameConversation = previous && previous.conversationId === conversationData.conversationId;
-		if (sameConversation && previous.lastMessageTimestamp === conversationData.lastMessageTimestamp) {
+		if (sameConversation && previous.lastMessageUuid === conversationData.lastMessageUuid) {
 			conversationData.effortLabel = previous.effortLabel;
 			return;
 		}

@@ -342,6 +342,15 @@ export class ConversationData {
 		this.modelVersion = data.modelVersion ?? null;
 		this.model = data.model ?? modelFamilyFromVersion(this.modelVersion);
 
+		// Identifies the turn this data describes: the uuid claude.ai pre-generates for the
+		// assistant message, reported by the completion body, the SSE stream and the tree alike
+		// (see the pendingRequests comment in background.js). Both the provisional estimate and the
+		// authoritative pass that follows it name the SAME turn, which is what lets the content
+		// script tell "the conversation moved on" apart from "the same message settled" - their
+		// timestamps can't, since the provisional stamps Date.now() and the pass reports the
+		// assistant message's real created_at.
+		this.lastMessageUuid = data.lastMessageUuid ?? null;
+
 		// The picker's effort/thinking label as it read when this data was built - the second half
 		// of the cache key, alongside modelVersion. Only the content script can fill this in (the
 		// value lives nowhere the background can see: changing effort inside a conversation fires
@@ -446,6 +455,7 @@ export class ConversationData {
 			uncachedFutureCost: this.uncachedFutureCost,
 			model: this.model,
 			modelVersion: this.modelVersion,
+			lastMessageUuid: this.lastMessageUuid,
 			effortLabel: this.effortLabel,
 			costUsedCache: this.costUsedCache,
 			conversationIsCachedUntil: this.conversationIsCachedUntil,

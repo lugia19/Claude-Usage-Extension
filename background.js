@@ -612,6 +612,13 @@ async function reportStreamCompletion(message, sender, orgId) {
 	provisional.conversationIsCachedUntil = Date.now() + CONFIG.TOKEN_CACHING_DURATION_MS;
 	provisional.costUsedCache = true;
 	provisional.lastMessageTimestamp = Date.now();
+	// Names the turn this estimate describes, so the authoritative pass that follows recognises it
+	// as the same message rather than a new one - see ConversationData.lastMessageUuid. Straight
+	// from the stream, which reports the uuid the tree will come back with. A synthetic key is a
+	// timestamp wearing a uuid's clothes and would compare unequal to the real one anyway, so it is
+	// dropped rather than passed off as an identity.
+	provisional.lastMessageUuid = message.assistantUuid ||
+		(pending.turnUuid && !pending.turnUuid.startsWith(SYNTHETIC_TURN_PREFIX) ? pending.turnUuid : null);
 	// isCurrentlyCached() compares modelVersion against the picker, so a stale one hides the cache
 	// indicator. pendingRequests took this from the request body, which is authoritative.
 	provisional.model = pending.model || provisional.model;
