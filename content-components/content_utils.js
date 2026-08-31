@@ -282,6 +282,37 @@ async function getCurrentModelVersion(maxWait = 3000, subscriptionTier = null) {
 	return MODEL_UNKNOWN;
 }
 
+// The effort/thinking selection shown after the model in the picker: "Model: Opus 5 · High".
+//
+// Returned as the RAW label, lowercased, and NOT mapped to an API value - deliberately. claude.ai
+// renders these through react-intl (Low/Medium/High/Extra/Max on models with an effort ladder,
+// thinking-mode wording like "Extended" on those without), so the visible word tracks the account
+// language while the API values do not - and they don't line up anyway: "Extra" is `xhigh` in the
+// request body. Mapping label -> API value would mean shipping claude.ai's translations of five
+// strings across nine locales and keeping them in sync forever.
+//
+// We never need the value itself, only whether it CHANGED since the cache was written, and both
+// sides of that comparison are taken from this same string - see isCurrentlyCached. The background
+// can't supply it either: switching effort inside a conversation fires no request at all, and the
+// choice is ephemeral React state that reverts to the conversation's own effort on reload. That
+// reversion is what makes the reading at data-arrival time a valid baseline.
+//
+// aria-label only. textContent renders as "Opus 5 High" with no separator, so there is nothing to
+// split on there. null means "not observed" - no picker, no label, or a model with no selector at
+// all - which isCurrentlyCached treats as no opinion rather than as a change.
+async function getCurrentEffortLabel(maxWait = 3000) {
+	const modelSelector = await waitForElement(document, SELECTORS.MODEL_PICKER, maxWait);
+	if (!modelSelector) return null;
+
+	const label = modelSelector.getAttribute('aria-label');
+	if (!label) return null;
+
+	const separator = label.indexOf('·');
+	if (separator === -1) return null;
+
+	return label.slice(separator + 1).trim().toLowerCase() || null;
+}
+
 // Model family (Opus/Sonnet/...) for the picker's selection. Delegates so there is one parser.
 //
 // Returns null - not MODEL_UNKNOWN - when the model can't be identified, and that asymmetry with

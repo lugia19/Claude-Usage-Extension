@@ -1,6 +1,6 @@
 /* global CONFIG, Log, setupTooltip, getTooltipPortal, getResetTimeHTML, sleep, sendBackgroundMessage, getActiveOrgId,
    isMobileView, isCodePage, UsageData, ConversationData, getConversationId, getCurrentModel,
-   getCurrentModelVersion, RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS,
+   getCurrentModelVersion, getCurrentEffortLabel, RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS,
    LayoutManager, mountToAnchor, localize, fmtNum, onSsePartialUsage, shouldApplySseSession */
 'use strict';
 
@@ -13,6 +13,7 @@ class LengthUI {
 			conversationData: null,
 			currentModel: null,
 			currentModelVersion: null,
+			currentEffortLabel: null,
 			nextMessageCost: null,
 			cachedUntilTimestamp: null,
 		};
@@ -80,6 +81,7 @@ class LengthUI {
 			if (!this.pendingUpdates.conversation.conversationId || !currentConvoId ||
 				this.pendingUpdates.conversation.conversationId === currentConvoId) {
 				this.state.conversationData = ConversationData.fromJSON(this.pendingUpdates.conversation);
+				await this.syncEffortBaseline(null);
 				await this.renderAll();
 			}
 			this.pendingUpdates.conversation = null;
@@ -171,15 +173,19 @@ class LengthUI {
 		const tier = this.state.usageData?.subscriptionTier;
 		this.state.currentModel = await getCurrentModel(200, tier);
 		this.state.currentModelVersion = await getCurrentModelVersion(200, tier);
+		this.state.currentEffortLabel = await getCurrentEffortLabel(200);
 		await Log('LengthUI: renderAll - detected:', this.state.currentModelVersion,
 			'| stored on conversation:', this.state.conversationData?.modelVersion,
-			'| isCurrentlyCached:', this.state.conversationData?.isCurrentlyCached(this.state.currentModelVersion));
+			'| effort now:', this.state.currentEffortLabel,
+			'| effort when cached:', this.state.conversationData?.effortLabel,
+			'| isCurrentlyCached:', this.state.conversationData?.isCurrentlyCached(
+				this.state.currentModelVersion, this.state.currentEffortLabel));
 		this.renderCostAndLength();
 		this.renderEstimate();
 	}
 
 	renderCostAndLength() {
-		const { conversationData, currentModel, currentModelVersion } = this.state;
+		const { conversationData, currentModel, currentModelVersion, currentEffortLabel } = this.state;
 		const { length, cost, cached, container } = this.elements.titleArea;
 
 		if (!conversationData) {
@@ -202,11 +208,11 @@ class LengthUI {
 			: baseTooltip;
 
 		// Cost
-		const weightedCost = conversationData.getWeightedFutureCost(currentModel, currentModelVersion);
+		const weightedCost = conversationData.getWeightedFutureCost(currentModel, currentModelVersion, currentEffortLabel);
 		this.state.nextMessageCost = weightedCost;
 
 		let costColor;
-		if (conversationData.isCurrentlyCached(currentModelVersion)) {
+		if (conversationData.isCurrentlyCached(currentModelVersion, currentEffortLabel)) {
 			costColor = SUCCESS_GREEN;
 		} else {
 			costColor = conversationData.isExpensive() ? RED_WARNING : BLUE_HIGHLIGHT;
@@ -216,14 +222,14 @@ class LengthUI {
 		const { usageData } = this.state;
 
 		if (usageData?.isSpendingCredits(currentModel)) {
-			const dollars = this.extraUsageDollars(conversationData, currentModel, currentModelVersion);
+			const dollars = this.extraUsageDollars(conversationData, currentModel, currentModelVersion, currentEffortLabel);
 			cost.innerHTML = `${localize('length.cost')}: <span style="color: ${costColor}">$${dollars.toFixed(2)}</span>`;
 		} else {
 			cost.innerHTML = `${localize('length.cost')}: <span style="color: ${costColor}">${fmtNum(weightedCost)}</span> ${localize('common.unit_credits')}`;
 		}
 
 		// Cached
-		if (conversationData.isCurrentlyCached(currentModelVersion)) {
+		if (conversationData.isCurrentlyCached(currentModelVersion, currentEffortLabel)) {
 			this.state.cachedUntilTimestamp = conversationData.conversationIsCachedUntil;
 			const timeInfo = conversationData.getTimeUntilCacheExpires();
 			cached.innerHTML = `${localize('length.cached_prefix')} <span class="ut-cached-time" style="color: ${SUCCESS_GREEN}">${localize('time.m', { m: timeInfo.minutes })}</span>`;
@@ -239,9 +245,9 @@ class LengthUI {
 	// During extra usage, cache reads cost 10% of input (not free), so interpolate between the
 	// cached (free) and uncached (full price) costs. This is technically not entirely accurate,
 	// but it's accurate enough and doesn't require reworking half the codebase.
-	extraUsageDollars(conversationData, currentModel, currentModelVersion) {
+	extraUsageDollars(conversationData, currentModel, currentModelVersion, currentEffortLabel) {
 		const weight = CONFIG.MODEL_WEIGHTS[currentModel] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
-		const baseFutureCost = conversationData.isCurrentlyCached(currentModelVersion) ? conversationData.futureCost : conversationData.uncachedFutureCost;
+		const baseFutureCost = conversationData.isCurrentlyCached(currentModelVersion, currentEffortLabel) ? conversationData.futureCost : conversationData.uncachedFutureCost;
 		const interpolatedFutureCost = baseFutureCost +
 			CONFIG.EXTRA_USAGE_CACHING_MULTIPLIER * (conversationData.uncachedFutureCost - baseFutureCost);
 		return Math.round(interpolatedFutureCost * weight) / 1_000_000;
@@ -301,7 +307,7 @@ class LengthUI {
 			return;
 		}
 
-		const { usageData, conversationData, currentModel, currentModelVersion } = this.state;
+		const { usageData, conversationData, currentModel, currentModelVersion, currentEffortLabel } = this.state;
 
 		// No limits reported at all (the free plan) - there is nothing to divide the cost into, and
 		// a lone "Messages left: N/A" beside the hidden usage bar reads as breakage. Drop it.
@@ -317,7 +323,7 @@ class LengthUI {
 			return;
 		}
 
-		const messageCost = conversationData.getWeightedFutureCost(currentModel, currentModelVersion);
+		const messageCost = conversationData.getWeightedFutureCost(currentModel, currentModelVersion, currentEffortLabel);
 		const limiting = usageData.getLimitingFactor(messageCost);
 
 		// Estimate from dollars when credits are what's actually being spent — either the regular
@@ -325,7 +331,7 @@ class LengthUI {
 		// healthy plan limit the message will never consume).
 		const spendingCredits = usageData.isSpendingCredits(currentModel);
 		if ((spendingCredits || !limiting || limiting.messagesLeft <= 0) && usageData.hasExtraUsage()) {
-			const costPerMessageDollars = this.extraUsageDollars(conversationData, currentModel, currentModelVersion);
+			const costPerMessageDollars = this.extraUsageDollars(conversationData, currentModel, currentModelVersion, currentEffortLabel);
 
 			if (costPerMessageDollars > 0) {
 				const remainingDollars = usageData.getExtraUsageRemaining() / 100;
@@ -392,8 +398,50 @@ class LengthUI {
 			return;
 		}
 
+		const previous = this.state.conversationData;
 		this.state.conversationData = ConversationData.fromJSON(conversationDataJSON);
-		this.renderAll();
+		this.syncEffortBaseline(previous).then(() => this.renderAll());
+	}
+
+	// Keeps `conversationData.effortLabel` - the effort the prompt cache was written with - current.
+	// The background can't supply it (see getCurrentEffortLabel), so it is read off the picker here,
+	// and WHICH updates it is read on is the whole correctness argument:
+	//
+	//   - the conversation moved on (new conversation, or a message settled): the picker is showing
+	//     the effort that message was sent with, which is exactly what the new cache holds. Stamp it.
+	//   - the same conversation state came round again (a usage window expired and usage_ui asked
+	//     for a refresh, a cache-hit reply to requestData): the picker may be showing an effort the
+	//     user has selected but not yet sent. Re-reading it there would quietly adopt the pending
+	//     change as the baseline and put the cache indicator back on. Carry the old one forward.
+	//
+	// `lastMessageUuid` is the discriminator, NOT the timestamp. A message produces two updates -
+	// the provisional estimate off the completion stream, then the authoritative pass ~1s later -
+	// and their timestamps differ (Date.now() vs the assistant message's real created_at) even
+	// though they describe the same turn. Keying on the timestamp made the pass re-read a picker
+	// the user may have changed in that window, and since nothing follows the pass, the wrong
+	// baseline then stuck for good.
+	//
+	// So the baseline is re-read only for a turn we can POSITIVELY identify as a different one:
+	// both uuids present and unequal. Anything short of that - either side missing - carries the
+	// old baseline forward, which is the safe direction: it can only hold a stale "not cached"
+	// until the next update, never invent a cache hit that isn't there. A missing uuid means the
+	// stream didn't report one, which onBeforeRequestHandler already warns about loudly.
+	//
+	// Left null when the picker isn't up yet; checkModelChange adopts the first real reading rather
+	// than treating it as a change, since the user can't have switched a control that isn't there.
+	async syncEffortBaseline(previous) {
+		const conversationData = this.state.conversationData;
+		if (!conversationData) return;
+
+		const sameConversation = previous && previous.conversationId === conversationData.conversationId;
+		const newTurn = previous?.lastMessageUuid && conversationData.lastMessageUuid &&
+			previous.lastMessageUuid !== conversationData.lastMessageUuid;
+		if (sameConversation && !newTurn) {
+			conversationData.effortLabel = previous.effortLabel;
+			return;
+		}
+
+		conversationData.effortLabel = await getCurrentEffortLabel(200);
 	}
 
 	// ========== UPDATE LOOP ==========
@@ -459,11 +507,22 @@ class LengthUI {
 		const tier = this.state.usageData?.subscriptionTier;
 		const newModel = await getCurrentModel(200, tier);
 		const newModelVersion = await getCurrentModelVersion(200, tier);
+		const newEffortLabel = await getCurrentEffortLabel(200);
+
+		// Late-mounting picker: adopt the first reading as the baseline instead of reporting it as
+		// a change. Only ever fills a null - once stamped, the baseline moves on the next update.
+		const conversationData = this.state.conversationData;
+		if (conversationData && !conversationData.effortLabel && newEffortLabel) {
+			conversationData.effortLabel = newEffortLabel;
+		}
+
 		if (newModel !== this.state.currentModel ||
-			newModelVersion !== this.state.currentModelVersion) {
-			await Log('LengthUI: Model changed, recalculating displays');
+			newModelVersion !== this.state.currentModelVersion ||
+			newEffortLabel !== this.state.currentEffortLabel) {
+			await Log('LengthUI: Model/effort changed, recalculating displays');
 			this.state.currentModel = newModel;
 			this.state.currentModelVersion = newModelVersion;
+			this.state.currentEffortLabel = newEffortLabel;
 			if (this.state.conversationData) {
 				this.renderCostAndLength();
 				this.renderEstimate();
