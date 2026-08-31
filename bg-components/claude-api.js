@@ -171,6 +171,67 @@ async function applySseUsageFallback(usageData, api) {
 }
 
 // Pure HTTP/API layer
+// Thrown by getRequest when claude.ai answers with something that is not a successful JSON body.
+// It reports what arrived - status, content type, whether the body was HTML, and a snippet - and
+// draws no conclusion about why. An HTML body is most often Cloudflare's interstitial, but it is
+// also what a maintenance page, an edge error and a login redirect look like, and a diagnostic that
+// names a cause it cannot see is worse than one that just shows you the evidence.
+class ClaudeApiError extends Error {
+	constructor(label, { status, statusText, contentType, html, snippet }) {
+		const detail = [
+			status ? `${status}${statusText ? ` ${statusText}` : ''}` : 'no status',
+			contentType || 'no content-type',
+			html ? '(HTML response, not JSON)' : null
+		].filter(Boolean).join(' ');
+		super(`${label} failed: ${detail}`);
+		this.name = 'ClaudeApiError';
+		this.status = status;
+		this.contentType = contentType;
+		this.html = !!html;
+		this.snippet = snippet;
+	}
+}
+
+// Sniff the body rather than trusting the content type, because a Response rebuilt by the Brave tab
+// proxy carries no headers at all.
+function looksLikeHtml(body) {
+	return /^\s*<(!doctype|html)/i.test(body || '');
+}
+
+async function parseJsonResponse(response, label) {
+	// Read as text and parse by hand rather than calling response.json(). It costs one extra string
+	// copy of the body, which is real but small next to the network round trip, and it buys the two
+	// things that make a failure legible: the same HTML sniff on every path (an HTML error page can
+	// arrive with a 200, so keying detection off response.ok misses it), and a
+	// snippet of what actually arrived in the log.
+	const body = await response.text();
+
+	if (response.ok) {
+		try {
+			return JSON.parse(body);
+		} catch (cause) {
+			const error = buildError(response, label, body);
+			error.cause = cause;
+			await Log("error", error.message, error.snippet);
+			throw error;
+		}
+	}
+
+	const error = buildError(response, label, body);
+	await Log("error", error.message, error.snippet);
+	throw error;
+}
+
+function buildError(response, label, body) {
+	return new ClaudeApiError(label, {
+		status: response.status,
+		statusText: response.statusText,
+		contentType: response.headers?.get?.('content-type') || '',
+		html: looksLikeHtml(body),
+		snippet: (body || '').slice(0, 200)
+	});
+}
+
 class ClaudeAPI {
 	// `fetchImpl(url, options) => Response` is supplied by the active ContainerStrategy, already bound
 	// to this account's container. ClaudeAPI itself is container-agnostic.
@@ -181,29 +242,31 @@ class ClaudeAPI {
 	}
 
 	// Core methods
-	// KNOWN: response.ok is not checked, so an HTTP error that returns a JSON body is parsed and
-	// handed back as if it were data. Network failures reject and propagate; HTTP failures do not.
 	//
-	// It bites hardest on /usage, where a 4xx/5xx error body has no `limits` and therefore becomes a
-	// UsageData with every limit null - indistinguishable from the free plan's genuinely empty
-	// response. The UI accounts for that rather than pretending it cannot happen: a non-free account
-	// with no limits is told "Usage data unavailable" instead of "no limits reported", since a failed
-	// read is the likelier cause (see renderNotice in content-components/usage_ui.js). The free-plan
-	// fallback is unaffected either way - it only ever adds limits where there were none.
+	// Every endpoint funnels through here, so this is the one place that decides what "the call
+	// failed" looks like. It throws a ClaudeApiError carrying the status and content type rather
+	// than letting a non-JSON body reach JSON.parse, because the old behaviour cost days on issue
+	// #90: an HTML error page surfaced as "SyntaxError: JSON.parse: unexpected character at line 1
+	// column 1", which says nothing about what actually came back. It now reads
+	// "GET /account_profile failed: 403 text/html; charset=UTF-8 (HTML response, not JSON)".
 	//
-	// Not fixed here because it is a behaviour change across every endpoint, and some callers rely on
-	// the current shape - getOrgInfo catches and returns null, which getSubscriptionTier then reads
-	// as claude_free. If it is ever tightened, throwing on !ok is the right move and callers already
-	// tolerate it: every getUsageData() caller either try/catches or runs inside a wrapper that does,
-	// because a network failure already takes exactly that path.
+	// Checking response.ok also closes a second hole. A 4xx/5xx whose body IS valid JSON used to be
+	// parsed and handed back as data; on /usage that produced a UsageData with every limit null,
+	// indistinguishable from the free plan's genuinely empty response. Callers tolerate the throw -
+	// each getUsageData() caller either try/catches or runs inside a wrapper that does, since a
+	// network failure already took exactly this path. One user-visible consequence: a non-ok
+	// response with a JSON body used to reach the UI as an empty UsageData and render "Usage data
+	// unavailable"; it now rejects before the push, so the sidebar holds its previous figures
+	// instead. The popup is unaffected - getPopupUsageData already catches and renders an error row.
 	async getRequest(endpoint) {
-		const response = await this.fetchImpl(`${this.baseUrl}${endpoint}`, {
+		const url = `${this.baseUrl}${endpoint}`;
+		const response = await this.fetchImpl(url, {
 			headers: {
 				'Content-Type': 'application/json'
 			},
 			method: 'GET'
 		});
-		return response.json();
+		return parseJsonResponse(response, `GET ${endpoint}`);
 	}
 
 	async fetchUrl(url, options = {}) {
@@ -1062,4 +1125,4 @@ class ConversationAPI {
 }
 
 // Export the new structure
-export { ClaudeAPI, ConversationAPI, MessageAPI }
+export { ClaudeAPI, ConversationAPI, MessageAPI, ClaudeApiError }
