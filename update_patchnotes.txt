@@ -1,1 +1,2 @@
-Fixed messagebox usage bars for new UI
+Support fable 5.1
+Invalidate cache when effort level is changed
