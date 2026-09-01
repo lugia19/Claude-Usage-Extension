@@ -20,6 +20,7 @@ const CONFIG = {
 		// DOM labels (lowercased) → API model IDs.
 		// Matched with startsWith() in insertion order, so a longer label must come above
 		// any shorter label that prefixes it ("opus 5.1" above "opus 5").
+		"fable 5.1": "claude-fable-5-1",
 		"fable 5": "claude-fable-5",
 		"opus 5": "claude-opus-5",
 		"sonnet 5": "claude-sonnet-5",
