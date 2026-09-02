@@ -246,6 +246,80 @@
 	user-select: text;
 }
 
+/* Funky water mode */
+.ut-water-line {
+	display: flex;
+	flex-direction: column;
+	margin-top: 2px;
+	user-select: none;
+}
+
+.ut-water-headline {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ut-water-range {
+	font-size: 11px;
+	opacity: 0.7;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* Wavy water sloshing inside the progress bars. The wave lives on pseudo-elements
+   because the bar's inline `background` (blue/red) would beat any CSS background-image. */
+.ut-funky .ut-progress-bar {
+	position: relative;
+	overflow: hidden;
+	border-radius: 3px;
+}
+
+.ut-funky .ut-progress-bar::before,
+.ut-funky .ut-progress-bar::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	background-repeat: repeat-x;
+	background-position: 0 0;
+	pointer-events: none;
+}
+
+/* Front wave — brighter, slower */
+.ut-funky .ut-progress-bar::before {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='6' viewBox='0 0 24 6'%3E%3Cpath d='M0 3 Q3 0.5 6 3 T12 3 T18 3 T24 3 V6 H0 Z' fill='rgba(255,255,255,0.30)'/%3E%3C/svg%3E");
+	background-size: 24px 100%;
+}
+
+/* Back wave — fainter, smaller, drifts the other way */
+.ut-funky .ut-progress-bar::after {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='6' viewBox='0 0 16 6'%3E%3Cpath d='M0 3.5 Q2 1.5 4 3.5 T8 3.5 T12 3.5 T16 3.5 V6 H0 Z' fill='rgba(255,255,255,0.18)'/%3E%3C/svg%3E");
+	background-size: 16px 100%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.ut-funky .ut-progress-bar::before {
+		animation: ut-water-flow 2.4s linear infinite;
+	}
+
+	.ut-funky .ut-progress-bar::after {
+		animation: ut-water-flow-back 3.6s linear infinite;
+	}
+}
+
+@keyframes ut-water-flow {
+	to {
+		background-position: 24px 0;
+	}
+}
+
+@keyframes ut-water-flow-back {
+	to {
+		background-position: -16px 0;
+	}
+}
+
 .ut-weekly-marker {
     position: absolute;
     bottom: 0;

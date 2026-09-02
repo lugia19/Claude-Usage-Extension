@@ -1,5 +1,6 @@
 /* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, localize, SUPPORTED_LOCALES,
-   usageUI, getSidebarDisplayPrefs, setSidebarDisplayPrefs, isSidebarItemVisible */
+   usageUI, getSidebarDisplayPrefs, setSidebarDisplayPrefs, isSidebarItemVisible,
+   isFunkyWaterEnabled, getFunkyWaterPreset */
 'use strict';
 
 const DONATION_1M = 1000000;
@@ -600,6 +601,66 @@ class SettingsCard extends FloatingCard {
 		resetContainer.appendChild(resetHeading);
 		resetContainer.appendChild(resetRow);
 
+		// Funky water toggle
+		const funkyContainer = document.createElement('div');
+		funkyContainer.className = 'ut-row';
+		funkyContainer.style.alignItems = 'start';
+		funkyContainer.style.gap = '6px';
+		funkyContainer.style.marginBottom = '8px';
+
+		const funkyCheckbox = document.createElement('input');
+		funkyCheckbox.type = 'checkbox';
+		funkyCheckbox.id = 'ut-funky-toggle';
+		funkyCheckbox.checked = await isFunkyWaterEnabled();
+		funkyCheckbox.addEventListener('change', () => {
+			browser.storage.local.set({ funkyWaterEnabled: funkyCheckbox.checked });
+		});
+
+		const funkyLabel = document.createElement('label');
+		funkyLabel.htmlFor = 'ut-funky-toggle';
+		funkyLabel.className = 'text-sm';
+		funkyLabel.textContent = localize('card.funky_toggle');
+
+		funkyContainer.appendChild(funkyCheckbox);
+		funkyContainer.appendChild(funkyLabel);
+
+		// Funky water — datacenter preset dropdown
+		const waterPresetContainer = document.createElement('div');
+		waterPresetContainer.className = 'ut-row';
+		waterPresetContainer.style.alignItems = 'center';
+		waterPresetContainer.style.gap = '6px';
+		waterPresetContainer.style.marginBottom = '8px';
+
+		const waterPresetLabel = document.createElement('label');
+		waterPresetLabel.htmlFor = 'ut-water-preset';
+		waterPresetLabel.className = 'text-sm';
+		waterPresetLabel.textContent = localize('card.water_preset_label');
+
+		const waterPresetSelect = document.createElement('select');
+		waterPresetSelect.id = 'ut-water-preset';
+		waterPresetSelect.className = 'bg-bg-000 border border-border-400 text-text-000 ut-input text-sm';
+
+		const waterPresetOptions = [
+			['us_avg', 'card.water_preset_us_avg'],
+			['aws_va', 'card.water_preset_aws'],
+			['best',   'card.water_preset_best'],
+			['hot',    'card.water_preset_hot'],
+			['worst',  'card.water_preset_worst'],
+		];
+		for (const [value, key] of waterPresetOptions) {
+			const opt = document.createElement('option');
+			opt.value = value;
+			opt.textContent = localize(key);
+			waterPresetSelect.appendChild(opt);
+		}
+		waterPresetSelect.value = await getFunkyWaterPreset();
+		waterPresetSelect.addEventListener('change', () => {
+			browser.storage.local.set({ funkyWaterPreset: waterPresetSelect.value });
+		});
+
+		waterPresetContainer.appendChild(waterPresetLabel);
+		waterPresetContainer.appendChild(waterPresetSelect);
+
 		// Language override dropdown
 		const langContainer = document.createElement('div');
 		langContainer.className = 'ut-container';
@@ -630,11 +691,18 @@ class SettingsCard extends FloatingCard {
 		langContainer.appendChild(langHeading);
 		langContainer.appendChild(langSelect);
 
+		// Funky water controls
+		const funkyWaterContainer = document.createElement('div');
+		funkyWaterContainer.className = 'ut-container';
+		funkyWaterContainer.appendChild(funkyContainer);
+		funkyWaterContainer.appendChild(waterPresetContainer);
+
 		// Assemble
 		leftColumn.appendChild(SettingsCard.sectionHeading(localize('card.section_api_key')));
 		leftColumn.appendChild(input);
 		leftColumn.appendChild(resetContainer);
 		leftColumn.appendChild(langContainer);
+		leftColumn.appendChild(funkyWaterContainer);
 
 		rightColumn.appendChild(await this.buildSidebarDisplaySection());
 
