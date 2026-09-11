@@ -1,2 +1,4 @@
-Support fable 5.1
-Invalidate cache when effort level is changed
+Fix UI breaking when /credits errors out (such as on an account without billing access)
+Add toggle for the extra credits bar to track leftover credits vs monthly limit
+UI fixes and customization options
+Added bug report link
