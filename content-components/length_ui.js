@@ -1,7 +1,8 @@
 /* global CONFIG, Log, setupTooltip, getTooltipPortal, getResetTimeHTML, sleep, sendBackgroundMessage, getActiveOrgId,
    isMobileView, isCodePage, UsageData, ConversationData, getConversationId, getCurrentModel,
    getCurrentModelVersion, getCurrentEffortLabel, RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS,
-   LayoutManager, mountToAnchor, localize, fmtNum, onSsePartialUsage, shouldApplySseSession */
+   LayoutManager, mountToAnchor, localize, fmtNum, onSsePartialUsage, shouldApplySseSession,
+   LENGTH_DISPLAY_KEY */
 'use strict';
 
 // Length UI actor - handles all conversation-related displays
@@ -61,6 +62,18 @@ class LengthUI {
 
 		while (!CONFIG) {
 			await sleep(100);
+		}
+
+		// Hidden by settings: stay dormant rather than mount-and-hide. Nothing gets created (the
+		// tooltips are appended to the portal eagerly) and uiReady stays false, so every message
+		// handler already no-ops. Not mounting also matters on mobile, where mounting the title
+		// line moves the scroller's top margin onto our element - hiding it afterwards would drop
+		// that offset and slide the messages under the header. The settings card reloads on Save,
+		// so this is read once.
+		const stored = await browser.storage.local.get(LENGTH_DISPLAY_KEY);
+		if (stored[LENGTH_DISPLAY_KEY] === true) {
+			await Log('LengthUI: hidden by settings, staying dormant');
+			return;
 		}
 
 		this.elements.titleArea = this.createTitleAreaElements();
