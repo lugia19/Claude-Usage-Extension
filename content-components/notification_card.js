@@ -1,5 +1,6 @@
 /* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, localize, SUPPORTED_LOCALES,
-   usageUI, getSidebarDisplayPrefs, setSidebarDisplayPrefs, isSidebarItemVisible, SIDEBAR_LINK_KEYS */
+   usageUI, getSidebarDisplayPrefs, setSidebarDisplayPrefs, isSidebarItemVisible, SIDEBAR_LINK_KEYS,
+   LENGTH_DISPLAY_KEY */
 'use strict';
 
 const DONATION_1M = 1000000;
@@ -526,6 +527,7 @@ class SettingsCard extends FloatingCard {
 				sendBackgroundMessage({ type: 'setResetNotifThreshold', value: Number(thresholdInput.value) }),
 				sendBackgroundMessage({ type: 'setLanguageOverride', value: langSelect.value || null }),
 				sendBackgroundMessage({ type: 'setExtraUsageAgainstLimit', value: this.extraUsageAgainstLimitBox.checked }),
+				browser.storage.local.set({ [LENGTH_DISPLAY_KEY]: !this.lengthDisplayBox.checked }),
 				setSidebarDisplayPrefs(this.collectSidebarDisplayPrefs()),
 			]);
 
@@ -639,6 +641,7 @@ class SettingsCard extends FloatingCard {
 
 		rightColumn.appendChild(await this.buildSidebarDisplaySection());
 		rightColumn.appendChild(await this.buildExtraUsageSection());
+		rightColumn.appendChild(await this.buildLengthDisplaySection());
 
 		buttonContainer.appendChild(saveButton);
 		buttonContainer.appendChild(debugButton);
@@ -727,6 +730,24 @@ class SettingsCard extends FloatingCard {
 			await sendBackgroundMessage({ type: 'getExtraUsageAgainstLimit' }) === true // staged, written on Save
 		);
 		this.extraUsageAgainstLimitBox = checkbox;
+		container.appendChild(row);
+		return container;
+	}
+
+	// Whether LengthUI shows anything (issue #66). Checked means shown, like the sidebar boxes; the
+	// stored flag is the inverse so a missing key reads as the default "shown".
+	async buildLengthDisplaySection() {
+		const container = document.createElement('div');
+		container.className = 'ut-container';
+		container.appendChild(SettingsCard.sectionHeading(localize('card.section_length_display')));
+
+		const stored = await browser.storage.local.get(LENGTH_DISPLAY_KEY);
+		const { row, checkbox } = SettingsCard.checkboxRow(
+			'ut-length-display',
+			localize('card.length_display_show'),
+			stored[LENGTH_DISPLAY_KEY] !== true // staged, written on Save
+		);
+		this.lengthDisplayBox = checkbox;
 		container.appendChild(row);
 		return container;
 	}

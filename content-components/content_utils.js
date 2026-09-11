@@ -343,6 +343,10 @@ const SIDEBAR_DISPLAY_KEY = 'sidebarDisplay';
 // The non-limit keys, so the bar logic and the settings card can tell the two apart.
 const SIDEBAR_LINK_KEYS = ['desktopLink', 'qolLink', 'bugLink'];
 
+// Whether the LengthUI stats (length / cost / cached / messages left) are shown at all. Content-side
+// only, like usageSectionCollapsed: LengthUI reads it once at boot and never mounts when it's set.
+const LENGTH_DISPLAY_KEY = 'lengthDisplayHidden';
+
 async function getSidebarDisplayPrefs() {
 	const stored = await browser.storage.local.get(SIDEBAR_DISPLAY_KEY);
 	const prefs = stored[SIDEBAR_DISPLAY_KEY];
