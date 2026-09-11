@@ -455,6 +455,9 @@ messageRegistry.register('setResetNotifThreshold', (message) => {
 messageRegistry.register('getLanguageOverride', () => getStorageValue('languageOverride', null));
 messageRegistry.register('setLanguageOverride', (message) => setStorageValue('languageOverride', message.value));
 
+messageRegistry.register('getExtraUsageAgainstLimit', () => getStorageValue('extraUsageAgainstLimit', false));
+messageRegistry.register('setExtraUsageAgainstLimit', (message) => setStorageValue('extraUsageAgainstLimit', message.value === true));
+
 messageRegistry.register('isElectron', () => isElectron);
 messageRegistry.register('getMonkeypatchPatterns', () => isElectron ? INTERCEPT_PATTERNS : false);
 
