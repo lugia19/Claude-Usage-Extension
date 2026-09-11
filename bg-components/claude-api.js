@@ -295,7 +295,16 @@ class ClaudeAPI {
 		const subscriptionTier = await this.getSubscriptionTier();
 		let creditsResponse = null;
 		if (usageLimitsResponse.spend?.enabled || usageLimitsResponse.extra_usage?.is_enabled) {
-			creditsResponse = await this.getCredits();
+			try {
+				creditsResponse = await this.getCredits();
+			} catch (error) {
+				// A Team admin without billing rights gets a 403 (`billing:credit:get`) here even though
+				// /usage happily reports extra usage for the org. That is a missing number, not a failed
+				// fetch: creditBalance stays null and the extra-usage maths falls back to the monthly cap.
+				// Letting it throw took the whole UsageData down with it - and with that the authoritative
+				// pass, which fetches usage before the conversation (issue #97).
+				if (error?.status !== 403) throw error;
+			}
 		}
 		const usageData = UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier, creditsResponse);
 		usageData.orgId = this.orgId;
