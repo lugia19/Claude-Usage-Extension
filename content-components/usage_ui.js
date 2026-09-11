@@ -2,7 +2,7 @@
    setupTooltip, getTooltipPortal, getResetTimeHTML, sleep, isMobileView, isCodePage, UsageData, isPeakHours,
    RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS, LayoutManager, mountToAnchor,
    localize, fmtNum, localeForIntl, onSsePartialUsage, shouldApplySseSession,
-   SIDEBAR_DISPLAY_KEY, getSidebarDisplayPrefs, isSidebarItemVisible */
+   SIDEBAR_DISPLAY_KEY, SIDEBAR_LINK_KEYS, getSidebarDisplayPrefs, isSidebarItemVisible */
 'use strict';
 
 // A limit whose reset time has passed needs fresh data from the server to clear. The server does
@@ -385,13 +385,18 @@ class UsageUI {
 			}
 		}
 
+		// Built on every platform, Electron included: unlike the desktop/QoL links a bug report
+		// is relevant wherever the extension runs.
+		const bugFooter = this.createBugFooter();
+		content.appendChild(bugFooter);
+
 		const donateFooter = this.createDonateFooter();
 		content.appendChild(donateFooter);
 
 		container.appendChild(header);
 		container.appendChild(content);
 
-		const elements = { container, content, toggle, desktopFooter, qolFooter };
+		const elements = { container, content, toggle, desktopFooter, qolFooter, bugFooter };
 		toggle.addEventListener('click', () => this.setCollapsed(!this.state.collapsed));
 
 		return elements;
@@ -454,7 +459,7 @@ class UsageUI {
 		const prefs = this.state.sidebarDisplay;
 
 		this.usageSection.hiddenKeys = new Set(
-			Object.keys(prefs).filter(key => key !== 'desktopLink' && key !== 'qolLink' && !isSidebarItemVisible(prefs, key))
+			Object.keys(prefs).filter(key => !SIDEBAR_LINK_KEYS.includes(key) && !isSidebarItemVisible(prefs, key))
 		);
 
 		// Absent on Electron, where the footers are never built.
@@ -467,6 +472,11 @@ class UsageUI {
 		const qolFooter = this.elements.sidebar?.qolFooter;
 		if (qolFooter) {
 			qolFooter.style.display = isSidebarItemVisible(prefs, 'qolLink') ? '' : 'none';
+		}
+
+		const bugFooter = this.elements.sidebar?.bugFooter;
+		if (bugFooter) {
+			bugFooter.style.display = isSidebarItemVisible(prefs, 'bugLink') ? '' : 'none';
 		}
 
 		if (this.state.usageData) this.renderAll();
@@ -528,6 +538,21 @@ class UsageUI {
 		link.className = 'ut-link hover:text-text-200';
 		link.style.color = BLUE_HIGHLIGHT;
 		link.textContent = '⚡ ' + localize('usage.footer_qol');
+
+		footer.appendChild(link);
+		return footer;
+	}
+
+	createBugFooter() {
+		const footer = document.createElement('div');
+		footer.className = 'ut-desktop-footer ut-sidebar-footer mt-1';
+
+		const link = document.createElement('a');
+		link.href = 'https://github.com/lugia19/Claude-Usage-Extension/issues';
+		link.target = '_blank';
+		link.className = 'ut-link hover:text-text-200';
+		link.style.color = BLUE_HIGHLIGHT;
+		link.textContent = '🐛 ' + localize('usage.footer_bug');
 
 		footer.appendChild(link);
 		return footer;

@@ -1,5 +1,5 @@
 /* global Log, RED_WARNING, BLUE_HIGHLIGHT, sendBackgroundMessage, SUCCESS_GREEN, localize, SUPPORTED_LOCALES,
-   usageUI, getSidebarDisplayPrefs, setSidebarDisplayPrefs, isSidebarItemVisible */
+   usageUI, getSidebarDisplayPrefs, setSidebarDisplayPrefs, isSidebarItemVisible, SIDEBAR_LINK_KEYS */
 'use strict';
 
 const DONATION_1M = 1000000;
@@ -666,7 +666,7 @@ class SettingsCard extends FloatingCard {
 		// otherwise have no checkbox and no way back on.
 		const limitKeys = [...new Set([
 			...usageUI.availableLimitKeys(),
-			...Object.keys(prefs).filter(key => key !== 'desktopLink' && key !== 'qolLink'),
+			...Object.keys(prefs).filter(key => !SIDEBAR_LINK_KEYS.includes(key)),
 		])];
 
 		const addToggle = (key, label) => {
@@ -686,20 +686,29 @@ class SettingsCard extends FloatingCard {
 			container.appendChild(addToggle(key, label));
 		}
 
+		// The link toggles aren't limits; set the first of them apart from the bars above.
+		const addLinkToggle = (key, label) => {
+			const row = addToggle(key, label);
+			if (limitKeys.length && !container.querySelector('[id^="ut-sidebar-display-"][id$="Link"]')) {
+				row.style.marginTop = '8px';
+			}
+			container.appendChild(row);
+		};
+
 		// Electron never builds the desktop-version footer, so there's nothing to toggle there.
 		const isElectron = await sendBackgroundMessage({ type: 'isElectron' });
 		if (!isElectron) {
-			const row = addToggle('desktopLink', localize('card.sidebar_desktop_link'));
-			if (limitKeys.length) row.style.marginTop = '8px'; // it isn't a limit; set it apart
-			container.appendChild(row);
+			addLinkToggle('desktopLink', localize('card.sidebar_desktop_link'));
 
 			// The QoL footer removes itself once the extension is detected as installed, so only
 			// offer the toggle while there's a link to hide.
 			const hasQoL = document.documentElement.hasAttribute('data-claude-qol-installed');
 			if (!hasQoL) {
-				container.appendChild(addToggle('qolLink', localize('card.sidebar_qol_link')));
+				addLinkToggle('qolLink', localize('card.sidebar_qol_link'));
 			}
 		}
+
+		addLinkToggle('bugLink', localize('card.sidebar_bug_link'));
 
 		return container;
 	}
