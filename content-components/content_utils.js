@@ -662,8 +662,12 @@ function getSidebarDesktopAnchor() {
 	// viewport the recents collapsed to a few pixels and our own content overflowed onto the
 	// bottom tray, with no way to scroll any of it back. Inside, everything scrolls together.
 	// shrink-0 keeps the bars at full height instead of being squashed by the flex column.
-	const referenceNode = Array.from(navScroll.children)
-		.find(child => !child.classList.contains('ut-usage-sidebar')) || null;
+	// The Projects/Artifacts/... links now sit inside the scroll area too, ahead of the recents,
+	// so anchor on the recents block to land below the links; fall back to "first child" when
+	// the recents block isn't rendered (e.g. an account with no chats yet).
+	const referenceNode = navScroll.querySelector(':scope > .dframe-recents-by-mode')
+		|| Array.from(navScroll.children).find(child => !child.classList.contains('ut-usage-sidebar'))
+		|| null;
 
 	return {
 		parent: navScroll,
