@@ -63,6 +63,10 @@ export class UsageData {
 		this.subscriptionTier = data.subscriptionTier || 'claude_free';
 		this.extraUsage = data.extraUsage || null;  // { isEnabled, monthlyLimit, usedCredits } (cents)
 		this.creditBalance = data.creditBalance ?? null;  // cents (from /credits)
+		// Display pref, stamped by the background at build time (getUsageData) so every consumer
+		// sees the same bar: measure extra usage against the monthly spend limit rather than
+		// against what can actually be spent. See getExtraUsageEffectiveTotal.
+		this.extraUsageAgainstLimit = data.extraUsageAgainstLimit === true;
 		this.orgId = data.orgId || null;
 	}
 
@@ -263,11 +267,18 @@ export class UsageData {
 		return Math.min(monthlyRemaining, this.creditBalance);
 	}
 
-	// Get effective extra usage total (used + remaining) for bar display
+	// Get effective extra usage total (used + remaining) for bar display. With the "against limit"
+	// pref the total is the monthly spend limit instead of what can actually be spent (issue #96);
+	// max() with used mirrors the clamp in getExtraUsageRemaining so an overshoot can't read >100%.
+	// Falls back to the bounded total when no limit is set, since "% of nothing" means nothing.
 	getExtraUsageEffectiveTotal() {
 		const remaining = this.getExtraUsageRemaining();
 		if (remaining === null) return null;
-		return this.extraUsage.usedCredits + remaining;
+		const used = this.extraUsage.usedCredits;
+		if (this.extraUsageAgainstLimit && this.extraUsage.monthlyLimit > 0) {
+			return Math.max(used, this.extraUsage.monthlyLimit);
+		}
+		return used + remaining;
 	}
 
 	// Can this account use extra usage at all? Free accounts can't buy credits,
@@ -311,6 +322,7 @@ export class UsageData {
 			subscriptionTier: this.subscriptionTier,
 			extraUsage: this.extraUsage,
 			creditBalance: this.creditBalance,
+			extraUsageAgainstLimit: this.extraUsageAgainstLimit,
 			orgId: this.orgId
 		};
 	}

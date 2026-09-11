@@ -525,6 +525,7 @@ class SettingsCard extends FloatingCard {
 				sendBackgroundMessage({ type: 'setResetNotifEnabled', value: checkbox.checked }),
 				sendBackgroundMessage({ type: 'setResetNotifThreshold', value: Number(thresholdInput.value) }),
 				sendBackgroundMessage({ type: 'setLanguageOverride', value: langSelect.value || null }),
+				sendBackgroundMessage({ type: 'setExtraUsageAgainstLimit', value: this.extraUsageAgainstLimitBox.checked }),
 				setSidebarDisplayPrefs(this.collectSidebarDisplayPrefs()),
 			]);
 
@@ -637,6 +638,7 @@ class SettingsCard extends FloatingCard {
 		leftColumn.appendChild(langContainer);
 
 		rightColumn.appendChild(await this.buildSidebarDisplaySection());
+		rightColumn.appendChild(await this.buildExtraUsageSection());
 
 		buttonContainer.appendChild(saveButton);
 		buttonContainer.appendChild(debugButton);
@@ -699,6 +701,24 @@ class SettingsCard extends FloatingCard {
 			}
 		}
 
+		return container;
+	}
+
+	// How the extra usage bar is measured: against what can actually be spent (default), or against
+	// the monthly spend limit (issue #96). The background stamps the choice onto every UsageData it
+	// builds, so the reload on Save is what re-renders the bars.
+	async buildExtraUsageSection() {
+		const container = document.createElement('div');
+		container.className = 'ut-container';
+		container.appendChild(SettingsCard.sectionHeading(localize('card.section_extra_usage')));
+
+		const { row, checkbox } = SettingsCard.checkboxRow(
+			'ut-extra-usage-against-limit',
+			localize('card.extra_usage_against_limit'),
+			await sendBackgroundMessage({ type: 'getExtraUsageAgainstLimit' }) === true // staged, written on Save
+		);
+		this.extraUsageAgainstLimitBox = checkbox;
+		container.appendChild(row);
 		return container;
 	}
 

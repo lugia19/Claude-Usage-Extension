@@ -295,21 +295,21 @@ class ClaudeAPI {
 		const subscriptionTier = await this.getSubscriptionTier();
 		let creditsResponse = null;
 		if (usageLimitsResponse.spend?.enabled || usageLimitsResponse.extra_usage?.is_enabled) {
-			try {
-				creditsResponse = await this.getCredits();
-			} catch (error) {
-				// A Team admin without billing rights gets a 403 (`billing:credit:get`) here even though
-				// /usage happily reports extra usage for the org. That is a missing number, not a failed
-				// fetch: creditBalance stays null and the extra-usage maths falls back to the monthly cap.
-				// Letting it throw took the whole UsageData down with it - and with that the authoritative
-				// pass, which fetches usage before the conversation (issue #97).
-				if (error?.status !== 403) throw error;
-			}
+			// The balance is supplementary: creditBalance stays null on failure and the extra-usage
+			// maths falls back to the monthly cap. So a failed /credits must not take the whole
+			// UsageData down - and with it every bar, plus the authoritative pass, which fetches usage
+			// before the conversation. Issue #97 was a Team admin without billing rights getting a
+			// permanent 403 (`billing:credit:get`) here; a transient 500 from the same endpoint blanked
+			// the sidebar the same way during testing. parseJsonResponse has already logged it.
+			creditsResponse = await this.getCredits().catch(() => null);
 		}
 		const usageData = UsageData.fromAPIResponse(usageLimitsResponse, subscriptionTier, creditsResponse);
 		usageData.orgId = this.orgId;
 		// Every consumer - the tab push, the popup, reset notifications - comes through here, so the
 		// free-plan fallback is applied once, in the one place that owns building a UsageData.
+		// The extra-usage display pref is stamped here for the same reason: the UI only ever
+		// rehydrates what this returns, so no renderer has to know the setting exists.
+		usageData.extraUsageAgainstLimit = await getStorageValue('extraUsageAgainstLimit', false);
 		await applySseUsageFallback(usageData, this);
 		return usageData;
 	}
