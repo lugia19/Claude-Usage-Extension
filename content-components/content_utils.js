@@ -1,5 +1,5 @@
 /* global localize, fmtNum, normalizeLocale, setLocaleOverride,
-   modelFamilyFromVersion, defaultModelVersionForTier, MODEL_UNKNOWN */
+   modelFamilyFromVersion, MODEL_UNKNOWN */
 'use strict';
 
 // Constants
@@ -245,16 +245,21 @@ function warnUnreadablePickerOnce(label) {
 	Log("warn", "Model picker present but no known model in its label:", label);
 }
 
-// The API model id the NEXT message will use, read out of the picker. Returns null when the picker
-// is there but we can't make sense of it - see the fallback comment below.
-//
-// subscriptionTier decides the default when there is no picker at all - claude.ai defaults Max to
-// Opus and everyone else to Sonnet. Pass null if the tier isn't known yet.
-async function getCurrentModelVersion(maxWait = 3000, subscriptionTier = null) {
+// The API model id the NEXT message will use, read out of the picker. Three answers:
+//   a model id    - the picker is there and names a model we know
+//   MODEL_UNKNOWN - the picker is there but we can't make sense of it (see below)
+//   null          - there is no picker to read
+async function getCurrentModelVersion(maxWait = 3000) {
 	const modelSelector = await waitForElement(document, SELECTORS.MODEL_PICKER, maxWait);
-	// No picker at all (not rendered yet, login screen): nothing to read, and no conversation to
-	// fall back on either, so the tier default is the best guess available.
-	if (!modelSelector) return defaultModelVersionForTier(subscriptionTier);
+	// No picker: null, "not observed", and NOT the tier default. This used to return claude.ai's
+	// default picker selection for the plan, which on Max is Opus, so any poll that found the
+	// control unmounted (it is re-rendered with the composer; the reports were Fable conversations
+	// read as Opus during long tool-heavy responses, and this was the only path that could produce
+	// that) reported a "model change": the message was re-priced at the Opus weight and, since
+	// isCurrentlyCached compares the reading against the conversation's own model, the cache
+	// indicator vanished. A missing control is not evidence of anything; null lets every consumer
+	// fall back to what the conversation itself says.
+	if (!modelSelector) return null;
 
 	// Read the BUTTON's own label rather than a descendant styling class. claude.ai's CDS redesign
 	// moved `whitespace-nowrap` from an inner span onto the button itself, and querySelector never
@@ -320,8 +325,8 @@ async function getCurrentEffortLabel(maxWait = 3000) {
 // makes getWeightedFutureCost fall back to the conversation's own model; handing it MODEL_UNKNOWN
 // would instead land on FALLBACK_MODEL_WEIGHT and price every unknown model as Opus. Estimates may
 // degrade to something plausible, but the cache claim may not - see isCurrentlyCached.
-async function getCurrentModel(maxWait = 3000, subscriptionTier = null) {
-	const modelVersion = await getCurrentModelVersion(maxWait, subscriptionTier);
+async function getCurrentModel(maxWait = 3000) {
+	const modelVersion = await getCurrentModelVersion(maxWait);
 	if (!modelVersion || modelVersion === MODEL_UNKNOWN) return null;
 	return modelFamilyFromVersion(modelVersion);
 }
