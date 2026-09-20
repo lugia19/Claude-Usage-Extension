@@ -70,6 +70,23 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
 
 
 
+// How the extra usage bar is measured. New installs measure against the monthly spend limit (the
+// figure claude.ai itself shows); installs that predate the choice keep measuring against what can
+// actually be spent, which was the only behaviour they had. The pref is only written when the
+// settings card is saved, so on an update an absent key means "never chose" - pin the legacy value
+// then. A fresh install writes the new default explicitly for the same reason: if it relied on the
+// read-side default instead, the NEXT release's update would find the key absent, take the install
+// for a legacy one and quietly flip it to the old bar.
+const EXTRA_USAGE_AGAINST_LIMIT_DEFAULT = true;
+browser.runtime.onInstalled?.addListener((details) => {
+	if (details.reason !== 'install' && details.reason !== 'update') return;
+	getStorageValue('extraUsageAgainstLimit', null).then((stored) => {
+		if (stored !== null) return;
+		const value = details.reason === 'install' ? EXTRA_USAGE_AGAINST_LIMIT_DEFAULT : false;
+		return setStorageValue('extraUsageAgainstLimit', value);
+	});
+});
+
 if (browser.contextMenus) {
 	browser.runtime.onInstalled.addListener(() => {
 		browser.contextMenus.create({
@@ -455,7 +472,7 @@ messageRegistry.register('setResetNotifThreshold', (message) => {
 messageRegistry.register('getLanguageOverride', () => getStorageValue('languageOverride', null));
 messageRegistry.register('setLanguageOverride', (message) => setStorageValue('languageOverride', message.value));
 
-messageRegistry.register('getExtraUsageAgainstLimit', () => getStorageValue('extraUsageAgainstLimit', false));
+messageRegistry.register('getExtraUsageAgainstLimit', () => getStorageValue('extraUsageAgainstLimit', EXTRA_USAGE_AGAINST_LIMIT_DEFAULT));
 messageRegistry.register('setExtraUsageAgainstLimit', (message) => setStorageValue('extraUsageAgainstLimit', message.value === true));
 
 messageRegistry.register('isElectron', () => isElectron);

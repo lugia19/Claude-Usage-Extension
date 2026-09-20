@@ -308,8 +308,10 @@ class ClaudeAPI {
 		// Every consumer - the tab push, the popup, reset notifications - comes through here, so the
 		// free-plan fallback is applied once, in the one place that owns building a UsageData.
 		// The extra-usage display pref is stamped here for the same reason: the UI only ever
-		// rehydrates what this returns, so no renderer has to know the setting exists.
-		usageData.extraUsageAgainstLimit = await getStorageValue('extraUsageAgainstLimit', false);
+		// rehydrates what this returns, so no renderer has to know the setting exists. The default
+		// is the new-install one; background.js pins the legacy value on update (see its
+		// onInstalled handler), so an absent key here really does mean a fresh install.
+		usageData.extraUsageAgainstLimit = await getStorageValue('extraUsageAgainstLimit', true);
 		await applySseUsageFallback(usageData, this);
 		return usageData;
 	}
