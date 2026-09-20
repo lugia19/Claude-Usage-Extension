@@ -74,12 +74,16 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
 // figure claude.ai itself shows); installs that predate the choice keep measuring against what can
 // actually be spent, which was the only behaviour they had. The pref is only written when the
 // settings card is saved, so on an update an absent key means "never chose" - pin the legacy value
-// then, and let a genuinely fresh install fall through to the new default.
+// then. A fresh install writes the new default explicitly for the same reason: if it relied on the
+// read-side default instead, the NEXT release's update would find the key absent, take the install
+// for a legacy one and quietly flip it to the old bar.
 const EXTRA_USAGE_AGAINST_LIMIT_DEFAULT = true;
 browser.runtime.onInstalled?.addListener((details) => {
-	if (details.reason !== 'update') return;
+	if (details.reason !== 'install' && details.reason !== 'update') return;
 	getStorageValue('extraUsageAgainstLimit', null).then((stored) => {
-		if (stored === null) return setStorageValue('extraUsageAgainstLimit', false);
+		if (stored !== null) return;
+		const value = details.reason === 'install' ? EXTRA_USAGE_AGAINST_LIMIT_DEFAULT : false;
+		return setStorageValue('extraUsageAgainstLimit', value);
 	});
 });
 
