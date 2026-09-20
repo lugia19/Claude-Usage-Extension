@@ -716,8 +716,9 @@ class SettingsCard extends FloatingCard {
 		return container;
 	}
 
-	// How the extra usage bar is measured: against what can actually be spent (default), or against
-	// the monthly spend limit (issue #96). The background stamps the choice onto every UsageData it
+	// How the extra usage bar is measured: against the monthly spend limit (issue #96, the default
+	// for new installs), or against what can actually be spent (the legacy behaviour, pinned for
+	// installs that predate the choice). The background stamps the choice onto every UsageData it
 	// builds, so the reload on Save is what re-renders the bars.
 	async buildExtraUsageSection() {
 		const container = document.createElement('div');

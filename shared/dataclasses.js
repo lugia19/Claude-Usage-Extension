@@ -65,7 +65,9 @@ export class UsageData {
 		this.creditBalance = data.creditBalance ?? null;  // cents (from /credits)
 		// Display pref, stamped by the background at build time (getUsageData) so every consumer
 		// sees the same bar: measure extra usage against the monthly spend limit rather than
-		// against what can actually be spent. See getExtraUsageEffectiveTotal.
+		// against what can actually be spent. See getExtraUsageEffectiveTotal. Defaults to false
+		// here only because a bare constructor has no storage to consult; the background decides
+		// the real default (on for new installs, off for installs that predate the choice).
 		this.extraUsageAgainstLimit = data.extraUsageAgainstLimit === true;
 		this.orgId = data.orgId || null;
 	}
