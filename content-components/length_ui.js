@@ -196,8 +196,20 @@ class LengthUI {
 		this.renderEstimate();
 	}
 
+	// The model family every price on this screen is computed for: the picker's reading when there
+	// is one, else the conversation's own. getCurrentModel returns null both when the picker is
+	// missing and when it is unreadable, and null must not reach the consumers below - the model
+	// weight lookup would land on FALLBACK_MODEL_WEIGHT (Opus-equivalent) and isSpendingCredits
+	// would stop recognising a credit-funded model - so it is resolved once, here, rather than at
+	// each call site. getWeightedFutureCost has its own identical fallback; passing it the resolved
+	// value keeps the two paths visibly the same.
+	effectiveModel() {
+		return this.state.currentModel ?? this.state.conversationData?.model ?? null;
+	}
+
 	renderCostAndLength() {
-		const { conversationData, currentModel, currentModelVersion, currentEffortLabel } = this.state;
+		const { conversationData, currentModelVersion, currentEffortLabel } = this.state;
+		const currentModel = this.effectiveModel();
 		const { length, cost, cached, container } = this.elements.titleArea;
 
 		if (!conversationData) {
@@ -319,7 +331,8 @@ class LengthUI {
 			return;
 		}
 
-		const { usageData, conversationData, currentModel, currentModelVersion, currentEffortLabel } = this.state;
+		const { usageData, conversationData, currentModelVersion, currentEffortLabel } = this.state;
+		const currentModel = this.effectiveModel();
 
 		// No limits reported at all (the free plan) - there is nothing to divide the cost into, and
 		// a lone "Messages left: N/A" beside the hidden usage bar reads as breakage. Drop it.
