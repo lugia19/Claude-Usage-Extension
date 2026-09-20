@@ -183,9 +183,8 @@ class LengthUI {
 	// ========== RENDER (state → DOM) ==========
 
 	async renderAll() {
-		const tier = this.state.usageData?.subscriptionTier;
-		this.state.currentModel = await getCurrentModel(200, tier);
-		this.state.currentModelVersion = await getCurrentModelVersion(200, tier);
+		this.state.currentModel = await getCurrentModel(200);
+		this.state.currentModelVersion = await getCurrentModelVersion(200);
 		this.state.currentEffortLabel = await getCurrentEffortLabel(200);
 		await Log('LengthUI: renderAll - detected:', this.state.currentModelVersion,
 			'| stored on conversation:', this.state.conversationData?.modelVersion,
@@ -197,8 +196,20 @@ class LengthUI {
 		this.renderEstimate();
 	}
 
+	// The model family every price on this screen is computed for: the picker's reading when there
+	// is one, else the conversation's own. getCurrentModel returns null both when the picker is
+	// missing and when it is unreadable, and null must not reach the consumers below - the model
+	// weight lookup would land on FALLBACK_MODEL_WEIGHT (Opus-equivalent) and isSpendingCredits
+	// would stop recognising a credit-funded model - so it is resolved once, here, rather than at
+	// each call site. getWeightedFutureCost has its own identical fallback; passing it the resolved
+	// value keeps the two paths visibly the same.
+	effectiveModel() {
+		return this.state.currentModel ?? this.state.conversationData?.model ?? null;
+	}
+
 	renderCostAndLength() {
-		const { conversationData, currentModel, currentModelVersion, currentEffortLabel } = this.state;
+		const { conversationData, currentModelVersion, currentEffortLabel } = this.state;
+		const currentModel = this.effectiveModel();
 		const { length, cost, cached, container } = this.elements.titleArea;
 
 		if (!conversationData) {
@@ -320,7 +331,8 @@ class LengthUI {
 			return;
 		}
 
-		const { usageData, conversationData, currentModel, currentModelVersion, currentEffortLabel } = this.state;
+		const { usageData, conversationData, currentModelVersion, currentEffortLabel } = this.state;
+		const currentModel = this.effectiveModel();
 
 		// No limits reported at all (the free plan) - there is nothing to divide the cost into, and
 		// a lone "Messages left: N/A" beside the hidden usage bar reads as breakage. Drop it.
@@ -513,13 +525,14 @@ class LengthUI {
 	// Compared plainly rather than guarded on truthiness. The old `newModel && ...` form silently
 	// dropped any falsy reading, so a picker that went from readable to unreadable kept reporting
 	// the previous model here until the next renderAll - which assigns the reading directly and so
-	// disagreed with this path. getCurrentModelVersion now always returns something meaningful (a
-	// model id, the tier default when there is no picker, or MODEL_UNKNOWN), so there is no
-	// transient falsy value left to protect against.
+	// disagreed with this path. A null reading (no picker) flows through on purpose: it means "not
+	// observed", and every renderer then falls back to the conversation's own model, which is the
+	// right answer while the control is missing. Holding the previous reading instead would keep a
+	// stale model across a conversation switch. MODEL_UNKNOWN (picker present but unreadable) is a
+	// truthy sentinel and is compared like any other reading.
 	async checkModelChange() {
-		const tier = this.state.usageData?.subscriptionTier;
-		const newModel = await getCurrentModel(200, tier);
-		const newModelVersion = await getCurrentModelVersion(200, tier);
+		const newModel = await getCurrentModel(200);
+		const newModelVersion = await getCurrentModelVersion(200);
 		const newEffortLabel = await getCurrentEffortLabel(200);
 
 		// Late-mounting picker: adopt the first reading as the baseline instead of reporting it as
