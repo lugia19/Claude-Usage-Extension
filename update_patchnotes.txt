@@ -1,2 +1,1 @@
-Changed default extra credits display to be based on the monthly limit
-Made model detection more robust
+Fix model detection not working properly due to request bodies now being sometimes gzipped.
