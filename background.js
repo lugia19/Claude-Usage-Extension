@@ -769,14 +769,36 @@ async function parseRequestBody(requestBody) {
 			}
 		}
 	} else {
-		// Original webRequest handling
+		// webRequest hands over the bytes as they go on the wire, and there is no decoded-body
+		// option. claude.ai gzips the completion upload itself (Content-Encoding: gzip, seen on
+		// Firefox first), so inflate before parsing. Firefox can also split a large upload across
+		// several raw chunks, so concatenate them all rather than reading only the first.
 		try {
-			const text = new TextDecoder().decode(requestBody.raw[0].bytes);
-			return JSON.parse(text);
+			const chunks = requestBody.raw.map(c => new Uint8Array(c.bytes));
+			let bytes = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+			let offset = 0;
+			for (const c of chunks) {
+				bytes.set(c, offset);
+				offset += c.length;
+			}
+			if (isGzip(bytes)) bytes = await gunzip(bytes);
+			return JSON.parse(new TextDecoder().decode(bytes));
 		} catch (e) {
 			return undefined;
 		}
 	}
+}
+
+// Sniffing the gzip magic beats reading Content-Encoding from onBeforeSendHeaders, which would mean
+// correlating two listeners by requestId for no gain. DecompressionStream only knows gzip/deflate;
+// if claude.ai ever switches to br or zstd this needs a JS decompressor instead.
+function isGzip(bytes) {
+	return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+}
+
+async function gunzip(bytes) {
+	const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+	return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 // The authoritative pass. One per sent message, triggered by claude.ai's post-message tree GET.
