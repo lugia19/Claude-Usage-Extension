@@ -52,15 +52,6 @@
 	window.fetch = async (...args) => {
 		const [input, config] = args;
 
-		// A stream body can only be read once. Tee it so the real request still gets an
-		// unconsumed copy; everything else can be read without affecting the original.
-		let body = config?.body;
-		if (body instanceof ReadableStream) {
-			const [forApp, forUs] = body.tee();
-			args[1] = { ...config, body: forApp };
-			body = forUs;
-		}
-
 		let url;
 		if (input instanceof URL) {
 			url = input.href;
@@ -73,13 +64,29 @@
 			url = 'https://claude.ai' + url;
 		}
 
+		// Only intercepted requests get their body read. Materialising a Blob or stream is a full
+		// read of the payload before the real request can go out - not a cost to pay on every
+		// unrelated fetch (file uploads in particular).
+		const intercepted = patterns.onBeforeRequest.regexes.some(pattern => new RegExp(pattern).test(url));
+		let body = null;
+		if (intercepted) {
+			body = config?.body;
+			// A stream body can only be read once. Tee it so the real request still gets an
+			// unconsumed copy; everything else can be read without affecting the original.
+			if (body instanceof ReadableStream) {
+				const [forApp, forUs] = body.tee();
+				args[1] = { ...config, body: forApp };
+				body = forUs;
+			}
+		}
+
 		const details = {
 			url: url,
 			method: config?.method || 'GET',
 			requestBody: await getBodyDetails(body)
 		};
 
-		if (patterns.onBeforeRequest.regexes.some(pattern => new RegExp(pattern).test(url))) {
+		if (intercepted) {
 			window.dispatchEvent(new CustomEvent('interceptedRequest', { detail: details }));
 		}
 
