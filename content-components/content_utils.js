@@ -728,15 +728,29 @@ function getChatAreaRegularAnchor() {
 // muted-text class explicitly, so nothing the previous anchor set can survive the move.
 const TITLE_AREA_STYLE_RESET = {
 	flexBasis: '',
+	width: '',
 	marginTop: '',
 	marginLeft: '',
 	paddingLeft: '',
+	paddingRight: '',
+	paddingBottom: '',
 	position: '',
 	top: '',
 	zIndex: '',
 	minWidth: '',
 	overflow: '',
 	whiteSpace: '',
+	textOverflow: '',
+};
+
+// One line, clipped with an ellipsis. Our line must never wrap in a header: they are fixed-height
+// rows that centre their content, so every extra line grows the title group and centring pushes the
+// chat title up past the top edge of the window.
+const TITLE_AREA_SINGLE_LINE = {
+	minWidth: '0',
+	overflow: 'hidden',
+	whiteSpace: 'nowrap',
+	textOverflow: 'ellipsis',
 };
 
 // Mobile headers are position:absolute with a fixed height, so forcing our line onto a
@@ -772,7 +786,7 @@ function getMobileTitleAreaAnchor(headerRow) {
 			top: '-8px',
 			zIndex: '11', // above the header's gradient overlay
 		},
-		classes: { toggle: { 'text-text-500': true, 'bg-bg-100': false, '!px-2': false } },
+		classes: { toggle: { 'text-text-500': true, 'bg-bg-100': false, 'bg-surface-1': false, '!px-2': false } },
 	};
 }
 
@@ -807,6 +821,67 @@ function getTitleTextInset(titleLine) {
 	return Math.max(0, Math.round(btnRect.left + padding - wrapperLeft));
 }
 
+// Desktop titleArea: our own full-width line under the title, inside claude.ai's header.
+//
+// That header shares its row with the page's actions and with other extensions' buttons (Claude
+// QoL puts up to seven there), and the title group is the only thing in it allowed to shrink, so a
+// narrow window leaves it very little width. The header is also fixed-height, so the line can't just
+// wrap there (see TITLE_AREA_SINGLE_LINE). When it doesn't fit, `strip` is where it goes instead: the
+// normal-flow slot directly under the header, which has the whole column's width. LengthUI decides
+// between the two (see mountTitleArea). `strip` is null on a layout without that slot, and the line
+// then stays in the header and truncates.
+function getDesktopTitleAreaAnchor(titleLine, headerRow) {
+	clearMobileTitleAreaOffset(headerRow);
+	titleLine.classList.add('flex-wrap');
+
+	const header = titleLine.closest('.dframe-header');
+	const banner = header?.parentElement?.querySelector(':scope > .dframe-below-header-banner');
+
+	let strip = null;
+	if (banner) {
+		// Line up with the title's glyphs, measured against the strip's own left edge.
+		const btn = titleLine.querySelector('button');
+		const btnRect = btn?.getBoundingClientRect();
+		const stripLeft = banner.parentElement.getBoundingClientRect().left;
+		const inset = btnRect?.width
+			? Math.max(0, Math.round(btnRect.left + (parseFloat(getComputedStyle(btn).paddingLeft) || 0) - stripLeft))
+			: parseFloat(getComputedStyle(header).paddingLeft) || 0;
+		strip = {
+			insertAfter: banner,
+			styles: {
+				...TITLE_AREA_STYLE_RESET,
+				...TITLE_AREA_SINGLE_LINE,
+				paddingLeft: `${inset}px`,
+				paddingRight: getComputedStyle(header).paddingRight,
+				paddingBottom: '4px',
+				// Above the header's gradient backdrop, which reaches down over this slot, and opaque
+				// so the messages scrolling up beneath don't show through the text.
+				position: 'relative',
+				zIndex: '11',
+			},
+			classes: { toggle: { 'text-text-500': true, 'bg-surface-1': true } },
+		};
+	}
+
+	return {
+		parent: titleLine,
+		referenceNode: null,
+		styles: {
+			...TITLE_AREA_STYLE_RESET,
+			...TITLE_AREA_SINGLE_LINE,
+			flexBasis: '100%',
+			// The claim already states how wide the line wants to be (see LengthUI's claim). A
+			// wrapping flex row's preferred width is the SUM of its items' widths, so if the line
+			// counted as well the title group would claim the line's width twice and swallow the free
+			// space other header occupants need to see. The basis still stretches it at layout.
+			width: '0',
+			paddingLeft: `${getTitleTextInset(titleLine)}px`,
+		},
+		classes: { toggle: { 'text-text-500': true, 'bg-surface-1': false } },
+		strip,
+	};
+}
+
 function getTitleAreaAnchor() {
 	const chatTitle = document.querySelector(SELECTORS.CHAT_MENU);
 	if (!chatTitle) return null;
@@ -818,17 +893,8 @@ function getTitleAreaAnchor() {
 
 	if (isMobileView()) {
 		return getMobileTitleAreaAnchor(headerRow);
-	} else {
-		clearMobileTitleAreaOffset(headerRow);
-		titleLine.classList.add('flex-wrap');
-
-		return {
-			parent: titleLine,
-			referenceNode: null,
-			styles: { ...TITLE_AREA_STYLE_RESET, flexBasis: '100%', paddingLeft: `${getTitleTextInset(titleLine)}px` },
-			classes: { toggle: { 'text-text-500': true } }
-		};
 	}
+	return getDesktopTitleAreaAnchor(titleLine, headerRow);
 }
 
 const pageLayouts = {
@@ -849,17 +915,8 @@ const pageLayouts = {
 
 				if (isMobileView()) {
 					return getMobileTitleAreaAnchor(headerRow);
-				} else {
-					clearMobileTitleAreaOffset(headerRow);
-					titleLine.classList.add('flex-wrap');
-
-					return {
-						parent: titleLine,
-						referenceNode: null,
-						styles: { ...TITLE_AREA_STYLE_RESET, flexBasis: '100%', paddingLeft: `${getTitleTextInset(titleLine)}px` },
-						classes: { toggle: { 'text-text-500': true } },
-					};
 				}
+				return getDesktopTitleAreaAnchor(titleLine, headerRow);
 			},
 		},
 	},
@@ -974,7 +1031,7 @@ const pageLayouts = {
 					},
 					// Drop the muted class so the text inherits the bar's own colour - it themes
 					// independently of the page body.
-					classes: { toggle: { 'text-text-500': false, 'bg-bg-100': false } },
+					classes: { toggle: { 'text-text-500': false, 'bg-bg-100': false, 'bg-surface-1': false } },
 				};
 			},
 		},
