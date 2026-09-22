@@ -180,15 +180,15 @@ class LengthUI {
 
 	mountTitleArea() {
 		const anchor = LayoutManager.getAnchor('titleArea');
-		if (!anchor) return false;
 		const { container, claim } = this.elements.titleArea;
 
-		// Only the desktop header has a width to fight over (see getDesktopTitleAreaAnchor).
-		if (!('strip' in anchor)) {
+		// Only the desktop header has a width to fight over (see getDesktopTitleAreaAnchor). Anywhere
+		// else, forget the header/strip decision so the next header starts with a fresh grace period.
+		if (!anchor || !('strip' in anchor)) {
 			claim.remove();
 			this.titleInStrip = false;
 			this.titleOverflowSince = null;
-			return mountToAnchor(container, anchor);
+			return anchor ? mountToAnchor(container, anchor) : false;
 		}
 
 		// The claim is the title group's last child and the line, when in the header, sits right
