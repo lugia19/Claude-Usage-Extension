@@ -30,6 +30,19 @@ export function modelFamilyFromVersion(modelVersion) {
 	return CONFIG.MODELS.find(family => slug.includes(family.toLowerCase())) || null;
 }
 
+// Cost weight for an API model ID. Exact lookup rather than prefix matching, because model IDs
+// prefix each other ("claude-opus-5" is a prefix of "claude-opus-5-5"); a dated snapshot ID
+// retries without its date. An ID we don't ship a price for falls back to its family's weight,
+// so a newly released model still prices as roughly the right tier. `family` is only consulted
+// for that fallback, and is derived from the ID when not given.
+export function modelWeight(modelVersion, family = null) {
+	const slug = modelVersion && modelVersion !== MODEL_UNKNOWN ? modelVersion.toLowerCase() : '';
+	return CONFIG.MODEL_WEIGHTS[slug]
+		?? CONFIG.MODEL_WEIGHTS[slug.replace(/-\d{8}$/, '')]
+		?? CONFIG.FAMILY_MODEL_WEIGHTS[family ?? modelFamilyFromVersion(slug)]
+		?? CONFIG.FALLBACK_MODEL_WEIGHT;
+}
+
 // The model claude.ai's picker defaults to for this plan. Pass a null/unknown tier to get
 // the tier-agnostic fallback.
 export function defaultModelVersionForTier(subscriptionTier) {
@@ -432,18 +445,23 @@ export class ConversationData {
 	}
 
 
+	// Cost weight for pricing a message on this conversation. Priced by model ID: the override when
+	// it names a real model (the picker's reading), else the conversation's own. The family - the
+	// override, else the conversation's - only prices an ID we have no entry for, or no ID at all.
+	getPricingWeight(modelOverride, modelVersionOverride) {
+		const modelVersion = modelVersionOverride && modelVersionOverride !== MODEL_UNKNOWN
+			? modelVersionOverride
+			: this.modelVersion;
+		return modelWeight(modelVersion, modelOverride || this.model);
+	}
+
 	// Calculate weighted cost based on model
-	getWeightedCost(modelOverride) {
-		let model = this.model;
-		if (modelOverride) model = modelOverride;
-		const weight = CONFIG.MODEL_WEIGHTS[model] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
-		return Math.round(this.cost * weight);
+	getWeightedCost(modelOverride, modelVersionOverride) {
+		return Math.round(this.cost * this.getPricingWeight(modelOverride, modelVersionOverride));
 	}
 
 	getWeightedFutureCost(modelOverride, modelVersionOverride, effortLabelOverride) {
-		let model = this.model;
-		if (modelOverride) model = modelOverride;
-		const weight = CONFIG.MODEL_WEIGHTS[model] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
+		const weight = this.getPricingWeight(modelOverride, modelVersionOverride);
 		const baseCost = this.isCurrentlyCached(modelVersionOverride, effortLabelOverride) ? this.futureCost : this.uncachedFutureCost;
 		return Math.round(baseCost * weight);
 	}
