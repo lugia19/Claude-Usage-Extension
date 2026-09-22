@@ -187,10 +187,13 @@ class LengthUI {
 		if (!anchor || !('strip' in anchor)) {
 			claim.remove();
 			// The strip lives outside the title group, so it survives a navigation that tears the
-			// header down and would linger on the next page. Only the strip, though: a mobile header
-			// has moved the scroller's top margin onto our element, so pulling it out there would
-			// slide the messages under the header.
-			if (!anchor && this.titleInStrip) container.remove();
+			// header down and would linger on the next page. Only the strip, though: the legacy mobile
+			// anchor has moved the scroller's top margin onto our element, so pulling it out there
+			// would slide the messages under the header. Checked on the DOM rather than titleInStrip,
+			// since phones mount the strip directly without the desktop header/strip decision.
+			if (!anchor && container.previousElementSibling?.classList.contains('dframe-below-header-banner')) {
+				container.remove();
+			}
 			this.titleInStrip = false;
 			this.titleOverflowSince = null;
 			return anchor ? mountToAnchor(container, anchor) : false;
