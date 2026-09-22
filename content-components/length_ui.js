@@ -5,6 +5,9 @@
    LENGTH_DISPLAY_KEY */
 'use strict';
 
+// How long the title line may overflow the header before it moves to the strip (see titleFitsHeader).
+const TITLE_OVERFLOW_GRACE_MS = 1500;
+
 // Length UI actor - handles all conversation-related displays
 class LengthUI {
 	constructor() {
@@ -115,7 +118,26 @@ class LengthUI {
 		const cost = document.createElement('span');
 		const cached = document.createElement('span');
 
-		return { container, length, cost, cached };
+		// An invisible, zero-height copy of the line that stays in the header even while the line
+		// itself is down in the strip (see mountTitleArea). It measures whether the line fits, and it
+		// keeps the line's width claimed there: the text spills out of the title group at full width,
+		// which is the overflow that tells other header occupants (Claude QoL) to make room. Without
+		// the claim, the line moving to the strip would remove that pressure, the header would never
+		// free up, and the line would never come back.
+		const claim = document.createElement('div');
+		claim.className = 'text-xs ut-select-none ut-title-claim';
+		claim.setAttribute('aria-hidden', 'true');
+		Object.assign(claim.style, {
+			flexBasis: '100%',
+			height: '0',
+			minWidth: '0',
+			overflow: 'visible',
+			whiteSpace: 'nowrap',
+			visibility: 'hidden',
+			pointerEvents: 'none',
+		});
+
+		return { container, length, cost, cached, claim };
 	}
 
 	createStatLineElements() {
@@ -158,8 +180,48 @@ class LengthUI {
 
 	mountTitleArea() {
 		const anchor = LayoutManager.getAnchor('titleArea');
-		if (!anchor) return false;
-		return mountToAnchor(this.elements.titleArea.container, anchor);
+		const { container, claim } = this.elements.titleArea;
+
+		// Only the desktop header has a width to fight over (see getDesktopTitleAreaAnchor). Anywhere
+		// else, forget the header/strip decision so the next header starts with a fresh grace period.
+		if (!anchor || !('strip' in anchor)) {
+			claim.remove();
+			// The strip lives outside the title group, so it survives a navigation that tears the
+			// header down and would linger on the next page. Only the strip, though: a mobile header
+			// has moved the scroller's top margin onto our element, so pulling it out there would
+			// slide the messages under the header.
+			if (!anchor && this.titleInStrip) container.remove();
+			this.titleInStrip = false;
+			this.titleOverflowSince = null;
+			return anchor ? mountToAnchor(container, anchor) : false;
+		}
+
+		// The claim is the title group's last child and the line, when in the header, sits right
+		// before it - two elements both mounted as "last child" would swap places every tick.
+		mountToAnchor(claim, { parent: anchor.parent, referenceNode: null, styles: { paddingLeft: anchor.styles.paddingLeft } });
+		// Synced here rather than in the renderers: renderCachedTime edits the countdown in place.
+		if (claim.textContent !== container.textContent) claim.textContent = container.textContent;
+		const inHeader = !anchor.strip || this.titleFitsHeader(claim);
+		return mountToAnchor(container, inHeader ? { ...anchor, referenceNode: claim } : anchor.strip);
+	}
+
+	// Whether the title line should sit in the header, judged by the claim - which is laid out
+	// exactly where the line would be, so it overflows exactly when the line would be truncated.
+	//
+	// Leaving for the strip waits out TITLE_OVERFLOW_GRACE_MS first. Something else in the header
+	// may be about to make room: Claude QoL collapses its buttons into a menu when the header
+	// overflows, and it checks about once a second. Coming back is immediate.
+	titleFitsHeader(claim) {
+		if (claim.scrollWidth <= claim.clientWidth + 1) {
+			this.titleInStrip = false;
+			this.titleOverflowSince = null;
+			return true;
+		}
+		if (this.titleInStrip) return false;
+		this.titleOverflowSince ??= Date.now();
+		if (Date.now() - this.titleOverflowSince < TITLE_OVERFLOW_GRACE_MS) return true;
+		this.titleInStrip = true;
+		return false;
 	}
 
 	mountStatLine() {
@@ -514,6 +576,11 @@ class LengthUI {
 			this.renderCostAndLength();
 			this.renderEstimate();
 		}
+
+		// Forget the in-flight guard on the home page, or coming back to the same conversation never
+		// requests its data again and the line stays at N/A. Unconditional: leaving before the reply
+		// arrived leaves conversationData null, and the guard would stick just the same.
+		if (isHomePage) this.state.requestedConversationId = null;
 
 		if (isHomePage && this.state.conversationData !== null) {
 			this.state.conversationData = null;
