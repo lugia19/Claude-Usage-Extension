@@ -186,6 +186,11 @@ class LengthUI {
 		// else, forget the header/strip decision so the next header starts with a fresh grace period.
 		if (!anchor || !('strip' in anchor)) {
 			claim.remove();
+			// The strip lives outside the title group, so it survives a navigation that tears the
+			// header down and would linger on the next page. Only the strip, though: a mobile header
+			// has moved the scroller's top margin onto our element, so pulling it out there would
+			// slide the messages under the header.
+			if (!anchor && this.titleInStrip) container.remove();
 			this.titleInStrip = false;
 			this.titleOverflowSince = null;
 			return anchor ? mountToAnchor(container, anchor) : false;
