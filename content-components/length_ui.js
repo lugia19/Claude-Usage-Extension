@@ -189,14 +189,17 @@ class LengthUI {
 			// The strip lives outside the title group, so it survives a navigation that tears the
 			// header down and would linger on the next page. Only the strip, though: the legacy mobile
 			// anchor has moved the scroller's top margin onto our element, so pulling it out there
-			// would slide the messages under the header. Checked on the DOM rather than titleInStrip,
-			// since phones mount the strip directly without the desktop header/strip decision.
-			if (!anchor && container.previousElementSibling?.classList.contains('dframe-below-header-banner')) {
-				container.remove();
-			}
+			// would slide the messages under the header. Tracked as state rather than read off the DOM:
+			// the banner the strip sits after may already be gone by the time we look.
+			if (!anchor && this.titleMountedInStrip) container.remove();
 			this.titleInStrip = false;
 			this.titleOverflowSince = null;
-			return anchor ? mountToAnchor(container, anchor) : false;
+			if (!anchor) {
+				this.titleMountedInStrip = false;
+				return false;
+			}
+			this.titleMountedInStrip = !!anchor.isStrip;
+			return mountToAnchor(container, anchor);
 		}
 
 		// The claim is the title group's last child and the line, when in the header, sits right
@@ -205,6 +208,7 @@ class LengthUI {
 		// Synced here rather than in the renderers: renderCachedTime edits the countdown in place.
 		if (claim.textContent !== container.textContent) claim.textContent = container.textContent;
 		const inHeader = !anchor.strip || this.titleFitsHeader(claim);
+		this.titleMountedInStrip = !inHeader;
 		return mountToAnchor(container, inHeader ? { ...anchor, referenceNode: claim } : anchor.strip);
 	}
 

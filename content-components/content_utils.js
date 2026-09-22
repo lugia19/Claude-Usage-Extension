@@ -838,7 +838,27 @@ function getTitleStripAnchor(titleLine) {
 	const inset = btnRect?.width
 		? Math.max(0, Math.round(btnRect.left + (parseFloat(getComputedStyle(btn).paddingLeft) || 0) - stripLeft))
 		: parseFloat(getComputedStyle(header).paddingLeft) || 0;
+
+	// The strip is above everything in the header (see alignSelf below), so it must end before
+	// anything the header hangs down into this band - Claude QoL's phone buttons do, at the right
+	// edge. Shrinking to the text isn't enough on its own: a long line (German, with the cache timer)
+	// fills the column. Found by geometry rather than by class name: a header descendant that
+	// reaches below the header, sits right of where our text starts, and is narrower than the column
+	// (which rules out the header's full-width gradient backdrop).
+	const column = banner.parentElement.getBoundingClientRect();
+	const bandTop = header.getBoundingClientRect().bottom;
+	const BAND_HEIGHT = 32;
+	let freeRight = column.right;
+	for (const el of header.querySelectorAll('*')) {
+		const r = el.getBoundingClientRect();
+		if (!r.width || r.bottom <= bandTop + 1 || r.top >= bandTop + BAND_HEIGHT) continue;
+		if (r.left <= stripLeft + inset || r.width >= column.width * 0.6) continue;
+		freeRight = Math.min(freeRight, r.left);
+	}
+	const maxWidth = freeRight < column.right ? `${Math.max(0, Math.floor(freeRight - stripLeft - 8))}px` : '100%';
+
 	return {
+		isStrip: true,
 		insertAfter: banner,
 		styles: {
 			...TITLE_AREA_STYLE_RESET,
@@ -854,7 +874,7 @@ function getTitleStripAnchor(titleLine) {
 			// backdrop means being above everything in it - including whatever hangs from it into this
 			// band, like Claude QoL's phone buttons at the right edge. A full-width strip covered them.
 			alignSelf: 'flex-start',
-			maxWidth: '100%',
+			maxWidth,
 		},
 		classes: { toggle: { 'text-text-500': true, 'bg-surface-1': true, 'bg-bg-100': false, '!px-2': false } },
 	};
