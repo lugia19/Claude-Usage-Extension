@@ -321,10 +321,11 @@ async function getCurrentEffortLabel(maxWait = 3000) {
 // Model family (Opus/Sonnet/...) for the picker's selection. Delegates so there is one parser.
 //
 // Returns null - not MODEL_UNKNOWN - when the model can't be identified, and that asymmetry with
-// getCurrentModelVersion is deliberate. This value only ever weights a cost estimate, where null
-// makes getWeightedFutureCost fall back to the conversation's own model; handing it MODEL_UNKNOWN
-// would instead land on FALLBACK_MODEL_WEIGHT and price every unknown model as Opus. Estimates may
-// degrade to something plausible, but the cache claim may not - see isCurrentlyCached.
+// getCurrentModelVersion is deliberate. This value picks the limits and the fallback price family
+// for a cost estimate, where null makes the consumers fall back to the conversation's own model;
+// handing them MODEL_UNKNOWN would instead land on FALLBACK_MODEL_WEIGHT and price every unknown
+// model as Opus. Estimates may degrade to something plausible, but the cache claim may not - see
+// isCurrentlyCached.
 async function getCurrentModel(maxWait = 3000) {
 	const modelVersion = await getCurrentModelVersion(maxWait);
 	if (!modelVersion || modelVersion === MODEL_UNKNOWN) return null;

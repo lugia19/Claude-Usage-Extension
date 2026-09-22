@@ -7,14 +7,33 @@ const CONFIG = {
 		"Sonnet",
 		"Haiku"
 	],
+	// Cost weight per API model ID - the model's input price in $/MTok. Priced per model rather
+	// than per family because prices vary within a family (Opus 5.5 is cheaper than Opus 5, Sonnet
+	// 5 than Sonnet 4.6). Looked up by modelWeight() in shared/dataclasses.js.
 	"MODEL_WEIGHTS": {
+		"claude-fable-5-1": 10,
+		"claude-fable-5": 10,
+		"claude-opus-5-5": 4,
+		"claude-opus-5": 5,
+		"claude-sonnet-5": 2,
+		"claude-opus-4-8": 5,
+		"claude-opus-4-7": 5,
+		"claude-sonnet-4-6": 3,
+		"claude-opus-4-6": 5,
+		"claude-opus-4-5-20251101": 5,
+		"claude-sonnet-4-5-20250929": 3,
+		"claude-haiku-4-5-20251001": 1,
+		"claude-3-opus-20240229": 15,
+	},
+	// Weight for a model ID not in MODEL_WEIGHTS (e.g. one released after this build), by family.
+	// Each errs toward the family's higher price - over-reporting a cost is the safe direction.
+	"FAMILY_MODEL_WEIGHTS": {
 		"Fable": 10,
 		"Opus": 5,
 		"Sonnet": 3,
 		"Haiku": 1
 	},
-	// Weight to use for a model family we don't recognize. Opus-equivalent - erring high
-	// is the safe direction for a cost estimate.
+	// Weight to use when even the family is unknown. Opus-equivalent, erring high for the same reason.
 	"FALLBACK_MODEL_WEIGHT": 5,
 	"MODEL_VERSION_MAP": {
 		// DOM labels (lowercased) → API model IDs.
@@ -22,6 +41,7 @@ const CONFIG = {
 		// any shorter label that prefixes it ("opus 5.1" above "opus 5").
 		"fable 5.1": "claude-fable-5-1",
 		"fable 5": "claude-fable-5",
+		"opus 5.5": "claude-opus-5-5",
 		"opus 5": "claude-opus-5",
 		"sonnet 5": "claude-sonnet-5",
 		"opus 4.8": "claude-opus-4-8",
@@ -39,8 +59,8 @@ const CONFIG = {
 		"claude_free": "claude-sonnet-5",
 		"claude_pro": "claude-sonnet-5",
 		"claude_team": "claude-sonnet-5",
-		"claude_max_5x": "claude-opus-5",
-		"claude_max_20x": "claude-opus-5"
+		"claude_max_5x": "claude-opus-5-5",
+		"claude_max_20x": "claude-opus-5-5"
 	},
 	// Used only when the tier isn't known yet (e.g. a content script before the first
 	// updateUsage arrives). Matches the claude_free row, which is where an unresolvable

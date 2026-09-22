@@ -196,13 +196,13 @@ class LengthUI {
 		this.renderEstimate();
 	}
 
-	// The model family every price on this screen is computed for: the picker's reading when there
-	// is one, else the conversation's own. getCurrentModel returns null both when the picker is
-	// missing and when it is unreadable, and null must not reach the consumers below - the model
-	// weight lookup would land on FALLBACK_MODEL_WEIGHT (Opus-equivalent) and isSpendingCredits
-	// would stop recognising a credit-funded model - so it is resolved once, here, rather than at
-	// each call site. getWeightedFutureCost has its own identical fallback; passing it the resolved
-	// value keeps the two paths visibly the same.
+	// The model family every price and limit on this screen is computed for: the picker's reading
+	// when there is one, else the conversation's own. getCurrentModel returns null both when the
+	// picker is missing and when it is unreadable, and null must not reach the consumers below -
+	// isSpendingCredits would stop recognising a credit-funded model - so it is resolved once, here,
+	// rather than at each call site. Prices themselves go by model ID (getPricingWeight), which does
+	// the same picker-then-conversation fallback on the ID and only uses this family for an ID it
+	// has no price for; passing it the resolved value keeps the two paths visibly the same.
 	effectiveModel() {
 		return this.state.currentModel ?? this.state.conversationData?.model ?? null;
 	}
@@ -270,7 +270,7 @@ class LengthUI {
 	// cached (free) and uncached (full price) costs. This is technically not entirely accurate,
 	// but it's accurate enough and doesn't require reworking half the codebase.
 	extraUsageDollars(conversationData, currentModel, currentModelVersion, currentEffortLabel) {
-		const weight = CONFIG.MODEL_WEIGHTS[currentModel] ?? CONFIG.FALLBACK_MODEL_WEIGHT;
+		const weight = conversationData.getPricingWeight(currentModel, currentModelVersion);
 		const baseFutureCost = conversationData.isCurrentlyCached(currentModelVersion, currentEffortLabel) ? conversationData.futureCost : conversationData.uncachedFutureCost;
 		const interpolatedFutureCost = baseFutureCost +
 			CONFIG.EXTRA_USAGE_CACHING_MULTIPLIER * (conversationData.uncachedFutureCost - baseFutureCost);
