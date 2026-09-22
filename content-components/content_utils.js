@@ -729,6 +729,8 @@ function getChatAreaRegularAnchor() {
 const TITLE_AREA_STYLE_RESET = {
 	flexBasis: '',
 	width: '',
+	maxWidth: '',
+	alignSelf: '',
 	marginTop: '',
 	marginLeft: '',
 	paddingLeft: '',
@@ -821,47 +823,89 @@ function getTitleTextInset(titleLine) {
 	return Math.max(0, Math.round(btnRect.left + padding - wrapperLeft));
 }
 
+// The strip: the normal-flow slot directly under claude.ai's header (after
+// .dframe-below-header-banner), which has the whole column's width. Null on a layout without that
+// slot. Used on desktop when the line doesn't fit in the header, and always on phones.
+function getTitleStripAnchor(titleLine) {
+	const header = titleLine.closest('.dframe-header');
+	const banner = header?.parentElement?.querySelector(':scope > .dframe-below-header-banner');
+	if (!banner) return null;
+
+	// Line up with the title's glyphs, measured against the strip's own left edge.
+	const btn = titleLine.querySelector('button');
+	const btnRect = btn?.getBoundingClientRect();
+	const stripLeft = banner.parentElement.getBoundingClientRect().left;
+	const inset = btnRect?.width
+		? Math.max(0, Math.round(btnRect.left + (parseFloat(getComputedStyle(btn).paddingLeft) || 0) - stripLeft))
+		: parseFloat(getComputedStyle(header).paddingLeft) || 0;
+
+	// The strip is above everything in the header (see alignSelf below), so it must end before
+	// anything the header hangs down into this band - Claude QoL's phone buttons do, at the right
+	// edge. Shrinking to the text isn't enough on its own: a long line (German, with the cache timer)
+	// fills the column. Found by geometry rather than by class name: a header descendant that
+	// reaches below the header, sits right of where our text starts, and is narrower than the column
+	// (which rules out the header's full-width gradient backdrop).
+	const column = banner.parentElement.getBoundingClientRect();
+	const bandTop = header.getBoundingClientRect().bottom;
+	const BAND_HEIGHT = 32;
+	let freeRight = column.right;
+	for (const el of header.querySelectorAll('*')) {
+		const r = el.getBoundingClientRect();
+		if (!r.width || r.bottom <= bandTop + 1 || r.top >= bandTop + BAND_HEIGHT) continue;
+		if (r.left <= stripLeft + inset || r.width >= column.width * 0.6) continue;
+		freeRight = Math.min(freeRight, r.left);
+	}
+	const maxWidth = freeRight < column.right ? `${Math.max(0, Math.floor(freeRight - stripLeft - 8))}px` : '100%';
+
+	return {
+		isStrip: true,
+		insertAfter: banner,
+		styles: {
+			...TITLE_AREA_STYLE_RESET,
+			...TITLE_AREA_SINGLE_LINE,
+			paddingLeft: `${inset}px`,
+			paddingRight: getComputedStyle(header).paddingRight,
+			paddingBottom: '4px',
+			// Above the header's gradient backdrop, which reaches down over this slot, and opaque
+			// so the messages scrolling up beneath don't show through the text.
+			position: 'relative',
+			zIndex: '11',
+			// Only as wide as the text. The header is a stacking context (z-10), so being above its
+			// backdrop means being above everything in it - including whatever hangs from it into this
+			// band, like Claude QoL's phone buttons at the right edge. A full-width strip covered them.
+			alignSelf: 'flex-start',
+			maxWidth,
+		},
+		classes: { toggle: { 'text-text-500': true, 'bg-surface-1': true, 'bg-bg-100': false, '!px-2': false } },
+	};
+}
+
+// Mobile titleArea. Phones now get the same .dframe-header layout as desktop, which has none of the
+// structure getMobileTitleAreaAnchor looks for, so it found nothing and the line silently never
+// mounted. There is no room in a phone's header anyway, so go straight to the strip; the legacy
+// anchor stays as the fallback for the older layout.
+function getPhoneTitleAreaAnchor(titleLine, headerRow) {
+	const strip = getTitleStripAnchor(titleLine);
+	if (strip) {
+		clearMobileTitleAreaOffset(headerRow);
+		return strip;
+	}
+	return getMobileTitleAreaAnchor(headerRow);
+}
+
 // Desktop titleArea: our own full-width line under the title, inside claude.ai's header.
 //
 // That header shares its row with the page's actions and with other extensions' buttons (Claude
 // QoL puts up to seven there), and the title group is the only thing in it allowed to shrink, so a
 // narrow window leaves it very little width. The header is also fixed-height, so the line can't just
-// wrap there (see TITLE_AREA_SINGLE_LINE). When it doesn't fit, `strip` is where it goes instead: the
-// normal-flow slot directly under the header, which has the whole column's width. LengthUI decides
-// between the two (see mountTitleArea). `strip` is null on a layout without that slot, and the line
-// then stays in the header and truncates.
+// wrap there (see TITLE_AREA_SINGLE_LINE). When it doesn't fit, `strip` is where it goes instead
+// (see getTitleStripAnchor). LengthUI decides between the two (see mountTitleArea). `strip` is null
+// on a layout without that slot, and the line then stays in the header and truncates.
 function getDesktopTitleAreaAnchor(titleLine, headerRow) {
 	clearMobileTitleAreaOffset(headerRow);
 	titleLine.classList.add('flex-wrap');
 
-	const header = titleLine.closest('.dframe-header');
-	const banner = header?.parentElement?.querySelector(':scope > .dframe-below-header-banner');
-
-	let strip = null;
-	if (banner) {
-		// Line up with the title's glyphs, measured against the strip's own left edge.
-		const btn = titleLine.querySelector('button');
-		const btnRect = btn?.getBoundingClientRect();
-		const stripLeft = banner.parentElement.getBoundingClientRect().left;
-		const inset = btnRect?.width
-			? Math.max(0, Math.round(btnRect.left + (parseFloat(getComputedStyle(btn).paddingLeft) || 0) - stripLeft))
-			: parseFloat(getComputedStyle(header).paddingLeft) || 0;
-		strip = {
-			insertAfter: banner,
-			styles: {
-				...TITLE_AREA_STYLE_RESET,
-				...TITLE_AREA_SINGLE_LINE,
-				paddingLeft: `${inset}px`,
-				paddingRight: getComputedStyle(header).paddingRight,
-				paddingBottom: '4px',
-				// Above the header's gradient backdrop, which reaches down over this slot, and opaque
-				// so the messages scrolling up beneath don't show through the text.
-				position: 'relative',
-				zIndex: '11',
-			},
-			classes: { toggle: { 'text-text-500': true, 'bg-surface-1': true } },
-		};
-	}
+	const strip = getTitleStripAnchor(titleLine);
 
 	return {
 		parent: titleLine,
@@ -892,7 +936,7 @@ function getTitleAreaAnchor() {
 	const headerRow = titleLine.parentElement;
 
 	if (isMobileView()) {
-		return getMobileTitleAreaAnchor(headerRow);
+		return getPhoneTitleAreaAnchor(titleLine, headerRow);
 	}
 	return getDesktopTitleAreaAnchor(titleLine, headerRow);
 }
@@ -914,7 +958,7 @@ const pageLayouts = {
 				const headerRow = titleLine.parentElement;
 
 				if (isMobileView()) {
-					return getMobileTitleAreaAnchor(headerRow);
+					return getPhoneTitleAreaAnchor(titleLine, headerRow);
 				}
 				return getDesktopTitleAreaAnchor(titleLine, headerRow);
 			},
