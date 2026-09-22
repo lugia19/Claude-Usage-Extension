@@ -572,6 +572,11 @@ class LengthUI {
 			this.renderEstimate();
 		}
 
+		// Forget the in-flight guard on the home page, or coming back to the same conversation never
+		// requests its data again and the line stays at N/A. Unconditional: leaving before the reply
+		// arrived leaves conversationData null, and the guard would stick just the same.
+		if (isHomePage) this.state.requestedConversationId = null;
+
 		if (isHomePage && this.state.conversationData !== null) {
 			this.state.conversationData = null;
 			this.renderCostAndLength();
