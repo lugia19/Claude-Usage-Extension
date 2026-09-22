@@ -736,7 +736,26 @@ const TITLE_AREA_STYLE_RESET = {
 	minWidth: '',
 	overflow: '',
 	whiteSpace: '',
+	textOverflow: '',
 };
+
+// Desktop titleArea: our own full-width line under the title, inside claude.ai's header. That
+// header is a fixed-height row whose title group is the only thing in it allowed to shrink, so a
+// narrow window (a side panel open, other extensions' buttons in the row) squeezes the group to
+// almost nothing. Left to wrap, our line then broke at every word and stacked into a tall column
+// that spilled out of the header over the messages. Held to one line and truncated instead - the
+// length comes first, so it is the last thing to go.
+function desktopTitleAreaStyles(titleLine) {
+	return {
+		...TITLE_AREA_STYLE_RESET,
+		flexBasis: '100%',
+		paddingLeft: `${getTitleTextInset(titleLine)}px`,
+		minWidth: '0',
+		overflow: 'hidden',
+		whiteSpace: 'nowrap',
+		textOverflow: 'ellipsis',
+	};
+}
 
 // Mobile headers are position:absolute with a fixed height, so forcing our line onto a
 // second line inside them renders it outside the header, on top of the message list (and
@@ -824,7 +843,7 @@ function getTitleAreaAnchor() {
 		return {
 			parent: titleLine,
 			referenceNode: null,
-			styles: { ...TITLE_AREA_STYLE_RESET, flexBasis: '100%', paddingLeft: `${getTitleTextInset(titleLine)}px` },
+			styles: desktopTitleAreaStyles(titleLine),
 			classes: { toggle: { 'text-text-500': true } }
 		};
 	}
@@ -855,7 +874,7 @@ const pageLayouts = {
 					return {
 						parent: titleLine,
 						referenceNode: null,
-						styles: { ...TITLE_AREA_STYLE_RESET, flexBasis: '100%', paddingLeft: `${getTitleTextInset(titleLine)}px` },
+						styles: desktopTitleAreaStyles(titleLine),
 						classes: { toggle: { 'text-text-500': true } },
 					};
 				}
