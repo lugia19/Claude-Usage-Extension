@@ -1,3 +1,4 @@
 Support Opus 5.5
 Make model weights per-model (to account for Opus 5.5 being cheaper, and so on)
 UI fixes for mobile/vertical layouts
+Firefox: Fix minor UI glitch
