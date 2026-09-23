@@ -130,6 +130,10 @@ class LengthUI {
 		Object.assign(claim.style, {
 			flexBasis: '100%',
 			height: '0',
+			// Firefox ignores height:0 here and lays the claim out 24px tall (a line and more), which
+			// grows the title group past the fixed-height header and pushes the chat title off the top.
+			// max-height does hold there.
+			maxHeight: '0',
 			minWidth: '0',
 			overflow: 'visible',
 			whiteSpace: 'nowrap',
