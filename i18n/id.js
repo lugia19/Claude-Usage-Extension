@@ -5,7 +5,6 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['id'] ??= {}, {
 	"common.resetting": "Mengatur ulang...",
 	"common.unit_tokens": "token",
 	"common.unit_credits": "kredit",
-	"common.debug_logs": "Log Debug",
 
 	// time
 	"time.dh": "{d}h {h}j",

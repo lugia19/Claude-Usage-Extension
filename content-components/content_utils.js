@@ -1,4 +1,4 @@
-/* global localize, fmtNum, getActiveOrgId, getConversationId, getIncognitoConversationId, isIncognito,
+/* global createLogger, configureLogger, localize, fmtNum, getActiveOrgId, getConversationId, getIncognitoConversationId, isIncognito,
    isCodePage, currentLocale, pinLocale, refreshAccountLocale, getLanguageOverride,
    setLanguageOverride, createClaudeTooltip, isMobileLayout,
    modelFamilyFromVersion, MODEL_UNKNOWN */
@@ -16,141 +16,13 @@ const SELECTORS = {
 	INIT_LOGIN_SCREEN: 'button[data-testid="login-with-google"]',
 	VERIF_LOGIN_SCREEN: 'input[data-testid="code"]'
 };
-// Dynamic debug setting - will be loaded from storage
-let FORCE_DEBUG = true;
-// Load FORCE_DEBUG from storage and set up error handlers
-browser.storage.local.get('force_debug').then(result => {
-	FORCE_DEBUG = result.force_debug || false;
-
-	// Set up error logging based on debug setting
-	if (!FORCE_DEBUG) {
-		window.addEventListener('error', async function (event) {
-			await logError(event.error);
-
-		});
-
-		window.addEventListener('unhandledrejection', async function (event) {
-			await logError(event.reason);
-
-		});
-
-		self.onerror = async function (message, source, lineno, colno, error) {
-			await logError(error);
-			return false;
-		};
-	}
-});
-
 // Global variables that will be shared across all content scripts
 let CONFIG;
 
-// Debug logs are buffered in memory and flushed on a short debounce so logging (which happens inside
-// the per-frame update loop) never blocks on storage. Up to ~1s of logs can be lost on navigation.
-let pendingLogEntries = [];
-let logFlushScheduled = false;
-
-function scheduleLogFlush() {
-	if (logFlushScheduled) return;
-	logFlushScheduled = true;
-	setTimeout(flushLogs, 1000);
-}
-
-async function flushLogs() {
-	logFlushScheduled = false;
-	if (pendingLogEntries.length === 0) return;
-	const batch = pendingLogEntries;
-	pendingLogEntries = [];
-	// Read fresh and append so we don't clobber logs written by other contexts (background / other tabs).
-	try {
-		const result = await browser.storage.local.get('debug_logs');
-		const logs = result.debug_logs || [];
-		logs.push(...batch);
-		while (logs.length > 1000) logs.shift();
-		await browser.storage.local.set({ debug_logs: logs });
-	} catch (e) {
-		try {
-			await browser.storage.local.set({ debug_logs: batch.slice(-100) });
-		} catch (e2) {
-			// Give up — never let logging throw.
-		}
-	}
-}
-
-// Logging function
-async function Log(...args) {
-	const sender = `content:${document.title.substring(0, 20)}${document.title.length > 20 ? '...' : ''}`;
-	let level = "debug";
-
-	// If first argument is a valid log level, use it and remove it from args
-	if (typeof args[0] === 'string' && ["debug", "warn", "error"].includes(args[0])) {
-		level = args.shift();
-	}
-
-	// Gate: when FORCE_DEBUG is off, only log within the debug window. When on, skip the storage read.
-	if (!FORCE_DEBUG) {
-		const result = await browser.storage.local.get('debug_mode_until');
-		const debugUntil = result.debug_mode_until;
-		if (!debugUntil || debugUntil <= Date.now()) return;
-	}
-
-	if (level === "warn") {
-		console.warn("[UsageTracker]", ...args);
-	} else if (level === "error") {
-		console.error("[UsageTracker]", ...args);
-	} else {
-		console.log("[UsageTracker]", ...args);
-	}
-
-	const timestamp = new Date().toLocaleString('default', {
-		hour: '2-digit',
-		minute: '2-digit',
-		second: '2-digit',
-		hour12: false,
-		fractionalSecondDigits: 3
-	});
-
-	let message = args.map(arg => {
-		if (arg instanceof Error) {
-			return arg.stack || `${arg.name}: ${arg.message}`;
-		}
-		if (typeof arg === 'object') {
-			// Handle null case
-			if (arg === null) return 'null';
-			// For other objects, try to stringify with error handling
-			try {
-				return JSON.stringify(arg, Object.getOwnPropertyNames(arg), 2);
-			} catch (e) {
-				return String(arg);
-			}
-		}
-		return String(arg);
-	}).join(' ');
-
-	// Cap per-entry size so a large payload can't bloat storage past quota.
-	const MAX_LOG_MESSAGE = 2000;
-	if (message.length > MAX_LOG_MESSAGE) {
-		message = message.slice(0, MAX_LOG_MESSAGE) + `…[truncated ${message.length - MAX_LOG_MESSAGE} chars]`;
-	}
-
-	// Buffer + debounced flush — no awaited storage I/O in the caller's path.
-	pendingLogEntries.push({ timestamp, sender, level, message });
-	if (pendingLogEntries.length > 1000) pendingLogEntries.shift();
-	scheduleLogFlush();
-}
-
-async function logError(error) {
-	// If object is not an error, log it as a string
-	if (!(error instanceof Error)) {
-		await Log("error", JSON.stringify(error));
-		return
-	}
-
-	await Log("error", error.toString());
-	if ("captureStackTrace" in Error) {
-		Error.captureStackTrace(error, logError);
-	}
-	await Log("error", JSON.stringify(error.stack));
-}
+// Logging (common/log/logger.js): always on, to the console and the debug log viewer. Log(level?, ...args)
+// keeps its old signature; the leading level argument is still accepted.
+configureLogger({ app: 'tracker', prefix: '[UsageTracker]' });
+const Log = createLogger('content');
 
 // Utility functions
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));

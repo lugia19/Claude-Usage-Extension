@@ -5,7 +5,6 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['ja'] ??= {}, {
 	"common.resetting": "リセット中...",
 	"common.unit_tokens": "トークン",
 	"common.unit_credits": "クレジット",
-	"common.debug_logs": "デバッグログ",
 
 	// time
 	"time.dh": "{d}日{h}時間",
@@ -88,8 +87,8 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['ja'] ??= {}, {
 	// popup
 	"popup.no_data": "利用データが見つかりません。まず claude.ai を開いてください（必要に応じて拡張機能を許可してください）。",
 	"popup.load_failed": "利用データの読み込みに失敗しました。",
-	"popup.org_no_tab": "\u0018使\u0018用\u0018状\u0018況\u0018を\u0018表\u0018示\u0018す\u0018る\u0018に\u0018は\u0018、\u0018こ\u0018の\u0018コ\u0018ン\u0018テ\u0018ナ\u0018で\u0018タ\u0018ブ\u0018を\u0018開\u0018い\u0018て\u0018く\u0018だ\u0018さ\u0018い\u0018。",
-	"popup.org_unavailable": "\u0018使\u0018用\u0018状\u0018況\u0018を\u0018取\u0018得\u0018で\u0018き\u0018ま\u0018せ\u0018ん\u0018。",
+	"popup.org_no_tab": "使用状況を表示するには、このコンテナでタブを開いてください。",
+	"popup.org_unavailable": "使用状況を取得できません。",
 	"popup.loading": "利用データを読み込み中...",
 	"popup.help": "利用統計が見つからずにここをクリックした場合は、ページを再読み込みするか、claude.ai で拡張機能を許可してください。統計はページに直接挿入されます。",
 	"popup.donate": "寄付",

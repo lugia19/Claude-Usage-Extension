@@ -21,6 +21,7 @@
 			"js": [
 				"lib/browser-polyfill.min.js",
 				"lib/o200k_base.js",
+				"common/log/logger.js",
 				"common/i18n/en.js",
 				"common/i18n/fr.js",
 				"common/i18n/de.js",
@@ -89,7 +90,8 @@
 				"lib/browser-polyfill.min.js",
 				"lib/o200k_base.js",
 				"common/assets/kofi-button.png",
-				"debug.html",
+				"common/log/viewer.html",
+				"common/log/viewer.js",
 				"update_patchnotes.txt",
 				"tracker-styles.css",
 				"injections/webrequest-polyfill.js",

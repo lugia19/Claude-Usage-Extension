@@ -1,6 +1,6 @@
 import './lib/browser-polyfill.min.js';
 import './lib/o200k_base.js';
-import { CONFIG, isElectron, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './bg-components/utils.js';
+import { CONFIG, isElectron, RawLog, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './bg-components/utils.js';
 import { tokenStorageManager, tokenCounter } from './bg-components/tokenManagement.js';
 import { getStrategy, initContainerStrategy, setBrave } from './bg-components/container-strategy.js';
 import { UsageData, modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier } from './shared/dataclasses.js';
@@ -87,6 +87,9 @@ function runOnceInitialized(fn, args) {
 //#region Listener setup (I hate MV3 - listeners must be initialized here)
 //Extension-related listeners:
 browser.runtime.onMessage.addListener(async (message, sender) => {
+	// Log batches and Clear are the shared logger's (common/log/logger.js); letting them through
+	// would log "received message" for every batch.
+	if (message?.type?.startsWith?.('CLAUDE_EXT_LOG')) return;
 	return runOnceInitialized(handleMessageFromContent, [message, sender]);
 });
 
@@ -129,7 +132,7 @@ if (browser.contextMenus) {
 	browser.contextMenus.onClicked.addListener((info, tab) => {
 		if (info.menuItemId === 'openDebugPage') {
 			browser.tabs.create({
-				url: browser.runtime.getURL('debug.html')
+				url: browser.runtime.getURL('common/log/viewer.html')
 			});
 		} else if (info.menuItemId === 'openDonatePage') {
 			browser.tabs.create({
@@ -496,15 +499,6 @@ messageRegistry.register('reportBrave', async (message) => {
 	await setBrave(message.isBrave);
 	return true;
 });
-
-async function openDebugPage() {
-	if (!isElectron) {
-		browser.tabs.create({ url: browser.runtime.getURL('debug.html') });
-		return true;
-	}
-	return 'fallback';
-}
-messageRegistry.register(openDebugPage);
 
 // Complex handlers
 async function requestData(message, sender, orgId) {
@@ -895,8 +889,6 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId }) {
 }
 
 async function debugLogMessageCost(usageData, conversationData) {
-	if (!FORCE_DEBUG) return;
-
 	const limitMapping = {
 		session: 'debug_session',
 		weekly: 'debug_weekly',
@@ -999,15 +991,20 @@ async function scheduleResetNotifications(orgId, usageData) {
 // Listen for message sending
 async function onBeforeRequestHandler(details) {
 	await Log("Intercepted request:", details.url);
-	await Log("Intercepted body:", details.requestBody);
 	if (details.method === "POST" &&
 		(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
 		await Log("Request sent - URL:", details.url);
 		const requestBodyJSON = await parseRequestBody(details.requestBody);
-		// Tools are collapsed to a count on purpose. Their full schemas run to ~15KB, which would
-		// bury everything after them under RawLog's 2000-char per-entry cap - and that cap is what
-		// keeps debug_logs inside the storage quota, so trimming here beats raising it.
-		await Log("Request sent - Body:", { ...requestBodyJSON, tools: requestBodyJSON?.tools?.length ?? 0 });
+		// Shape only, never the prompt or attachment text: the debug log is persisted and viewable.
+		await Log("Request sent - Body:", {
+			model: requestBodyJSON?.model,
+			parent_message_uuid: requestBodyJSON?.parent_message_uuid,
+			turn_message_uuids: requestBodyJSON?.turn_message_uuids,
+			promptChars: requestBodyJSON?.prompt?.length ?? 0,
+			attachments: requestBodyJSON?.attachments?.length ?? 0,
+			files: requestBodyJSON?.files?.length ?? 0,
+			tools: requestBodyJSON?.tools?.length ?? 0,
+		});
 		// Extract IDs from URL - we can refine these regexes
 		const urlParts = details.url.split('/');
 		const orgId = urlParts[urlParts.indexOf('organizations') + 1];
