@@ -87,6 +87,9 @@ function runOnceInitialized(fn, args) {
 //#region Listener setup (I hate MV3 - listeners must be initialized here)
 //Extension-related listeners:
 browser.runtime.onMessage.addListener(async (message, sender) => {
+	// Log batches from content scripts are the shared logger's (common/log/logger.js); letting them
+	// through would log "received message" for every batch.
+	if (message?.type === 'CLAUDE_EXT_LOG_APPEND') return;
 	return runOnceInitialized(handleMessageFromContent, [message, sender]);
 });
 
@@ -988,15 +991,20 @@ async function scheduleResetNotifications(orgId, usageData) {
 // Listen for message sending
 async function onBeforeRequestHandler(details) {
 	await Log("Intercepted request:", details.url);
-	await Log("Intercepted body:", details.requestBody);
 	if (details.method === "POST" &&
 		(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
 		await Log("Request sent - URL:", details.url);
 		const requestBodyJSON = await parseRequestBody(details.requestBody);
-		// Tools are collapsed to a count on purpose. Their full schemas run to ~15KB, which would
-		// bury everything after them under RawLog's 2000-char per-entry cap - and that cap is what
-		// keeps debug_logs inside the storage quota, so trimming here beats raising it.
-		await Log("Request sent - Body:", { ...requestBodyJSON, tools: requestBodyJSON?.tools?.length ?? 0 });
+		// Shape only, never the prompt or attachment text: the debug log is persisted and viewable.
+		await Log("Request sent - Body:", {
+			model: requestBodyJSON?.model,
+			parent_message_uuid: requestBodyJSON?.parent_message_uuid,
+			turn_message_uuids: requestBodyJSON?.turn_message_uuids,
+			promptChars: requestBodyJSON?.prompt?.length ?? 0,
+			attachments: requestBodyJSON?.attachments?.length ?? 0,
+			files: requestBodyJSON?.files?.length ?? 0,
+			tools: requestBodyJSON?.tools?.length ?? 0,
+		});
 		// Extract IDs from URL - we can refine these regexes
 		const urlParts = details.url.split('/');
 		const orgId = urlParts[urlParts.indexOf('organizations') + 1];

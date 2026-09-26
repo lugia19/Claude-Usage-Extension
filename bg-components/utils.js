@@ -1,7 +1,8 @@
 // Always-on logging (common/log/logger.js publishes createLogger/configureLogger on globalThis).
 import '../common/log/logger.js';
 /* global createLogger, configureLogger */
-configureLogger({ app: 'tracker', prefix: '[UsageTracker]' });
+// The background is the only writer of the debug log; content scripts send it their entries.
+configureLogger({ app: 'tracker', prefix: '[UsageTracker]', role: 'background' });
 
 // Configuration object (moved from constants.json)
 const CONFIG = {

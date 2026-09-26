@@ -41,12 +41,12 @@ async function getTextFromContent(content, includeEphemeral = false, api = null,
 					const docUuid = content.metadata?.uri;
 					if (docUuid) {
 						const syncObj = { type: "gdrive", config: { uri: docUuid } };
-						await Log("Fetching Google Drive document content:", content.url, "with sync object:", syncObj);
+						await Log("Fetching Google Drive document content:", docUuid);
 						try {
 							const syncText = await api.getSyncText(syncObj);
 							if (syncText) {
 								textPieces.push(syncText);
-								await Log("Retrieved Google Drive document content successfully:", syncText);
+								await Log("Retrieved Google Drive document content:", syncText.length, "chars");
 							}
 						} catch (error) {
 							await Log("error", "Error fetching Google Drive document:", error);
