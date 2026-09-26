@@ -45,6 +45,7 @@
 				"i18n/pt-BR.js",
 				"i18n/es.js",
 				"common/i18n/i18n-core.js",
+				"common/claude/page.js",
 				"common/ui/components.js",
 				"common/ui/cards.js",
 				"content-components/content_utils.js",

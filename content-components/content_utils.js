@@ -1,4 +1,5 @@
-/* global localize, fmtNum, currentLocale, pinLocale, refreshAccountLocale, getLanguageOverride,
+/* global localize, fmtNum, getActiveOrgId, getConversationId, getIncognitoConversationId, isIncognito,
+   isCodePage, currentLocale, pinLocale, refreshAccountLocale, getLanguageOverride,
    setLanguageOverride, createClaudeTooltip, isMobileLayout,
    modelFamilyFromVersion, MODEL_UNKNOWN */
 'use strict';
@@ -154,25 +155,9 @@ async function logError(error) {
 // Utility functions
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-function isIncognitoConversation() {
-	return new URLSearchParams(window.location.search).has('incognito');
-}
-
-function getConversationId() {
-	if (isIncognitoConversation()) {
-		try {
-			const data = JSON.parse(sessionStorage.getItem('incognito_temporary_conversation_uuid'));
-			return data?.uuid || null;
-		} catch {
-			return null;
-		}
-	}
-	const match = window.location.pathname.match(/\/chat\/([^/?]+)/);
-	return match ? match[1] : null;
-}
-
-function getActiveOrgId() {
-	return document.cookie.split('; ').find(row => row.startsWith('lastActiveOrg='))?.split('=')[1] || null;
+// The conversation being viewed, incognito chats included (common/claude/page.js has the pieces).
+function getCurrentConversationId() {
+	return isIncognito() ? getIncognitoConversationId() : getConversationId();
 }
 
 async function sendBackgroundMessage(message) {
@@ -331,10 +316,6 @@ async function getCurrentModel(maxWait = 3000) {
 	const modelVersion = await getCurrentModelVersion(maxWait);
 	if (!modelVersion || modelVersion === MODEL_UNKNOWN) return null;
 	return modelFamilyFromVersion(modelVersion);
-}
-
-function isCodePage() {
-	return window.location.pathname.includes('claude-code-desktop') || window.location.pathname.includes('/code');
 }
 
 
@@ -820,7 +801,7 @@ function getTitleAreaAnchor() {
 const pageLayouts = {
 	// Desktop client layouts (checked first — desktop has dframe-sidebar, not nav.flex)
 	desktopChat: {
-		match() { return !!document.querySelector('aside.dframe-sidebar') && !isCodePage() && !!getConversationId(); },
+		match() { return !!document.querySelector('aside.dframe-sidebar') && !isCodePage() && !!getCurrentConversationId(); },
 		anchors: {
 			sidebar: getSidebarDesktopAnchor,
 			chatArea: getChatAreaRegularAnchor,
@@ -862,7 +843,7 @@ const pageLayouts = {
 		},
 	},
 	desktopHome: {
-		match() { return !!document.querySelector('aside.dframe-sidebar') && !isCodePage() && !getConversationId(); },
+		match() { return !!document.querySelector('aside.dframe-sidebar') && !isCodePage() && !getCurrentConversationId(); },
 		anchors: {
 			sidebar: getSidebarDesktopAnchor,
 			chatArea: getChatAreaRegularAnchor,
@@ -870,7 +851,7 @@ const pageLayouts = {
 	},
 	// Web layouts
 	chat: {
-		match() { return !isCodePage() && !isIncognitoConversation() && !!getConversationId(); },
+		match() { return !isCodePage() && !isIncognito() && !!getCurrentConversationId(); },
 		anchors: {
 			sidebar: getSidebarRegularAnchor,
 			chatArea: getChatAreaRegularAnchor,
@@ -926,14 +907,14 @@ const pageLayouts = {
 	},
 	incognitoConversation: {
 		// Incognito conversations have no convID in the URL and a special sessionStorage key for it instead, but otherwise behave like regular chats.
-		match() { return isIncognitoConversation(); },
+		match() { return isIncognito(); },
 		anchors: {
 			sidebar: getSidebarRegularAnchor,
 			chatArea: getChatAreaRegularAnchor,
 			titleArea() {
 				// The label used to live under .z-header, which no longer exists - it now sits
 				// in a fixed title bar. Matched structurally rather than by its text: the layout
-				// is already gated on isIncognitoConversation(), so testing for "Incognito chat"
+				// is already gated on isIncognito(), so testing for "Incognito chat"
 				// bought nothing and broke in every locale but English.
 				const label = document.querySelector('.fixed.draggable > .text-sm.select-none');
 				if (!label) return null;
@@ -957,7 +938,7 @@ const pageLayouts = {
 		},
 	},
 	home: {
-		match() { return !isCodePage() && !getConversationId(); },
+		match() { return !isCodePage() && !getCurrentConversationId(); },
 		anchors: {
 			sidebar: getSidebarRegularAnchor,
 			chatArea: getChatAreaRegularAnchor,
@@ -1043,7 +1024,7 @@ async function initExtension() {
 
 	// Incognito conversations never have the standard sidebar structure.
     // Skip the 6-second wait to avoid a spurious warning and wasted polling.
-    if (new URLSearchParams(window.location.search).has('incognito')) {
+    if (isIncognito()) {
         await Log('Incognito mode: skipping sidebar anchor wait');
         sendBackgroundMessage({ type: 'requestData' });
         sendBackgroundMessage({ type: 'initOrg' });

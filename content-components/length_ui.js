@@ -1,5 +1,5 @@
 /* global CONFIG, Log, createClaudeTooltip, getResetTimeHTML, sleep, sendBackgroundMessage, getActiveOrgId,
-   isMobileLayout, isCodePage, UsageData, ConversationData, getConversationId, getCurrentModel,
+   isMobileLayout, isCodePage, UsageData, ConversationData, getCurrentConversationId, getCurrentModel,
    getCurrentModelVersion, getCurrentEffortLabel, RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS,
    LayoutManager, mountToAnchor, localize, fmtNum, onSsePartialUsage, shouldApplySseSession,
    LENGTH_DISPLAY_KEY */
@@ -92,7 +92,7 @@ class LengthUI {
 			this.pendingUpdates.usage = null;
 		}
 		if (this.pendingUpdates.conversation) {
-			const currentConvoId = getConversationId();
+			const currentConvoId = getCurrentConversationId();
 			if (!this.pendingUpdates.conversation.conversationId || !currentConvoId ||
 				this.pendingUpdates.conversation.conversationId === currentConvoId) {
 				this.state.conversationData = ConversationData.fromJSON(this.pendingUpdates.conversation);
@@ -399,7 +399,7 @@ class LengthUI {
 
 		const msgPrefix = isMobileLayout() ? localize('length.msgs_left_mobile') : localize('length.msgs_left_desktop');
 
-		if (!getConversationId() || !usageData || !conversationData) {
+		if (!getCurrentConversationId() || !usageData || !conversationData) {
 			estimate.innerHTML = `${msgPrefix} <span>${localize('common.na')}</span>`;
 			return;
 		}
@@ -472,7 +472,7 @@ class LengthUI {
 		}
 
 		// Ignore updates for a different conversation (stale responses from rapid switching)
-		const currentConvoId = getConversationId();
+		const currentConvoId = getCurrentConversationId();
 		if (conversationDataJSON.conversationId && currentConvoId &&
 			conversationDataJSON.conversationId !== currentConvoId) {
 			Log('LengthUI: Ignoring stale conversation update for', conversationDataJSON.conversationId);
@@ -552,7 +552,7 @@ class LengthUI {
 	}
 
 	async checkConversationChange() {
-		const newConversation = getConversationId();
+		const newConversation = getCurrentConversationId();
 		const isHomePage = newConversation === null;
 
 		if (this.state.conversationData?.conversationId != newConversation && !isHomePage
