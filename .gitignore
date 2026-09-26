@@ -16,5 +16,4 @@ content-components/ui_dataclasses.js
 *.png
 *.psd
 CLAUDE.md
-content-components/localization.js
 TODO.md

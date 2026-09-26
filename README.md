@@ -46,3 +46,7 @@ The extension fetches your organization ID from claude.ai to synchronize usage d
 Most elements in the chat UI (Namely the length, cost, estimate, caching status) have a tooltip explaining them further.
 
 ![Claude Usage Tracker UI](https://github.com/lugia19/Claude-Usage-Extension/blob/main/ui_screenshot.png?raw=true)
+
+## Building from source
+
+Shared code lives in the [claude-ext-common](https://github.com/lugia19/claude-ext-common) submodule, so clone with `git clone --recurse-submodules` (or run `git submodule update --init` in an existing clone). Then run `build.bat`, which produces the Chrome, Firefox and Electron zips in `web-ext-artifacts/`.

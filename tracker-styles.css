@@ -1,21 +1,5 @@
-/* ui-styles.css */
-
-/* Base Components */
-.ut-card {
-	position: fixed;
-	border-radius: 8px;
-	padding: 12px;
-	font-size: 14px;
-	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-	z-index: 99999;
-	user-select: none;
-}
-
-.ut-header {
-	padding: 8px;
-	margin: -12px -12px 8px -12px;
-	cursor: move;
-}
+/* tracker-styles.css - the tracker's own sidebar/stat-line UI. Modals, controls, tooltips and
+   notification cards come from common/ui (claude-ext-common). */
 
 .ut-container {
 	display: flex;
@@ -27,17 +11,6 @@
 	display: flex;
 	align-items: center;
 	gap: 8px;
-}
-
-.ut-section {
-	margin-bottom: 12px;
-}
-
-/* All inputs get the same treatment */
-.ut-input {
-	padding: 6px;
-	border-radius: 4px;
-	margin-bottom: 12px;
 }
 
 /* All buttons get the same treatment */
@@ -63,13 +36,6 @@
 	padding: 0;
 }
 
-/* Close button is just positioned */
-.ut-close {
-	position: absolute;
-	top: 0px;
-	right: 8px;
-}
-
 /* Progress bars always the same */
 .ut-progress {
 	position: relative;
@@ -90,53 +56,12 @@
 	transition: width 0.3s ease, background-color 0.3s ease;
 }
 
-
-.ut-text-lg {
-	font-size: 14px;
-}
-
-/* Common utilities */
-.ut-label {
-	display: block;
-	margin-bottom: 8px;
-}
-
 .ut-link {
 	text-decoration: underline;
 	cursor: pointer;
 }
 
-.ut-tooltip {
-	position: fixed;
-	padding: 4px 8px;
-	border-radius: 6px;
-	font-size: 13px;
-	line-height: 18px;
-	opacity: 0;
-	transition: opacity 0.2s;
-	pointer-events: none;
-	white-space: nowrap;
-	z-index: 9999;
-	user-select: none;
-}
-
-.ut-tooltip-trigger {
-    -webkit-touch-callout: none; /* Disable callout on long press */
-    -webkit-user-select: none;   /* Disable text selection */
-    user-select: none;
-}
-
-.ut-content-box {
-	padding: 8px;
-	border-radius: 4px;
-	overflow-y: auto;
-}
-
 /* Spacing utilities */
-.ut-mb-0 {
-	margin-bottom: 0;
-}
-
 .ut-mb-1 {
 	margin-bottom: 4px;
 }
@@ -145,26 +70,9 @@
 	margin-bottom: 8px;
 }
 
-.ut-mb-3 {
-	margin-bottom: 12px;
-}
-
-/* Width utilities */
-.ut-w-full {
-	width: 100%;
-}
-
-.ut-w-auto {
-	width: auto;
-}
-
 /* Flex utilities */
 .ut-flex-1 {
 	flex: 1;
-}
-
-.ut-flex-grow {
-	flex-grow: 1;
 }
 
 /* Composer stat line: the session bar gets a fixed share of the line so it never
@@ -197,53 +105,9 @@
 	justify-content: space-between;
 }
 
-.ut-justify-center {
-	justify-content: center;
-}
-
-.ut-items-center {
-	align-items: center;
-}
-
-/* Text alignment */
-.ut-text-left {
-	text-align: left;
-}
-
-.ut-text-center {
-	text-align: center;
-}
-
-.ut-text-right {
-	text-align: right;
-}
-
-/* Display utilities */
-.ut-block {
-	display: block;
-}
-
-.ut-hidden {
-	display: none;
-}
-
-/* Position utilities */
-.ut-sticky {
-	position: sticky;
-	top: 0;
-}
-
-.ut-relative {
-	position: relative;
-}
-
 /* Selection */
 .ut-select-none {
 	user-select: none;
-}
-
-.ut-select-text {
-	user-select: text;
 }
 
 .ut-weekly-marker {

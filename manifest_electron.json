@@ -21,7 +21,29 @@
 			"js": [
 				"lib/browser-polyfill.min.js",
 				"lib/o200k_base.js",
-				"content-components/localization.js",
+				"common/i18n/en.js",
+				"common/i18n/fr.js",
+				"common/i18n/de.js",
+				"common/i18n/hi.js",
+				"common/i18n/id.js",
+				"common/i18n/it.js",
+				"common/i18n/ja.js",
+				"common/i18n/ko.js",
+				"common/i18n/pt-BR.js",
+				"common/i18n/es.js",
+				"i18n/en.js",
+				"i18n/fr.js",
+				"i18n/de.js",
+				"i18n/hi.js",
+				"i18n/id.js",
+				"i18n/it.js",
+				"i18n/ja.js",
+				"i18n/ko.js",
+				"i18n/pt-BR.js",
+				"i18n/es.js",
+				"common/i18n/i18n-core.js",
+				"common/ui/components.js",
+				"common/ui/cards.js",
 				"content-components/content_utils.js",
 				"content-components/sse_bridge.js",
 				"content-components/electron_reciever.js",
@@ -36,7 +58,8 @@
 				"https://claude.ai/*"
 			],
 			"js": [
-				"injections/usage-sse-watcher.js"
+				"injections/usage-sse-watcher.js",
+				"common/i18n/account-locale-watcher.js"
 			],
 			"world": "MAIN",
 			"run_at": "document_start"
@@ -59,13 +82,13 @@
 				"default-config.json",
 				"lib/browser-polyfill.min.js",
 				"lib/o200k_base.js",
-				"kofi-button.png",
+				"common/assets/kofi-button.png",
 				"debug.html",
 				"update_patchnotes.txt",
 				"tracker-styles.css",
 				"injections/webrequest-polyfill.js",
 				"qol-badge.png",
-				"rate-badge.png"
+				"common/assets/rate-badge.png"
 			],
 			"matches": [
 				"<all_urls>"

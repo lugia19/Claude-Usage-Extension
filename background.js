@@ -4,7 +4,31 @@ import { CONFIG, isElectron, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, se
 import { tokenStorageManager, tokenCounter } from './bg-components/tokenManagement.js';
 import { getStrategy, initContainerStrategy, setBrave } from './bg-components/container-strategy.js';
 import { UsageData, modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier } from './shared/dataclasses.js';
-import { translate, normalizeLocale } from './shared/localization.js';
+// UI strings: the common and tracker tables, then i18n-core.js, which publishes translate() on
+// globalThis. The popup and this worker can't see claude.ai's localStorage, so they translate with
+// the lastLang the content script stores.
+import './common/i18n/en.js';
+import './common/i18n/fr.js';
+import './common/i18n/de.js';
+import './common/i18n/hi.js';
+import './common/i18n/id.js';
+import './common/i18n/it.js';
+import './common/i18n/ja.js';
+import './common/i18n/ko.js';
+import './common/i18n/pt-BR.js';
+import './common/i18n/es.js';
+import './i18n/en.js';
+import './i18n/fr.js';
+import './i18n/de.js';
+import './i18n/hi.js';
+import './i18n/id.js';
+import './i18n/it.js';
+import './i18n/ja.js';
+import './i18n/ko.js';
+import './i18n/pt-BR.js';
+import './i18n/es.js';
+import './common/i18n/i18n-core.js';
+/* global translate */
 import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
 import { invalidateAccountSettings, invalidateProfileTokens, storeSseUsage } from './bg-components/claude-api.js';
 
@@ -28,20 +52,17 @@ const INTERCEPT_PATTERNS = {
 	onCompleted: {
 		urls: [
 			"*://claude.ai/api/organizations/*/chat_conversations/*",
-			"*://claude.ai/v1/sessions/*/events",
-			"*://claude.ai/api/account_profile"
+			"*://claude.ai/v1/sessions/*/events"
 		],
 		regexes: [
 			"^https?://claude\\.ai/api/organizations/[^/]*/chat_conversations/[^/]*$",
-			"^https?://claude\\.ai/v1/sessions/[^/]*/events$",
-			"^https?://claude\\.ai/api/account_profile$"
+			"^https?://claude\\.ai/v1/sessions/[^/]*/events$"
 		]
 	}
 };
 
 //#region Variable declarations
 let processingLock = null;  // Unix timestamp or null
-const pendingLocaleReloads = new Map();  // tabId -> normalized new locale (set in onBeforeRequest, consumed in onCompleted)
 const pendingTasks = [];
 const LOCK_TIMEOUT = 30000;  // 30 seconds - if a task takes longer, something's wrong
 let pendingRequests;
@@ -204,8 +225,7 @@ async function checkResetNotifications() {
 
 	if (shouldNotify) {
 		try {
-			const stored = await browser.storage.local.get('lastLang');
-			const loc = normalizeLocale(stored.lastLang || 'en');
+			const { lastLang: loc } = await browser.storage.local.get('lastLang');
 			await createNotification({
 				type: 'basic',
 				iconUrl: browser.runtime.getURL('icon128.png'),
@@ -428,14 +448,6 @@ async function updateTabWithConversationData(tabId, conversationData) {
 
 // Simple handlers with inline functions
 messageRegistry.register('getConfig', () => CONFIG);
-messageRegistry.register('getAccountLocale', async (message, sender) => {
-	try {
-		return await getStrategy().apiForTab(sender.tab, null).getAccountLocale();
-	} catch (error) {
-		await Log("warn", "Failed to fetch account locale:", error);
-		return null;
-	}
-});
 messageRegistry.register('initOrg', (message, sender, orgId) => tokenStorageManager.addOrgId(orgId).then(() => true));
 
 messageRegistry.register('getAPIKey', () => getStorageValue('apiKey'));
@@ -469,8 +481,6 @@ messageRegistry.register('setResetNotifThreshold', (message) => {
 	return setStorageValue('resetNotifThreshold', clamped);
 });
 
-messageRegistry.register('getLanguageOverride', () => getStorageValue('languageOverride', null));
-messageRegistry.register('setLanguageOverride', (message) => setStorageValue('languageOverride', message.value));
 
 messageRegistry.register('getExtraUsageAgainstLimit', () => getStorageValue('extraUsageAgainstLimit', EXTRA_USAGE_AGAINST_LIMIT_DEFAULT));
 messageRegistry.register('setExtraUsageAgainstLimit', (message) => setStorageValue('extraUsageAgainstLimit', message.value === true));
@@ -1108,24 +1118,6 @@ async function onBeforeRequestHandler(details) {
 		// This same request carries edited conversation preferences, which are priced into every
 		// conversation, so drop the cached token count rather than waiting out its TTL.
 		await invalidateProfileTokens(await requestActiveOrgId(details.tabId));
-
-		// Read the new UI language straight from the request body — the authoritative value the
-		// user just submitted, with no server-propagation lag (a GET right after the PUT can
-		// briefly still return the old locale). Pin it so the post-reload boot trusts it.
-		const body = await parseRequestBody(details.requestBody);
-		const bodyLocale = body?.locale;
-		// If the user has set an explicit language override, the account language is irrelevant to
-		// the displayed UI — don't pin it or reload (applyLocale would override it on boot anyway).
-		const override = await getStorageValue('languageOverride', null);
-		if (bodyLocale && !override) {
-			const newLoc = normalizeLocale(bodyLocale);
-			const stored = await browser.storage.local.get('lastLang');
-			if (normalizeLocale(stored.lastLang || 'en') !== newLoc) {
-				await browser.storage.local.set({ lastLang: newLoc, lastLangPinnedUntil: Date.now() + 30000 });
-				pendingLocaleReloads.set(details.tabId, newLoc);
-				await Log("Account language change detected in PUT body:", newLoc);
-			}
-		}
 	}
 
 	// The user toggled a feature (memory, web search, ...). Drop the cached account settings
@@ -1146,16 +1138,6 @@ async function onBeforeRequestHandler(details) {
 }
 
 async function onCompletedHandler(details) {
-	// The language-change PUT has completed (locale was captured from its body in
-	// onBeforeRequest). Reload the originating tab so the whole UI re-renders in the new locale.
-	if (details.method === "PUT" && details.url.includes("/account_profile") &&
-		pendingLocaleReloads.has(details.tabId)) {
-		const loc = pendingLocaleReloads.get(details.tabId);
-		pendingLocaleReloads.delete(details.tabId);
-		await Log("Account language changed to", loc, "- reloading tab");
-		await browser.tabs.reload(details.tabId);
-	}
-
 	if (details.method === "GET" &&
 		details.url.includes("/chat_conversations/") &&
 		details.url.includes("tree=True") &&

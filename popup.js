@@ -1,4 +1,4 @@
-/* global UsageData, isPeakHours, localize, setLocaleOverride */
+/* global UsageData, isPeakHours, localize, pinLocale */
 'use strict';
 let CONFIG;
 const BLUE_HIGHLIGHT = '#2c84db';
@@ -6,8 +6,8 @@ const RED_WARNING = '#de2929';
 const SUCCESS_GREEN = '#22c55e';
 const WARNING_THRESHOLD = 0.9;
 
-// The popup's own document has no lang attribute, so localize() is pinned (via
-// setLocaleOverride) to the last page language persisted to storage by the content script.
+// The popup can't see claude.ai's localStorage, where the language is resolved, so localize() is
+// pinned (pinLocale) to the language the content script last stored as lastLang.
 
 const LIMIT_LABEL_KEYS = {
 	session: 'usage.label_session',
@@ -169,7 +169,7 @@ async function loadUsageData() {
 	// Resolve the locale from the last page language seen by the content script, then
 	// localize the static popup chrome.
 	const stored = await browser.storage.local.get('lastLang');
-	setLocaleOverride(stored.lastLang || 'en');
+	pinLocale(stored.lastLang || 'en');
 	applyStaticLocalization();
 
 	try {
