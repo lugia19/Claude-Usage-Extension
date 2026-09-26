@@ -1,3 +1,6 @@
+/* global ClaudeExtNet */
+// Runs in the page, next to the MAIN-world content scripts, so common/net/net.js's ClaudeExtNet is
+// already loaded.
 (function () {
 	// Get patterns from the script element's data attribute
 	const script = document.currentScript;
@@ -28,7 +31,7 @@
 			} else if (body instanceof Blob || body instanceof ArrayBuffer ||
 				ArrayBuffer.isView(body) || body instanceof ReadableStream) {
 				let bytes = new Uint8Array(await new Response(body).arrayBuffer());
-				if (isGzip(bytes)) bytes = await gunzip(bytes);
+				if (ClaudeExtNet.isGzipBytes(bytes)) bytes = await ClaudeExtNet.gunzipBytes(bytes);
 				text = new TextDecoder().decode(bytes);
 			} else {
 				text = JSON.stringify(body);
@@ -40,29 +43,9 @@
 		}
 	}
 
-	function isGzip(bytes) {
-		return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
-	}
-
-	async function gunzip(bytes) {
-		const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-		return new Uint8Array(await new Response(stream).arrayBuffer());
-	}
-
 	window.fetch = async (...args) => {
 		const [input, config] = args;
-
-		let url;
-		if (input instanceof URL) {
-			url = input.href;
-		} else if (typeof input === 'string') {
-			url = input;
-		} else if (input instanceof Request) {
-			url = input.url;
-		}
-		if (url.startsWith('/')) {
-			url = 'https://claude.ai' + url;
-		}
+		const url = ClaudeExtNet.getFetchUrl(input);
 
 		// Only intercepted requests get their body read. Materialising a Blob or stream is a full
 		// read of the payload before the real request can go out - not a cost to pay on every
@@ -82,7 +65,7 @@
 
 		const details = {
 			url: url,
-			method: config?.method || 'GET',
+			method: ClaudeExtNet.getFetchMethod(input, config),
 			requestBody: await getBodyDetails(body)
 		};
 
