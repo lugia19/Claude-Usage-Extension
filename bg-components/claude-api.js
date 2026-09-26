@@ -906,8 +906,10 @@ class ConversationAPI {
 		};
 
 		// Add settings costs
+		// One line, not one per setting: logging is always on, and ~25 lines per conversation load
+		// would crowd everything else out of the capped log.
+		await Log("Enabled settings:", Object.keys(effectiveSettings).filter(key => effectiveSettings[key]).join(', '));
 		for (const [setting, enabled] of Object.entries(effectiveSettings)) {
-			await Log("Setting:", setting, enabled);
 			if (enabled && FEATURE_COSTS[setting]) {
 				lengthTokens += FEATURE_COSTS[setting];
 				costTokens += FEATURE_COSTS[setting] * CONFIG.CACHING_MULTIPLIER;
