@@ -3,6 +3,9 @@
 REM Not part of the extension: the debug mirrors, dev scripts, and the common submodule's tooling and docs.
 set IGNORE="debug/**" "scripts/**" ".github/**" "common/scripts/**" "common/README.md"
 
+REM Stop unless common/ is exactly the pinned commit, and that matches common's main.
+node common/scripts/check-common.js || exit /b 1
+
 REM Build dataclasses
 echo Building dataclasses...
 node scripts/build-dataclasses.js
