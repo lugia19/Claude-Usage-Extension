@@ -10,11 +10,6 @@ const targets = [
 		src: path.join('shared', 'dataclasses.js'),
 		out: path.join('content-components', 'ui_dataclasses.js'),
 		pragma: '/* global CONFIG */'
-	},
-	{
-		src: path.join('shared', 'localization.js'),
-		out: path.join('content-components', 'localization.js'),
-		pragma: '/* Generated from shared/localization.js by scripts/build-dataclasses.js — do not edit. */'
 	}
 ];
 

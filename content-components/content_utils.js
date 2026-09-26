@@ -1,4 +1,5 @@
-/* global localize, fmtNum, normalizeLocale, setLocaleOverride,
+/* global localize, fmtNum, currentLocale, pinLocale, refreshAccountLocale, getLanguageOverride,
+   setLanguageOverride, createClaudeTooltip, isMobileLayout,
    modelFamilyFromVersion, MODEL_UNKNOWN */
 'use strict';
 
@@ -332,10 +333,6 @@ async function getCurrentModel(maxWait = 3000) {
 	return modelFamilyFromVersion(modelVersion);
 }
 
-function isMobileView() {
-	return matchMedia('(pointer: coarse)').matches && window.innerWidth < 768;
-}
-
 function isCodePage() {
 	return window.location.pathname.includes('claude-code-desktop') || window.location.pathname.includes('/code');
 }
@@ -370,25 +367,27 @@ function isSidebarItemVisible(prefs, key) {
 }
 
 
-// Pin the active UI locale and persist it as lastLang so the popup and background (which have
-// no claude.ai DOM) can localize too. Normally fetched from /api/account_profile at boot. But
-// right after a language change, the background pins the authoritative value (from the PUT body)
-// with a short TTL — within that window we trust it and skip the GET, because the GET can briefly
-// lag behind the change. Falls back to the stored value, then English.
+// The UI language comes from common/i18n (shared with Claude QoL: see i18n-core.js). Before that,
+// the tracker kept its own override in storage.local; move it over once, if the user hasn't picked a
+// language in the shared picker since. Awaited before anything localizes a card or the settings.
+const localeReady = (async () => {
+	try {
+		const { languageOverride } = await browser.storage.local.get('languageOverride');
+		if (languageOverride === undefined) return;
+		if (languageOverride && !getLanguageOverride()) {
+			setLanguageOverride(languageOverride);
+			pinLocale(languageOverride); // in case something already localized with the old locale
+		}
+		await browser.storage.local.remove('languageOverride');
+	} catch (e) { /* nothing to migrate */ }
+})();
+
+// Persist the resolved language as lastLang, for the popup and background (which can't see
+// claude.ai's localStorage), and keep the shared account locale cache fresh.
 async function applyLocale() {
-	const stored = await browser.storage.local.get(['lastLang', 'lastLangPinnedUntil', 'languageOverride']);
-	let norm;
-	if (stored.languageOverride) {
-		// Explicit user choice wins over everything: skip the account fetch and the PUT pin.
-		norm = normalizeLocale(stored.languageOverride);
-	} else if (stored.lastLangPinnedUntil && Date.now() < stored.lastLangPinnedUntil) {
-		norm = normalizeLocale(stored.lastLang || 'en');
-	} else {
-		const acc = await sendBackgroundMessage({ type: 'getAccountLocale' });
-		norm = normalizeLocale(acc || stored.lastLang || 'en');
-	}
-	setLocaleOverride(norm);
-	await browser.storage.local.set({ lastLang: norm });
+	await localeReady;
+	refreshAccountLocale();
+	await browser.storage.local.set({ lastLang: currentLocale() });
 }
 
 function getResetTimeHTML(timeInfo) {
@@ -416,124 +415,6 @@ function getResetTimeHTML(timeInfo) {
 	return `${prefix} <span style="color: ${BLUE_HIGHLIGHT}">${timeString}</span>`;
 }
 
-// Tooltips use the CDS color vars (--cds-tooltip-bg/-fg), which are scoped to .cds-root.
-// Append them into a dedicated portal so the vars resolve outside claude.ai's own roots.
-let _tooltipPortal = null;
-function getTooltipPortal() {
-	if (_tooltipPortal && _tooltipPortal.isConnected) return _tooltipPortal;
-
-	const existing = document.querySelector('.cds-root[data-cds-portal]');
-	if (existing) {
-		_tooltipPortal = existing;
-		return _tooltipPortal;
-	}
-
-	const reference = document.querySelector('.cds-root');
-	const portal = document.createElement('div');
-	portal.className = 'cds-root pointer-events-none';
-	portal.setAttribute('data-cds-portal', '');
-
-	if (reference) {
-		for (const attr of ['data-density', 'data-mode', 'data-platform', 'data-font']) {
-			const val = reference.getAttribute(attr);
-			if (val) portal.setAttribute(attr, val);
-		}
-	}
-
-	document.body.appendChild(portal);
-	_tooltipPortal = portal;
-	return _tooltipPortal;
-}
-
-function setupTooltip(element, tooltip, options = {}) {
-	if (!element || !tooltip) return;
-
-	// Check if already set up
-	if (element.hasAttribute('data-tooltip-setup')) {
-		return;
-	}
-	element.setAttribute('data-tooltip-setup', 'true');
-
-	const { topOffset = 10 } = options;
-
-	// Add standard classes for all tooltip elements
-	element.classList.add('ut-tooltip-trigger', 'ut-info-item');
-	element.style.cursor = 'help';
-
-
-	let pressTimer;
-	let tooltipHideTimer;
-
-	const showTooltip = () => {
-		const rect = element.getBoundingClientRect();
-		tooltip.style.opacity = '1';
-		const tooltipRect = tooltip.getBoundingClientRect();
-
-		let leftPos = rect.left + (rect.width / 2);
-		if (leftPos + (tooltipRect.width / 2) > window.innerWidth) {
-			leftPos = window.innerWidth - tooltipRect.width - 10;
-		}
-		if (leftPos - (tooltipRect.width / 2) < 0) {
-			leftPos = tooltipRect.width / 2 + 10;
-		}
-
-		let topPos = rect.top - tooltipRect.height - topOffset;
-		if (topPos < 10) {
-			topPos = rect.bottom + 10;
-		}
-
-		tooltip.style.left = `${leftPos}px`;
-		tooltip.style.top = `${topPos}px`;
-		tooltip.style.transform = 'translateX(-50%)';
-	};
-
-	const hideTooltip = () => {
-		tooltip.style.opacity = '0';
-		clearTimeout(tooltipHideTimer);
-	};
-
-	// Pointer events work for both mouse and touch
-	element.addEventListener('pointerdown', (e) => {
-
-		if (e.pointerType === 'touch' || isMobileView()) {
-			// Touch/mobile: long press
-			pressTimer = setTimeout(() => {
-				showTooltip();
-
-				// Auto-hide after 3 seconds
-				tooltipHideTimer = setTimeout(hideTooltip, 3000);
-			}, 500);
-		}
-		// Mouse is handled by enter/leave below
-	});
-
-	element.addEventListener('pointerup', (e) => {
-		if (e.pointerType === 'touch' || isMobileView()) {
-			clearTimeout(pressTimer);
-		}
-	});
-
-	element.addEventListener('pointercancel', (e) => {
-		clearTimeout(pressTimer);
-		hideTooltip();
-	});
-
-	// Keep mouse hover for desktop
-	if (!isMobileView()) {
-		element.addEventListener('pointerenter', (e) => {
-			if (e.pointerType === 'mouse') {
-				showTooltip();
-			}
-		});
-
-		element.addEventListener('pointerleave', (e) => {
-			if (e.pointerType === 'mouse') {
-				hideTooltip();
-			}
-		});
-	}
-}
-
 // Progress bar component
 class ProgressBar {
 	constructor(options = {}) {
@@ -554,20 +435,17 @@ class ProgressBar {
 		this.bar.className = 'ut-progress-bar';
 		this.bar.style.background = BLUE_HIGHLIGHT;
 
-		this.tooltip = document.createElement('div');
-		this.tooltip.className = 'bg-[var(--cds-tooltip-bg)] text-[var(--cds-tooltip-fg)] ut-tooltip shadow-sm dark:shadow-panel-sm';
-
 		this.track.appendChild(this.bar);
 		this.container.appendChild(this.track);
-		getTooltipPortal().appendChild(this.tooltip);
-		setupTooltip(this.container, this.tooltip, { topOffset: 10 });
+		this.container.style.cursor = 'help';
+		this.tooltip = createClaudeTooltip(this.container, '');
 	}
 
 	updateProgress(total, maxTokens) {
 		const percentage = (total / maxTokens) * 100;
 		this.bar.style.width = `${Math.min(percentage, 100)}%`;
 		this.bar.style.background = total >= maxTokens * CONFIG.WARNING.PERCENT_THRESHOLD ? RED_WARNING : BLUE_HIGHLIGHT;
-		this.tooltip.textContent = localize('usage.bar_credits', { used: fmtNum(total), total: fmtNum(maxTokens), pct: percentage.toFixed(1) });
+		this.tooltip.updateText(localize('usage.bar_credits', { used: fmtNum(total), total: fmtNum(maxTokens), pct: percentage.toFixed(1) }));
 	}
 
 	setMarker(percentage, label) {
@@ -579,14 +457,12 @@ class ProgressBar {
 			this.container.style.marginTop = '-10px';
 			this.container.appendChild(this.marker);
 
-			this.markerTooltip = document.createElement('div');
-			this.markerTooltip.className = 'bg-[var(--cds-tooltip-bg)] text-[var(--cds-tooltip-fg)] ut-tooltip shadow-sm dark:shadow-panel-sm';
-			getTooltipPortal().appendChild(this.markerTooltip);
-			setupTooltip(this.marker, this.markerTooltip);
+			this.marker.style.cursor = 'help';
+			this.markerTooltip = createClaudeTooltip(this.marker, '');
 		}
 		this.marker.style.left = `${Math.min(percentage, 100)}%`;
 		this.marker.style.display = 'block';
-		if (label) this.markerTooltip.textContent = label;
+		if (label) this.markerTooltip.updateText(label);
 	}
 
 	clearMarker() {
@@ -935,7 +811,7 @@ function getTitleAreaAnchor() {
 
 	const headerRow = titleLine.parentElement;
 
-	if (isMobileView()) {
+	if (isMobileLayout()) {
 		return getPhoneTitleAreaAnchor(titleLine, headerRow);
 	}
 	return getDesktopTitleAreaAnchor(titleLine, headerRow);
@@ -957,7 +833,7 @@ const pageLayouts = {
 
 				const headerRow = titleLine.parentElement;
 
-				if (isMobileView()) {
+				if (isMobileLayout()) {
 					return getPhoneTitleAreaAnchor(titleLine, headerRow);
 				}
 				return getDesktopTitleAreaAnchor(titleLine, headerRow);
@@ -1146,7 +1022,7 @@ async function initExtension() {
 	}
 	window.claudeTrackerInstance = true;
 
-	// Report Brave status before any ClaudeAPI-backed call (e.g. getAccountLocale below) so the
+	// Report Brave status before any ClaudeAPI-backed call so the
 	// background knows to proxy claude.ai fetches through this tab's container.
 	await reportBraveStatus();
 
@@ -1157,9 +1033,9 @@ async function initExtension() {
 
 	await injectStyles();
 
-	// Resolve the account UI language and pin it BEFORE assigning CONFIG. UI scripts gate their
-	// construction on CONFIG, so pinning the locale first means every static string (sidebar
-	// header, tooltips) is built in the right language.
+	// Settle the UI language (the one-time override migration) BEFORE assigning CONFIG. UI scripts
+	// gate their construction on CONFIG, so every static string (sidebar header, tooltips) is built
+	// in the right language.
 	const cfg = await sendBackgroundMessage({ type: 'getConfig' });
 	await applyLocale();
 	CONFIG = cfg;

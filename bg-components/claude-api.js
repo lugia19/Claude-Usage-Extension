@@ -353,12 +353,6 @@ class ClaudeAPI {
 		};
 	}
 
-	// Account UI language, e.g. "fr-FR" (null if unavailable)
-	async getAccountLocale() {
-		const profileData = await this.getRequest('/account_profile');
-		return profileData?.locale || null;
-	}
-
 	// Account-level feature flags. The conversation payload only carries a subset of these
 	// (notably it has no enabled_melange), so it can't be relied on alone for pricing.
 	// Endpoint is account-scoped, not org-scoped - we key the cache by orgId only to keep

@@ -1,5 +1,5 @@
-/* global CONFIG, Log, setupTooltip, getTooltipPortal, getResetTimeHTML, sleep, sendBackgroundMessage, getActiveOrgId,
-   isMobileView, isCodePage, UsageData, ConversationData, getConversationId, getCurrentModel,
+/* global CONFIG, Log, createClaudeTooltip, getResetTimeHTML, sleep, sendBackgroundMessage, getActiveOrgId,
+   isMobileLayout, isCodePage, UsageData, ConversationData, getConversationId, getCurrentModel,
    getCurrentModelVersion, getCurrentEffortLabel, RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS,
    LayoutManager, mountToAnchor, localize, fmtNum, onSsePartialUsage, shouldApplySseSession,
    LENGTH_DISPLAY_KEY */
@@ -68,7 +68,7 @@ class LengthUI {
 		}
 
 		// Hidden by settings: stay dormant rather than mount-and-hide. Nothing gets created (the
-		// tooltips are appended to the portal eagerly) and uiReady stays false, so every message
+		// tooltips are added to the portal eagerly) and uiReady stays false, so every message
 		// handler already no-ops. Not mounting also matters on mobile, where mounting the title
 		// line moves the scroller's top margin onto our element - hiding it afterwards would drop
 		// that offset and slide the messages under the header. The settings card reloads on Save,
@@ -82,7 +82,6 @@ class LengthUI {
 		this.elements.titleArea = this.createTitleAreaElements();
 		this.elements.statLine = this.createStatLineElements();
 		this.elements.tooltips = this.createTooltips();
-		this.attachTooltips();
 
 		this.uiReady = true;
 		await Log('LengthUI: Ready');
@@ -154,30 +153,14 @@ class LengthUI {
 	}
 
 	createTooltips() {
-		const create = (text) => {
-			const tooltip = document.createElement('div');
-			tooltip.className = 'bg-[var(--cds-tooltip-bg)] text-[var(--cds-tooltip-fg)] ut-tooltip font-normal font-ui shadow-sm dark:shadow-panel-sm';
-			tooltip.textContent = text;
-			tooltip.style.maxWidth = '400px';
-			tooltip.style.textAlign = 'left';
-			tooltip.style.whiteSpace = 'pre-line';
-			getTooltipPortal().appendChild(tooltip);
-			return tooltip;
-		};
-
+		const { titleArea, statLine } = this.elements;
+		for (const el of [titleArea.length, titleArea.cost, titleArea.cached, statLine.estimate]) el.style.cursor = 'help';
 		return {
-			length: create(localize('length.tooltip_length')),
-			cost: create(localize('length.tooltip_cost')),
-			cached: create(localize('length.tooltip_cached')),
-			estimate: create(localize('length.tooltip_estimate')),
+			length: createClaudeTooltip(titleArea.length, localize('length.tooltip_length')),
+			cost: createClaudeTooltip(titleArea.cost, localize('length.tooltip_cost')),
+			cached: createClaudeTooltip(titleArea.cached, localize('length.tooltip_cached')),
+			estimate: createClaudeTooltip(statLine.estimate, localize('length.tooltip_estimate')),
 		};
-	}
-
-	attachTooltips() {
-		setupTooltip(this.elements.titleArea.length, this.elements.tooltips.length);
-		setupTooltip(this.elements.titleArea.cost, this.elements.tooltips.cost);
-		setupTooltip(this.elements.titleArea.cached, this.elements.tooltips.cached);
-		setupTooltip(this.elements.statLine.estimate, this.elements.tooltips.estimate);
 	}
 
 	// ========== MOUNT (attach to page) ==========
@@ -300,9 +283,9 @@ class LengthUI {
 
 		// Update length tooltip based on estimate status
 		const baseTooltip = localize('length.tooltip_length');
-		this.elements.tooltips.length.textContent = conversationData.lengthIsEstimate
+		this.elements.tooltips.length.updateText(conversationData.lengthIsEstimate
 			? baseTooltip + '\n\n' + localize('length.tooltip_length_note')
-			: baseTooltip;
+			: baseTooltip);
 
 		// Cost
 		const weightedCost = conversationData.getWeightedFutureCost(currentModel, currentModelVersion, currentEffortLabel);
@@ -355,7 +338,7 @@ class LengthUI {
 		container.innerHTML = '';
 
 		let elements;
-		if (isMobileView()) {
+		if (isMobileLayout()) {
 			elements = [length, cached].filter(el => el.innerHTML);
 		} else {
 			elements = [length, cost, cached].filter(el => el.innerHTML);
@@ -414,7 +397,7 @@ class LengthUI {
 			return;
 		}
 
-		const msgPrefix = isMobileView() ? localize('length.msgs_left_mobile') : localize('length.msgs_left_desktop');
+		const msgPrefix = isMobileLayout() ? localize('length.msgs_left_mobile') : localize('length.msgs_left_desktop');
 
 		if (!getConversationId() || !usageData || !conversationData) {
 			estimate.innerHTML = `${msgPrefix} <span>${localize('common.na')}</span>`;

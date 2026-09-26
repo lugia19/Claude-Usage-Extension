@@ -1,7 +1,7 @@
 /* global CONFIG, Log, ProgressBar, sendBackgroundMessage, getActiveOrgId,
-   setupTooltip, getTooltipPortal, getResetTimeHTML, sleep, isMobileView, isCodePage, UsageData, isPeakHours,
+   createClaudeTooltip, getResetTimeHTML, sleep, isMobileLayout, isCodePage, UsageData, isPeakHours,
    RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS, LayoutManager, mountToAnchor,
-   localize, fmtNum, localeForIntl, onSsePartialUsage, shouldApplySseSession,
+   localize, fmtNum, currentLocale, onSsePartialUsage, shouldApplySseSession,
    SIDEBAR_DISPLAY_KEY, SIDEBAR_LINK_KEYS, getSidebarDisplayPrefs, isSidebarItemVisible */
 'use strict';
 
@@ -115,9 +115,9 @@ class UsageSection {
 			if (limit.key === 'session' && isPeakHours()) cap = cap / CONFIG.PEAK_SESSION_MULTIPLIER;
 			if (cap) {
 				const used = Math.round((limit.percentage / 100) * cap);
-				progressBar.tooltip.textContent = localize('usage.tooltip_tokens', { used: fmtNum(used), cap: fmtNum(cap), pct: limit.percentage.toFixed(0) });
+				progressBar.tooltip.updateText(localize('usage.tooltip_tokens', { used: fmtNum(used), cap: fmtNum(cap), pct: limit.percentage.toFixed(0) }));
 			} else {
-				progressBar.tooltip.textContent = localize('usage.tooltip_pct_used', { pct: limit.percentage.toFixed(0) });
+				progressBar.tooltip.updateText(localize('usage.tooltip_pct_used', { pct: limit.percentage.toFixed(0) }));
 			}
 
 			const color = limit.percentage >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
@@ -148,7 +148,7 @@ class UsageSection {
 
 			const usedDollars = (used / 100).toFixed(2);
 			const totalDollars = (effectiveTotal / 100).toFixed(2);
-			progressBar.tooltip.textContent = localize('usage.tooltip_dollars', { used: usedDollars, total: totalDollars });
+			progressBar.tooltip.updateText(localize('usage.tooltip_dollars', { used: usedDollars, total: totalDollars }));
 
 			const color = pct >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
 			percentage.textContent = `${pct.toFixed(0)}%`;
@@ -338,7 +338,6 @@ class UsageUI {
 		this.elements.sidebar = await this.createSidebarElements();
 		this.elements.chat = this.createChatElements();
 		this.elements.tooltips = this.createTooltips();
-		this.attachTooltips();
 		this.setCollapsed(this.state.collapsed, false);
 		this.applySidebarDisplay();
 
@@ -442,10 +441,7 @@ class UsageUI {
 		`;
 
 		settingsButton.addEventListener('click', () => {
-			const buttonRect = settingsButton.getBoundingClientRect();
-			document.dispatchEvent(new CustomEvent('ut:toggleSettings', {
-				detail: { position: { top: buttonRect.top - 5, left: buttonRect.right + 5 } }
-			}));
+			document.dispatchEvent(new CustomEvent('ut:toggleSettings'));
 		});
 
 		header.appendChild(toggle);
@@ -588,14 +584,14 @@ class UsageUI {
 		const usageDisplay = document.createElement('div');
 		usageDisplay.className = 'text-text-400 text-xs';
 		usageDisplay.style.whiteSpace = 'nowrap';
-		if (!isMobileView()) usageDisplay.style.marginRight = '8px';
+		if (!isMobileLayout()) usageDisplay.style.marginRight = '8px';
 		usageDisplay.textContent = localize('usage.session_inline');
 
 		leftContainer.appendChild(usageDisplay);
 
 		// Progress bar (desktop only)
 		let progressBar = null;
-		if (!isMobileView()) {
+		if (!isMobileLayout()) {
 			progressBar = new ProgressBar({ width: '100%' });
 			progressBar.track.classList.remove('bg-bg-500');
 			progressBar.track.classList.add('bg-bg-200');
@@ -620,7 +616,7 @@ class UsageUI {
 		// Reset time display
 		const resetDisplay = document.createElement('div');
 		resetDisplay.className = 'text-text-400 text-xs';
-		if (!isMobileView()) resetDisplay.style.marginRight = '8px';
+		if (!isMobileLayout()) resetDisplay.style.marginRight = '8px';
 
 		rightContainer.appendChild(peakIndicator);
 		rightContainer.appendChild(resetDisplay);
@@ -633,37 +629,22 @@ class UsageUI {
 	}
 
 	createTooltips() {
-		const create = (text) => {
-			const tooltip = document.createElement('div');
-			tooltip.className = 'bg-[var(--cds-tooltip-bg)] text-[var(--cds-tooltip-fg)] ut-tooltip font-normal font-ui shadow-sm dark:shadow-panel-sm';
-			tooltip.textContent = text;
-			tooltip.style.maxWidth = '400px';
-			tooltip.style.textAlign = 'left';
-			tooltip.style.whiteSpace = 'pre-line';
-			getTooltipPortal().appendChild(tooltip);
-			return tooltip;
-		};
-
 		// Convert peak hours (1pm-7pm GMT) to user's local timezone
 		const formatLocal = (utcHour) => {
 			const d = new Date();
 			d.setUTCHours(utcHour, 0, 0, 0);
-			return d.toLocaleTimeString(localeForIntl(), { hour: 'numeric', minute: '2-digit' });
+			return d.toLocaleTimeString(currentLocale(), { hour: 'numeric', minute: '2-digit' });
 		};
 		const peakStart = formatLocal(12);
 		const peakEnd = formatLocal(18);
 
+		const { chat } = this.elements;
+		for (const el of [chat.usageDisplay, chat.resetDisplay, chat.peakIndicator]) el.style.cursor = 'help';
 		return {
-			usage: create(localize('usage.tooltip_usage')),
-			timer: create(localize('usage.tooltip_timer')),
-			peak: create(localize('usage.tooltip_peak', { start: peakStart, end: peakEnd })),
+			usage: createClaudeTooltip(chat.usageDisplay, localize('usage.tooltip_usage')),
+			timer: createClaudeTooltip(chat.resetDisplay, localize('usage.tooltip_timer')),
+			peak: createClaudeTooltip(chat.peakIndicator, localize('usage.tooltip_peak', { start: peakStart, end: peakEnd })),
 		};
-	}
-
-	attachTooltips() {
-		setupTooltip(this.elements.chat.usageDisplay, this.elements.tooltips.usage);
-		setupTooltip(this.elements.chat.resetDisplay, this.elements.tooltips.timer);
-		setupTooltip(this.elements.chat.peakIndicator, this.elements.tooltips.peak);
 	}
 
 	// ========== MOUNT (attach to page) ==========
@@ -745,12 +726,12 @@ class UsageUI {
 			usageDisplay.innerHTML = `${localize('usage.extra_inline')} <span class="ut-statline-pct" style="color: ${color}">${pct.toFixed(0)}%</span>`;
 			peakIndicator.style.display = 'none';
 
-			if (!isMobileView() && progressBar) {
+			if (!isMobileLayout() && progressBar) {
 				progressBar.updateProgress(pct, 100);
 
 				const usedDollars = (used / 100).toFixed(2);
 				const totalDollars = (effectiveTotal / 100).toFixed(2);
-				progressBar.tooltip.textContent = localize('usage.tooltip_dollars', { used: usedDollars, total: totalDollars });
+				progressBar.tooltip.updateText(localize('usage.tooltip_dollars', { used: usedDollars, total: totalDollars }));
 				progressBar.clearMarker();
 			}
 
@@ -766,7 +747,7 @@ class UsageUI {
 		peakIndicator.style.display = isPeakHours() ? '' : 'none';
 
 		// Progress bar (desktop only)
-		if (!isMobileView() && progressBar) {
+		if (!isMobileLayout() && progressBar) {
 			progressBar.updateProgress(session.percentage, 100);
 
 			// Override tooltip with estimated token values
@@ -774,9 +755,9 @@ class UsageUI {
 			if (isPeakHours()) cap = cap / CONFIG.PEAK_SESSION_MULTIPLIER;
 			if (cap) {
 				const used = Math.round((session.percentage / 100) * cap);
-				progressBar.tooltip.textContent = localize('usage.tooltip_tokens', { used: fmtNum(used), cap: fmtNum(cap), pct: session.percentage.toFixed(0) });
+				progressBar.tooltip.updateText(localize('usage.tooltip_tokens', { used: fmtNum(used), cap: fmtNum(cap), pct: session.percentage.toFixed(0) }));
 			} else {
-				progressBar.tooltip.textContent = localize('usage.tooltip_pct_used', { pct: session.percentage.toFixed(0) });
+				progressBar.tooltip.updateText(localize('usage.tooltip_pct_used', { pct: session.percentage.toFixed(0) }));
 			}
 
 			// Add weekly marker (filter by current model)
