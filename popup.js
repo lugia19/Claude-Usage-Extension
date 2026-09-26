@@ -158,7 +158,7 @@ function applyStaticLocalization() {
 	const helpEl = document.getElementById('popup-help');
 	if (helpEl) helpEl.textContent = localize('popup.help');
 	const debugEl = document.getElementById('debug');
-	if (debugEl) debugEl.textContent = localize('common.debug_logs');
+	if (debugEl) debugEl.textContent = localize('shared.view_debug_logs');
 	const donateEl = document.getElementById('donate');
 	if (donateEl) donateEl.textContent = localize('popup.donate');
 }
@@ -208,7 +208,7 @@ async function loadUsageData() {
 }
 
 document.getElementById('debug').addEventListener('click', () => {
-	chrome.tabs.create({ url: chrome.runtime.getURL('debug.html') });
+	chrome.tabs.create({ url: chrome.runtime.getURL('common/log/viewer.html') });
 	window.close();
 });
 

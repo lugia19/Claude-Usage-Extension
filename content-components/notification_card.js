@@ -1,7 +1,7 @@
 /* global Log, RED_WARNING, sendBackgroundMessage, localize, usageUI, getSidebarDisplayPrefs,
    setSidebarDisplayPrefs, isSidebarItemVisible, SIDEBAR_LINK_KEYS, LENGTH_DISPLAY_KEY, localeReady,
    FloatingCard, initNotificationCards, isChromeBrowser, ClaudeModal, createClaudeInput,
-   createClaudeToggle, createLanguageSelect, setLanguageOverride */
+   createClaudeToggle, createLanguageSelect, setLanguageOverride, openDebugLogs */
 'use strict';
 
 // Settings modal, and the notification cards (common/ui/cards.js) with the tracker's extras.
@@ -13,30 +13,6 @@ const QOL_STORE_URLS = {
 	chrome: 'https://chromewebstore.google.com/detail/claude-qol/dkdnancajokhfclpjpplkhlkbhaeejob',
 	firefox: 'https://addons.mozilla.org/en-US/firefox/addon/claude-qol/',
 };
-
-function openDebugOverlay() {
-	// Remove existing overlay if present
-	const existing = document.getElementById('ut-debug-overlay');
-	if (existing) { existing.remove(); return; }
-
-	const overlay = document.createElement('div');
-	overlay.id = 'ut-debug-overlay';
-	overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;';
-
-	const closeBtn = document.createElement('button');
-	closeBtn.textContent = '×';
-	closeBtn.style.cssText = 'position:absolute;top:12px;right:16px;font-size:24px;background:none;border:none;color:#666;cursor:pointer;z-index:1;';
-	closeBtn.addEventListener('click', () => overlay.remove());
-
-	const iframe = document.createElement('iframe');
-	iframe.src = browser.runtime.getURL('debug.html');
-	iframe.style.cssText = 'width:90vw;height:90vh;border:none;border-radius:8px;';
-
-	overlay.appendChild(closeBtn);
-	overlay.appendChild(iframe);
-	overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-	document.body.appendChild(overlay);
-}
 
 // ======== Notification card extras ========
 
@@ -257,10 +233,8 @@ async function showSettingsModal() {
 	const modal = new ClaudeModal(localize('card.settings_title'), columns);
 	modal.modal.style.maxWidth = '640px';
 
-	modal.addButton(localize('common.debug_logs'), 'secondary', async () => {
-		const result = await sendBackgroundMessage({ type: 'openDebugPage' });
-		if (result === 'fallback') openDebugOverlay();
-	});
+	// Leaves the settings open underneath; the viewer is an overlay above it.
+	modal.addButton(localize('shared.view_debug_logs'), 'secondary', () => { openDebugLogs(); return false; });
 	modal.addCancel();
 	modal.addConfirm(localize('card.save'), async () => {
 		// The key is the only setting that can fail, and validating it hits the network, so only

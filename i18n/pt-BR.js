@@ -5,7 +5,6 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['pt-BR'] ??= {}, {
 	"common.resetting": "Redefinindo...",
 	"common.unit_tokens": "tokens",
 	"common.unit_credits": "créditos",
-	"common.debug_logs": "Logs de depuração",
 
 	// time
 	"time.dh": "{d}d {h}h",
@@ -88,8 +87,8 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['pt-BR'] ??= {}, {
 	// popup
 	"popup.no_data": "Nenhum dado de uso encontrado. Abra o claude.ai primeiro (e autorize a extensão, se necessário).",
 	"popup.load_failed": "Falha ao carregar os dados de uso.",
-	"popup.org_no_tab": "Abra uma aba neste cont�iner para ver o uso.",
-	"popup.org_unavailable": "Uso indispon�vel.",
+	"popup.org_no_tab": "Abra uma aba neste contêiner para ver o uso.",
+	"popup.org_unavailable": "Uso indisponível.",
 	"popup.loading": "Carregando dados de uso...",
 	"popup.help": "Se você clicou aqui porque não encontra as estatísticas de uso, tente recarregar a página ou autorizar a extensão no claude.ai — as estatísticas são inseridas diretamente na página.",
 	"popup.donate": "Doar",

@@ -1,3 +1,8 @@
+// Always-on logging (common/log/logger.js publishes createLogger/configureLogger on globalThis).
+import '../common/log/logger.js';
+/* global createLogger, configureLogger */
+configureLogger({ app: 'tracker', prefix: '[UsageTracker]' });
+
 // Configuration object (moved from constants.json)
 const CONFIG = {
 	"OUTPUT_TOKEN_MULTIPLIER": 4,
@@ -155,120 +160,14 @@ function fillEstimatedCaps(caps) {
 CONFIG.ESTIMATED_CAPS = fillEstimatedCaps(CONFIG.ESTIMATED_CAPS);
 
 const isElectron = chrome.action === undefined || navigator.userAgent.includes("Electron");
-const FORCE_DEBUG = true; // Set to true to force debug mode
-
-setStorageValue('force_debug', FORCE_DEBUG);
+browser.storage.local.remove(['force_debug', 'debug_mode_until']).catch(() => { });
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Debug logs are buffered in memory and flushed to storage on a short debounce, so the hot path never
-// blocks on (or repeatedly rewrites) storage — previously every Log() did 2 awaited storage reads + a
-// full-array write. Trade-off: up to ~1s of logs can be lost if the background context is torn down
-// before a flush — acceptable for debug logging.
-let pendingLogEntries = [];
-let logFlushScheduled = false;
-
-function scheduleLogFlush() {
-	if (logFlushScheduled) return;
-	logFlushScheduled = true;
-	setTimeout(flushLogs, 1000);
-}
-
-async function flushLogs() {
-	logFlushScheduled = false;
-	if (pendingLogEntries.length === 0) return;
-	const batch = pendingLogEntries;
-	pendingLogEntries = [];
-	// Read fresh and append so we don't clobber logs written by other contexts (e.g. content scripts).
-	try {
-		const logs = await getStorageValue('debug_logs', []);
-		logs.push(...batch);
-		while (logs.length > 1000) logs.shift();
-		await setStorageValue('debug_logs', logs);
-	} catch (e) {
-		// Storage full — keep only the most recent so it self-heals; never throw.
-		try {
-			await setStorageValue('debug_logs', batch.slice(-100));
-		} catch (e2) {
-			// Give up — better to lose logs than to break anything.
-		}
-	}
-}
-
-async function RawLog(sender, ...args) {
-	let level = "debug";
-
-	if (typeof args[0] === 'string' && ["debug", "warn", "error"].includes(args[0])) {
-		level = args.shift();
-	}
-
-	// Gate: when FORCE_DEBUG is off, only log within the debug window. When on, skip the storage read.
-	if (!FORCE_DEBUG) {
-		const debugUntil = await getStorageValue('debug_mode_until');
-		if (!debugUntil || debugUntil <= Date.now()) return;
-	}
-
-	if (level === "warn") {
-		console.warn("[UsageTracker]", ...args);
-	} else if (level === "error") {
-		console.error("[UsageTracker]", ...args);
-	} else {
-		console.log("[UsageTracker]", ...args);
-	}
-
-	const timestamp = new Date().toLocaleString('default', {
-		hour: '2-digit',
-		minute: '2-digit',
-		second: '2-digit',
-		hour12: false,
-		fractionalSecondDigits: 3
-	});
-
-	let message = args.map(arg => {
-		if (arg instanceof Error) {
-			return arg.stack || `${arg.name}: ${arg.message}`;
-		}
-		if (typeof arg === 'object') {
-			if (arg === null) return 'null';
-			try {
-				// The replacer used to be Object.getOwnPropertyNames(arg), which JSON.stringify treats
-				// as a property ALLOWLIST APPLIED AT EVERY NESTING LEVEL - not a depth hint. Nested
-				// objects silently kept only keys that happened to also exist at the top level, so
-				// every logged payload came out hollowed: the completion body logged its tools as 30
-				// empty {}, and turn_message_uuids read as {} when it was populated. It was presumably
-				// there so Errors would serialise, but the `arg instanceof Error` branch above already
-				// covers that.
-				//
-				// The seen-set is what the allowlist accidentally provided: a guard against circular
-				// graphs. Without it a self-referencing object throws and lands in the catch below as
-				// a useless "[object Object]".
-				const seen = new WeakSet();
-				return JSON.stringify(arg, (key, value) => {
-					if (typeof value === 'object' && value !== null) {
-						if (seen.has(value)) return '[Circular]';
-						seen.add(value);
-					}
-					return value;
-				}, 2);
-			} catch (e) {
-				return String(arg);
-			}
-		}
-		return String(arg);
-	}).join(' ');
-
-	// Cap per-entry size so a large payload (e.g. a base64 proxyFetch body) can't blow the storage
-	// quota. With the 1000-entry cap this bounds debug_logs well under the 10MB local limit.
-	const MAX_LOG_MESSAGE = 2000;
-	if (message.length > MAX_LOG_MESSAGE) {
-		message = message.slice(0, MAX_LOG_MESSAGE) + `…[truncated ${message.length - MAX_LOG_MESSAGE} chars]`;
-	}
-
-	// Append to the in-memory buffer (bounded) and let the debounced flush persist it — no awaited
-	// storage I/O in the caller's path.
-	pendingLogEntries.push({ timestamp, sender, level, message });
-	if (pendingLogEntries.length > 1000) pendingLogEntries.shift();
-	scheduleLogFlush();
+// sender is the module name ("background", "claude-api", ...). Kept as a function for the existing
+// `Log = (...args) => RawLog('<module>', ...args)` wrappers.
+function RawLog(sender, ...args) {
+	createLogger(sender)(...args);
 }
 
 async function Log(...args) {
@@ -461,7 +360,6 @@ export {
 	isElectron,
 	sleep,
 	RawLog,
-	FORCE_DEBUG,
 	StoredMap,
 	getOrgStorageKey,
 	getStorageValue,

@@ -1,5 +1,5 @@
 /* global GPTTokenizer_o200k_base */
-import { CONFIG, sleep, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, removeStorageValue } from './utils.js';
+import { CONFIG, sleep, RawLog, StoredMap, getStorageValue, setStorageValue, removeStorageValue } from './utils.js';
 
 // Create component-specific logger
 async function Log(...args) {

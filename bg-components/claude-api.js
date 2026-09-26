@@ -1,4 +1,4 @@
-import { CONFIG, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey } from './utils.js';
+import { CONFIG, RawLog, StoredMap, getStorageValue, setStorageValue, getOrgStorageKey } from './utils.js';
 import { tokenCounter, getTextFromContent } from './tokenManagement.js';
 import { UsageData, ConversationData, modelFamilyFromVersion } from '../shared/dataclasses.js';
 

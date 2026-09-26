@@ -1,6 +1,6 @@
 import './lib/browser-polyfill.min.js';
 import './lib/o200k_base.js';
-import { CONFIG, isElectron, RawLog, FORCE_DEBUG, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './bg-components/utils.js';
+import { CONFIG, isElectron, RawLog, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './bg-components/utils.js';
 import { tokenStorageManager, tokenCounter } from './bg-components/tokenManagement.js';
 import { getStrategy, initContainerStrategy, setBrave } from './bg-components/container-strategy.js';
 import { UsageData, modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier } from './shared/dataclasses.js';
@@ -129,7 +129,7 @@ if (browser.contextMenus) {
 	browser.contextMenus.onClicked.addListener((info, tab) => {
 		if (info.menuItemId === 'openDebugPage') {
 			browser.tabs.create({
-				url: browser.runtime.getURL('debug.html')
+				url: browser.runtime.getURL('common/log/viewer.html')
 			});
 		} else if (info.menuItemId === 'openDonatePage') {
 			browser.tabs.create({
@@ -496,15 +496,6 @@ messageRegistry.register('reportBrave', async (message) => {
 	await setBrave(message.isBrave);
 	return true;
 });
-
-async function openDebugPage() {
-	if (!isElectron) {
-		browser.tabs.create({ url: browser.runtime.getURL('debug.html') });
-		return true;
-	}
-	return 'fallback';
-}
-messageRegistry.register(openDebugPage);
 
 // Complex handlers
 async function requestData(message, sender, orgId) {
@@ -895,8 +886,6 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId }) {
 }
 
 async function debugLogMessageCost(usageData, conversationData) {
-	if (!FORCE_DEBUG) return;
-
 	const limitMapping = {
 		session: 'debug_session',
 		weekly: 'debug_weekly',

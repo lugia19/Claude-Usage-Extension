@@ -5,7 +5,6 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['ko'] ??= {}, {
 	"common.resetting": "재설정 중...",
 	"common.unit_tokens": "토큰",
 	"common.unit_credits": "크레딧",
-	"common.debug_logs": "디버그 로그",
 
 	// time
 	"time.dh": "{d}일 {h}시간",
@@ -88,8 +87,8 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['ko'] ??= {}, {
 	// popup
 	"popup.no_data": "사용량 데이터를 찾을 수 없습니다. 먼저 claude.ai를 여세요(필요하면 확장 프로그램을 승인하세요).",
 	"popup.load_failed": "사용량 데이터를 불러오지 못했습니다.",
-	"popup.org_no_tab": "\u0018사\u0018용\u0018량\u0018을 \u0018보\u0018려\u0018면 \u0018이 \u0018컨\u0018테\u0018이\u0018너\u0018에\u0018서 \u0018탭\u0018을 \u0018여\u0018세\u0018요.",
-	"popup.org_unavailable": "\u0018사\u0018용\u0018량\u0018을 \u0018확\u0018인\u0018할 \u0018수 \u0018없\u0018습\u0018니\u0018다.",
+	"popup.org_no_tab": "사용량을 보려면 이 컨테이너에서 탭을 여세요.",
+	"popup.org_unavailable": "사용량을 확인할 수 없습니다.",
 	"popup.loading": "사용량 데이터를 불러오는 중...",
 	"popup.help": "사용 통계를 찾을 수 없어 여기를 클릭했다면 페이지를 새로고침하거나 claude.ai에서 확장 프로그램을 승인하세요. 통계는 페이지에 직접 삽입됩니다.",
 	"popup.donate": "후원",
