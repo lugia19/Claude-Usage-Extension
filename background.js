@@ -87,9 +87,9 @@ function runOnceInitialized(fn, args) {
 //#region Listener setup (I hate MV3 - listeners must be initialized here)
 //Extension-related listeners:
 browser.runtime.onMessage.addListener(async (message, sender) => {
-	// Log batches from content scripts are the shared logger's (common/log/logger.js); letting them
-	// through would log "received message" for every batch.
-	if (message?.type === 'CLAUDE_EXT_LOG_APPEND') return;
+	// Log batches and Clear are the shared logger's (common/log/logger.js); letting them through
+	// would log "received message" for every batch.
+	if (message?.type?.startsWith?.('CLAUDE_EXT_LOG')) return;
 	return runOnceInitialized(handleMessageFromContent, [message, sender]);
 });
 
