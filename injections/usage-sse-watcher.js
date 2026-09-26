@@ -1,3 +1,4 @@
+/* global ClaudeExtNet */
 // Reads the session usage percentage AND the reply text out of the completion SSE stream, so the
 // usage bars, conversation length and next-message cost can all move as soon as generation
 // finishes, instead of waiting for the page's post-stream conversation GET and the background's
@@ -81,18 +82,14 @@
 	// Claude-Toolbox patches window.fetch on this same page (several times over). Chain onto
 	// whatever is already installed rather than calling window.fetch, or we recurse.
 	const prevFetch = window.fetch;
+	const net = ClaudeExtNet; // common/net/net.js, loaded before this file
 
 	window.fetch = async function (...args) {
 		const response = await prevFetch.apply(this, args);
 
 		let match;
 		try {
-			const input = args[0];
-			let url = input instanceof Request ? input.url
-				: input instanceof URL ? input.href
-					: String(input ?? '');
-			if (url.startsWith('/')) url = 'https://claude.ai' + url;
-			match = COMPLETION_RE.exec(url.split('?')[0]);
+			match = COMPLETION_RE.exec(net.getFetchUrl(args[0]).split('?')[0]);
 		} catch (e) {
 			return response;
 		}
@@ -100,9 +97,7 @@
 
 		// Kill-switch, mirroring Claude-Toolbox's convention: teeing the completion body can make
 		// the renderer receive data in bursts, so leave a way to A/B it without a rebuild.
-		try {
-			if (localStorage.getItem('claude_usage_sse_off') === '1') return response;
-		} catch (e) { /* storage blocked - carry on */ }
+		if (net.isKillSwitchOn('claude_usage_sse_off')) return response;
 
 		if (!response.body || !response.headers.get('content-type')?.includes('event-stream')) {
 			// A send refused for hitting the limit answers with JSON, not a stream. It still reports
@@ -165,10 +160,6 @@
 	}
 
 	async function pump(clone, orgId, conversationId, isRetry) {
-		const reader = clone.body.getReader();
-		const decoder = new TextDecoder();
-		let buffer = '';
-
 		// Records are kept as raw strings and parsed once the stream is done. Parsing as they
 		// arrive would put thousands of JSON.parse calls on the page's main thread while the
 		// renderer is painting the reply, which is exactly the stutter this file warns about.
@@ -187,22 +178,9 @@
 		};
 
 		try {
-			for (;;) {
-				const { done, value } = await reader.read();
-				if (done) {
-					buffer += decoder.decode();
-					if (buffer.trim()) collect(buffer);
-					break;
-				}
-				buffer += decoder.decode(value, { stream: true });
-				// SSE records are separated by a blank line. Splitting per read instead would drop
-				// any record straddling a chunk boundary.
-				let boundary;
-				while ((boundary = buffer.indexOf('\n\n')) !== -1) {
-					collect(buffer.slice(0, boundary));
-					buffer = buffer.slice(boundary + 2);
-				}
-			}
+			// Whole records only (readSseEvents splits on the blank line between them), so one
+			// straddling a chunk boundary is never dropped.
+			await net.readSseEvents(clone, (event) => { collect(event.raw); });
 		} catch (e) {
 			// Aborted or errored stream. Whatever was collected still describes real billed usage,
 			// so fall through and report it rather than dropping the update - stopping generation

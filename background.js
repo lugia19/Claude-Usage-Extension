@@ -28,7 +28,9 @@ import './i18n/ko.js';
 import './i18n/pt-BR.js';
 import './i18n/es.js';
 import './common/i18n/i18n-core.js';
-/* global translate */
+// Fetch/SSE/gzip helpers, published on globalThis.ClaudeExtNet.
+import './common/net/net.js';
+/* global translate, ClaudeExtNet */
 import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
 import { invalidateAccountSettings, invalidateProfileTokens, storeSseUsage } from './bg-components/claude-api.js';
 
@@ -791,24 +793,14 @@ async function parseRequestBody(requestBody) {
 				bytes.set(c, offset);
 				offset += c.length;
 			}
-			if (isGzip(bytes)) bytes = await gunzip(bytes);
+			// Sniffing the gzip magic beats reading Content-Encoding from onBeforeSendHeaders, which
+			// would mean correlating two listeners by requestId for no gain.
+			if (ClaudeExtNet.isGzipBytes(bytes)) bytes = await ClaudeExtNet.gunzipBytes(bytes);
 			return JSON.parse(new TextDecoder().decode(bytes));
 		} catch (e) {
 			return undefined;
 		}
 	}
-}
-
-// Sniffing the gzip magic beats reading Content-Encoding from onBeforeSendHeaders, which would mean
-// correlating two listeners by requestId for no gain. DecompressionStream only knows gzip/deflate;
-// if claude.ai ever switches to br or zstd this needs a JS decompressor instead.
-function isGzip(bytes) {
-	return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
-}
-
-async function gunzip(bytes) {
-	const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-	return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 // The authoritative pass. One per sent message, triggered by claude.ai's post-message tree GET.

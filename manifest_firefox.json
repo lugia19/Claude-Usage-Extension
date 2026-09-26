@@ -62,6 +62,7 @@
 				"https://claude.ai/*"
 			],
 			"js": [
+				"common/net/net.js",
 				"injections/usage-sse-watcher.js",
 				"common/i18n/account-locale-watcher.js"
 			],
