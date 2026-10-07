@@ -1,4 +1,4 @@
-import { CONFIG, RawLog, StoredMap, getStorageValue } from './utils.js';
+import { CONFIG, RawLog, StoredMap, getStorageValue, sleep } from './utils.js';
 import { tokenCounter, getTextFromContent } from './tokenManagement.js';
 import { UsageData, ConversationData, modelFamilyFromVersion } from '../shared/dataclasses.js';
 
@@ -38,6 +38,9 @@ export async function invalidateProfileTokens(orgId) {
 	await profileTokensCache.delete(orgId);
 	await Log("Invalidated profile tokens cache for:", orgId);
 }
+// getSettledTree: how often, and how far apart, to re-read the tree for a settled reply.
+const SETTLED_TREE_RETRIES = 3;
+const SETTLED_TREE_RETRY_MS = 700;
 const subscriptionTiersCache = new StoredMap("subscriptionTiers");
 const projectCache = new StoredMap("projectCache");
 const accountSettingsCache = new StoredMap("accountSettings");
@@ -553,14 +556,42 @@ class ConversationAPI {
 	//
 	// A ConversationAPI is constructed per pass, so its lifetime is a single logical read and the
 	// data cannot go stale underneath it.
-	async getData(full_tree = false) {
+	//
+	// `strong` asks for a read-your-writes copy (consistency=strong, which claude.ai's own page-load
+	// GET uses) and `refresh` skips the memo: a pass triggered by the merged experience's stream has no
+	// tree GET of claude.ai's proving the tree is current, so it checks and may refetch.
+	//
+	// If this legacy endpoint ever goes away (merged accounts already never call it themselves), its
+	// replacement is ConversationService/ReadConversation (Connect, protobuf; decode with
+	// ClaudeExtNet.decodeBard): the whole tree in one call, near-parity with this one. Its gaps: text
+	// attachments come as a URL rather than `extracted_content` (fetch /files/<id>/contents), and
+	// compactions made in the merged experience exist only there (as CompactionDivider extras), not
+	// here. See claude-ext-common scripts/bard/README.md.
+	async getData(full_tree = false, { strong = false, refresh = false } = {}) {
 		const slot = full_tree ? "tree" : "flat";
-		if (!this.dataCache[slot]) {
+		if (!this.dataCache[slot] || refresh) {
 			this.dataCache[slot] = await this.api.getRequest(
-				`/organizations/${this.api.orgId}/chat_conversations/${this.conversationId}?tree=${full_tree}&rendering_mode=messages&render_all_tools=true`
+				`/organizations/${this.api.orgId}/chat_conversations/${this.conversationId}?tree=${full_tree}&rendering_mode=messages&render_all_tools=true${strong ? '&consistency=strong' : ''}`
 			);
 		}
 		return this.dataCache[slot];
+	}
+
+	// The tree for a pass triggered by the merged experience's StreamTimeline settle, which (unlike
+	// claude.ai's post-message tree GET) proves nothing about the tree being current: a strong read
+	// and, when the stream named the settled reply, a few short re-reads until the leaf is it. After
+	// that it prices the tree as is, with a warning. Memoized like getData, so getInfo reuses it.
+	async getSettledTree(expectedLeaf) {
+		let tree = await this.getData(true, { strong: true });
+		for (let i = 0; expectedLeaf && tree?.current_leaf_message_uuid !== expectedLeaf; i++) {
+			if (i === SETTLED_TREE_RETRIES) {
+				await Log("warn", "Settled turn", expectedLeaf, "isn't the tree's leaf", tree?.current_leaf_message_uuid, "- pricing the tree as is");
+				break;
+			}
+			await sleep(SETTLED_TREE_RETRY_MS);
+			tree = await this.getData(true, { strong: true, refresh: true });
+		}
+		return tree;
 	}
 
 	async getCachingInfo(isNewMessage) {

@@ -10,8 +10,10 @@
 //                        with its ids and body (see sendFromCompletion / sendFromPerformAction)
 //   interceptedResponse  once the response's headers are in (onCompletedHandler). The background
 //                        refetches whatever it needs, so the body is never read or waited for.
-// Page scripts can send the same two messages; the background only treats them as a cue to refetch
-// from claude.ai itself, so a forged one costs at most an extra refresh.
+//   turnSettled          a merged-experience turn ended on the page's StreamTimeline (onTurnSettled),
+//                        see watchTimeline
+// Page scripts can send the same messages; the background only treats them as a cue to refetch from
+// claude.ai itself, so a forged one costs at most an extra refresh.
 //
 // The kill switch (localStorage claude_usage_requests_off = '1') turns off ALL request tracking:
 // this is the only transport.
@@ -24,6 +26,8 @@
 	// A merged-experience send (claude.ai's Connect-RPC API, binary protobuf): decoded here and
 	// reported in the completion body's shape, see sendFromPerformAction.
 	const PERFORM_ACTION = /\/claudeai-rpc\/anthropic\.bard\.api\.v1alpha\.ConversationService\/PerformAction$/;
+	// The merged experience's timeline stream, where its turns are seen to end: see watchTimeline.
+	const STREAM_TIMELINE = /\/claudeai-rpc\/anthropic\.bard\.api\.v1alpha\.ConversationService\/StreamTimeline$/;
 	// What onBeforeRequestHandler looks at, besides the completion POSTs (net.isCompletionUrl).
 	const BEFORE = [
 		/\/api\/settings\/billing/,
@@ -71,15 +75,23 @@
 		return { orgId, conversationId, isRetry: path.endsWith('/retry_completion'), inheritsModel: false, requestBody };
 	}
 
-	// PerformAction (the merged experience): protobuf. Only send_message is a send; null for every
-	// other action (warm_turn, settings, feedback...).
-	async function sendFromPerformAction(source) {
+	// A request body as bytes (a Connect body is usually already a Uint8Array: no copy then), inflated
+	// if the page gzipped it. Null without a body.
+	async function bodyBytes(source) {
 		const body = source?.body;
 		if (body == null) return null;
 		let bytes = body instanceof ArrayBuffer ? new Uint8Array(body)
 			: ArrayBuffer.isView(body) ? new Uint8Array(body.buffer, body.byteOffset, body.byteLength)
 				: new Uint8Array(await new Response(body).arrayBuffer());
 		if (net.isGzipRequest(source)) bytes = await net.gunzipBytes(bytes);
+		return bytes;
+	}
+
+	// PerformAction (the merged experience): protobuf. Only send_message is a send; null for every
+	// other action (warm_turn, settings, feedback...).
+	async function sendFromPerformAction(source) {
+		const bytes = await bodyBytes(source);
+		if (!bytes) return null;
 		const action = net.decodeBard('PerformActionRequest', bytes);
 		const send = action.send_message;
 		if (!send) return null;
@@ -99,6 +111,47 @@
 		};
 	}
 
+	// Conversation states a turn is still going in (WAITING_FOR_INPUT is a pause for the user, not an
+	// end), and the ones that end it.
+	const BUSY = new Set(['STATUS_RUNNING', 'STATUS_RECOVERING', 'STATUS_WAITING_FOR_INPUT']);
+	const ENDED = new Set(['STATUS_IDLE', 'STATUS_COMPLETED', 'STATUS_ERROR']);
+
+	// The merged experience has no post-message tree GET to trigger the authoritative pass; its turns
+	// end on the StreamTimeline the page keeps open (reconnected every few seconds while idle). Reads
+	// the page's copy of one such stream and posts turnSettled whenever a turn ends on it: the
+	// conversation leaves a busy state for an ended one. The turn's assistant message is the one with
+	// the highest index seen since it started; a stream that resumed mid-turn may never see it (resumes
+	// send changes only), so it can be missing, and the background then uses the tree's leaf.
+	async function watchTimeline(response, source) {
+		const orgId = new Headers(source?.headers ?? {}).get('x-organization-uuid');
+		const bytes = await bodyBytes(source);
+		const frame = bytes && net.splitConnectFrames(bytes)[0];
+		const conversationId = frame && net.decodeBard('StreamTimelineRequest', frame.payload).conversation_id;
+		if (!orgId || !conversationId) {
+			response.body?.cancel().catch(() => { }); // or the unread copy keeps buffering the stream
+			return;
+		}
+		let busy = false;
+		let assistant = null;
+		await net.readConnectFrames(response, (f) => {
+			if (f.endStream) return;
+			const update = net.decodeBard('StreamTimelineResponse', f.payload).event?.update;
+			if (!update) return;
+			const status = update.conversation?.status;
+			if (BUSY.has(status) && !busy) {
+				busy = true;
+				assistant = null;
+			}
+			for (const m of update.messages ?? []) {
+				if (m.role === 'ROLE_ASSISTANT' && (!assistant || (m.index ?? 0) >= (assistant.index ?? 0))) assistant = m;
+			}
+			if (ENDED.has(status) && busy) {
+				busy = false;
+				post('turnSettled', { orgId, conversationId, assistantMessageId: assistant?.id ?? null, stopReason: assistant?.stop_reason ?? null });
+			}
+		});
+	}
+
 	// Claude-Toolbox patches window.fetch on this same page too. Chain onto whatever is installed
 	// rather than calling window.fetch, or we recurse. Not async: an unmatched fetch is handed
 	// straight through without an extra promise.
@@ -113,15 +166,15 @@
 			return prevFetch.apply(this, args);
 		}
 		if (!PREFIX.test(path)) return prevFetch.apply(this, args);
-		const completion = net.isCompletionUrl(path, { retry: true });
-		const performAction = PERFORM_ACTION.test(path);
-		const before = completion || performAction || BEFORE.some(re => re.test(path));
-		const completed = !before && COMPLETED.some(re => re.test(path));
-		if ((!before && !completed) || net.isKillSwitchOn('claude_usage_requests_off')) return prevFetch.apply(this, args);
+		const readSend = net.isCompletionUrl(path, { retry: true }) ? sendFromCompletion
+			: PERFORM_ACTION.test(path) ? sendFromPerformAction : null;
+		const kind = readSend || BEFORE.some(re => re.test(path)) ? 'before'
+			: STREAM_TIMELINE.test(path) ? 'timeline'
+				: COMPLETED.some(re => re.test(path)) ? 'completed' : null;
+		if (!kind || net.isKillSwitchOn('claude_usage_requests_off')) return prevFetch.apply(this, args);
 
 		const method = net.getFetchMethod(args[0], args[1]);
-		if (before) {
-			const readSend = completion ? sendFromCompletion : performAction ? sendFromPerformAction : null;
+		if (kind === 'before') {
 			if (readSend) {
 				// Not awaited: reading (and decoding) the body must not hold up the real request.
 				readSend(bodySource(args), path).then(
@@ -133,8 +186,13 @@
 			return prevFetch.apply(this, args);
 		}
 
+		const source = kind === 'timeline' ? bodySource(args) : null; // before the call: it may tee args[1]
 		const response = prevFetch.apply(this, args);
-		response.then(() => post('interceptedResponse', { url, method }), () => { });
+		// For the timeline, cloned before the page reads it: this callback was registered first.
+		response.then(r => {
+			if (kind === 'timeline') watchTimeline(r.clone(), source).catch(() => { });
+			else post('interceptedResponse', { url, method });
+		}, () => { });
 		return response;
 	};
 })();
