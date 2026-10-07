@@ -112,7 +112,7 @@ class ContainerStrategy {
 
 class BraveStrategy extends ContainerStrategy {
 	async fetch(ctx, url, options = {}) {
-		// Public URLs (e.g. github) go through a plain fetch — a content-script fetch would hit CORS.
+		// Non-claude.ai URLs go through a plain fetch — a content-script fetch would hit CORS.
 		if (!isClaudeUrl(url)) return fetch(url, options);
 		// A specific container's tab → proxy through it (its cookies).
 		const tabId = ctx?.tabId;

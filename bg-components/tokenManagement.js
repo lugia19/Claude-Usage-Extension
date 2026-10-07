@@ -6,59 +6,42 @@ async function Log(...args) {
 	await RawLog("tokenManagement", ...args);
 }
 const API_MODEL_SLUG = "claude-opus-5";
-// Move getTextFromContent here since it's token-related
-async function getTextFromContent(content, includeEphemeral = false, api = null, orgId = null) {
+// Text of one content block, for token counting, in one of two views:
+//
+// - Context (asOutput = false): what later turns send back to the model. Thinking drops out after
+//   its own turn; tool results do NOT. Verified 2026-10-07 (merged experience, Haiku 4.5): with
+//   tools forbidden, the model quoted lines from a file it had Read two turns earlier, and listed
+//   all ten results of an earlier web search, not just the one it cited.
+// - Output (asOutput = true): what the model generated - text, thinking and tool inputs. Tool
+//   results are excluded: they are fed to the model, not produced by it.
+//
+// Web-search results only carry title/url here; the page text the model saw is never exposed, so
+// it can't be counted.
+function getTextFromContent(content, asOutput = false) {
 	let textPieces = [];
 
 	if (content.text) {
 		textPieces.push(content.text);
 	}
 
-	if (content.thinking && includeEphemeral) {
+	if (content.thinking && asOutput) {
 		textPieces.push(content.thinking);
 	}
 
 	if (content.input) {
 		textPieces.push(JSON.stringify(content.input));
 	}
-	if (content.content) {
-		if (Array.isArray(content.content)) {
-			if (content.type !== "tool_result" || includeEphemeral) {
-				for (const nestedContent of content.content) {
-					textPieces = textPieces.concat(await getTextFromContent(nestedContent, includeEphemeral, api, orgId));
-				}
-			}
-		}
-		else if (typeof content.content === 'object') {
-			textPieces = textPieces.concat(await getTextFromContent(content.content, includeEphemeral, api, orgId));
-		}
+
+	if (content.type === "tool_result" && asOutput) {
+		return textPieces;
 	}
 
-	if (content.type === "knowledge" && includeEphemeral) {
-		if (content.url && content.url.length > 0) {
-			if (content.url.includes("docs.google.com")) {
-				if (api && orgId) {
-					const docUuid = content.metadata?.uri;
-					if (docUuid) {
-						const syncObj = { type: "gdrive", config: { uri: docUuid } };
-						await Log("Fetching Google Drive document content:", docUuid);
-						try {
-							const syncText = await api.getSyncText(syncObj);
-							if (syncText) {
-								textPieces.push(syncText);
-								await Log("Retrieved Google Drive document content:", syncText.length, "chars");
-							}
-						} catch (error) {
-							await Log("error", "Error fetching Google Drive document:", error);
-						}
-					} else {
-						await Log("error", "Could not extract document UUID from URL or metadata");
-					}
-				} else {
-					await Log("warn", "API or orgId not provided, cannot fetch Google Drive document");
-				}
-			}
+	if (Array.isArray(content.content)) {
+		for (const nestedContent of content.content) {
+			textPieces = textPieces.concat(getTextFromContent(nestedContent, asOutput));
 		}
+	} else if (content.content && typeof content.content === 'object') {
+		textPieces = textPieces.concat(getTextFromContent(content.content, asOutput));
 	}
 
 	return textPieces;
