@@ -680,19 +680,25 @@ class ConversationAPI {
 		// the context starts after it, and so do the cache anchors (one from before the compaction
 		// can't cover the new prefix). A pre-merge boundary carries the summary text; a merged one is a
 		// divider, priced at CONFIG.COMPACTION_SUMMARY_TOKENS.
-		let compactionIdx = -1;
-		for (let i = currentTrunk.length - 1; i >= 0; i--) {
+		const boundaries = [];
+		for (let i = currentTrunk.length - 1; i >= 0 && boundaries.length < 2; i--) {
 			if (currentTrunk[i].compaction_summary?.length || isCompactionDivider(currentTrunk[i], currentTrunk[i - 1])) {
-				compactionIdx = i;
-				break;
+				boundaries.push(i);
 			}
 		}
-		const candidateHumans = allTrunkHumans.filter(h => trunkIndexMap.get(h.uuid) > compactionIdx);
+		const compactionIdx = boundaries[0] ?? -1;
+		const lastIdx = currentTrunk.length - 1;
+		// A divider that is the trunk's last message means the turn that just ended did the compacting:
+		// its prompt was the pre-compaction one (from the previous boundary on), which this turn's cost
+		// prices, while length and the next message's cost start from the new summary.
+		const freshCompaction = compactionIdx >= 0 && compactionIdx === lastIdx;
+		const promptStartIdx = (freshCompaction ? (boundaries[1] ?? -1) : compactionIdx) + 1;
+		const previousCompactionIdx = freshCompaction ? (boundaries[1] ?? -1) : -1;
+		const humansFrom = (start) => allTrunkHumans.filter(h => trunkIndexMap.get(h.uuid) >= start);
 
 		// The turn the trunk ends on (a divider lands on top of its reply), and the reply whose output
 		// that turn paid for: the turn itself, or the one before a trailing human.
-		const lastIdx = currentTrunk.length - 1;
-		const turnIdx = isCompactionDivider(currentTrunk[lastIdx], currentTrunk[lastIdx - 1]) ? lastIdx - 1 : lastIdx;
+		const turnIdx = freshCompaction ? lastIdx - 1 : lastIdx;
 		const outputIdx = [turnIdx, turnIdx - 1].find(i => currentTrunk[i]?.sender === "assistant") ?? -1;
 
 		// The boundary depends only on WHICH humans are eligible to hold the anchor; everything
@@ -805,12 +811,13 @@ class ConversationAPI {
 		// When !isNewMessage the two candidate lists are identical, so resolve once and share -
 		// which also preserves the old behaviour exactly, where futureCost fell out of the same
 		// numbers as cost.
-		const next = await resolveBoundary(candidateHumans);
+		const next = await resolveBoundary(humansFrom(compactionIdx + 1));
+		const nowHumans = humansFrom(promptStartIdx);
 		const now_ = isNewMessage
-			? await resolveBoundary(candidateHumans.filter(h => h !== allTrunkHumans[allTrunkHumans.length - 1]))
-			: next;
+			? await resolveBoundary(nowHumans.filter(h => h !== allTrunkHumans[allTrunkHumans.length - 1]))
+			: freshCompaction ? await resolveBoundary(nowHumans) : next;
 
-		return { currentTrunk, compactionIdx, turnIdx, outputIdx, now: now_, next };
+		return { currentTrunk, compactionIdx, previousCompactionIdx, promptStartIdx, turnIdx, outputIdx, now: now_, next };
 	}
 
 	// Single pass. Everything the conversation costs - now and next message - comes out of one tree
@@ -848,7 +855,7 @@ class ConversationAPI {
 			});
 		}
 
-		const { currentTrunk, compactionIdx, turnIdx, outputIdx, now, next } = cachingInfo;
+		const { currentTrunk, compactionIdx, previousCompactionIdx, promptStartIdx, turnIdx, outputIdx, now, next } = cachingInfo;
 		const conversationIsCached = now.conversationIsCached;
 
 		// Initialize token counting. Two cache flags walk the trunk in parallel: `now` prices this
@@ -897,18 +904,34 @@ class ConversationAPI {
 		const assistantMessageData = [];
 		let hasWebSearchResult = false;
 
-		// The compaction summary opens the context, so it's cached exactly when the conversation is.
+		// A compaction summary opens the context, so it's cached exactly when the conversation is. A
+		// merged one is priced at a constant, which makes the length an estimate.
+		const summaryTokensAt = async (idx) => currentTrunk[idx].compaction_summary?.length
+			? tokenCounter.countText(currentTrunk[idx].compaction_summary.flatMap(block => getTextFromContent(block)).join("\n"))
+			: CONFIG.COMPACTION_SUMMARY_TOKENS;
+		const freshCompaction = compactionIdx >= 0 && promptStartIdx <= compactionIdx;
 		if (compactionIdx >= 0) {
-			const boundary = currentTrunk[compactionIdx];
-			const summaryTokens = boundary.compaction_summary?.length
-				? await tokenCounter.countText(boundary.compaction_summary.flatMap(block => getTextFromContent(block)).join("\n"))
-				: CONFIG.COMPACTION_SUMMARY_TOKENS;
-			await Log(`Compaction at trunk message ${compactionIdx + 1}/${currentTrunk.length}: summary ${summaryTokens} tokens`);
+			const summaryTokens = await summaryTokensAt(compactionIdx);
+			await Log(`Compaction at trunk message ${compactionIdx + 1}/${currentTrunk.length}: summary ${summaryTokens} tokens${freshCompaction ? " (made by this turn)" : ""}`);
 			lengthTokens += summaryTokens;
-			costTokens += conversationIsCached ? summaryTokens * CONFIG.CACHING_MULTIPLIER : summaryTokens;
 			futureCostTokens += next.conversationIsCached ? summaryTokens * CONFIG.CACHING_MULTIPLIER : summaryTokens;
-			uncachedCostTokens += summaryTokens;
 			uncachedFutureCostTokens += summaryTokens;
+			if (!freshCompaction) {
+				costTokens += conversationIsCached ? summaryTokens * CONFIG.CACHING_MULTIPLIER : summaryTokens;
+				uncachedCostTokens += summaryTokens;
+			} else {
+				// This turn's two calls: the compaction read the pre-compaction prompt (walked below, from
+				// the previous boundary's summary on) and wrote the summary; the reply then read the
+				// summary, uncached. (It also re-read the turn's own message, which isn't counted here.)
+				const summaryCallTokens = summaryTokens * CONFIG.OUTPUT_TOKEN_MULTIPLIER + summaryTokens;
+				costTokens += summaryCallTokens;
+				uncachedCostTokens += summaryCallTokens;
+				if (previousCompactionIdx >= 0) {
+					const previousSummaryTokens = await summaryTokensAt(previousCompactionIdx);
+					costTokens += conversationIsCached ? previousSummaryTokens * CONFIG.CACHING_MULTIPLIER : previousSummaryTokens;
+					uncachedCostTokens += previousSummaryTokens;
+				}
+			}
 		}
 
 		// The reply's output, priced even when a compaction has since folded it into the summary.
@@ -921,9 +944,12 @@ class ConversationAPI {
 			uncachedFutureCostTokens += outputTokens;
 		}
 
-		for (let i = compactionIdx + 1; i < currentTrunk.length; i++) {
+		// From the start of this turn's prompt. Normally that's the context; after a compaction this turn
+		// made, the messages up to the boundary count toward this turn's cost only.
+		for (let i = promptStartIdx; i < currentTrunk.length; i++) {
 			const rawMessageData = currentTrunk[i];
 			const message = new MessageAPI(rawMessageData, cacheIsActive, this.api);
+			const inContext = i > compactionIdx;
 
 			// Check for web search results in message content
 			if (!hasWebSearchResult && rawMessageData.content) {
@@ -936,19 +962,21 @@ class ConversationAPI {
 
 			const isCachedNext = cacheIsActiveNext;
 
-			lengthTokens += fileTokens;
 			costTokens += message.isCached ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
-			futureCostTokens += isCachedNext ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
 			uncachedCostTokens += fileTokens; // Always full price
-			uncachedFutureCostTokens += fileTokens;
+			if (inContext) {
+				lengthTokens += fileTokens;
+				futureCostTokens += isCachedNext ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
+				uncachedFutureCostTokens += fileTokens;
+			}
 
 			// Text content
 			const textContent = await message.getTextContent(false);
 
 			if (message.sender === "human") {
-				humanMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext });
+				humanMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext, inContext });
 			} else {
-				assistantMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext });
+				assistantMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext, inContext });
 			}
 
 
@@ -980,6 +1008,8 @@ class ConversationAPI {
 			return tokenCounter.countMessages(humans, assistants);
 		};
 		const allMessageTokens = await countSlice(() => true);
+		// Only differs right after a compaction this turn made: its prompt vs. the remaining context.
+		const contextMessageTokens = freshCompaction ? await countSlice(m => m.inContext) : allMessageTokens;
 		const cachedNowTokens = await countSlice(m => m.isCachedNow);
 		// Without a new message the two boundaries are literally the same object (getCachingInfo
 		// resolves once and shares it), so every message has isCachedNow === isCachedNext and
@@ -987,13 +1017,13 @@ class ConversationAPI {
 		// answer — on every navigation and every branch switch.
 		const cachedNextTokens = next === now
 			? cachedNowTokens
-			: await countSlice(m => m.isCachedNext);
+			: await countSlice(m => m.inContext && m.isCachedNext);
 
-		lengthTokens += allMessageTokens;
+		lengthTokens += contextMessageTokens;
 		costTokens += allMessageTokens;
-		futureCostTokens += allMessageTokens;
+		futureCostTokens += contextMessageTokens;
 		uncachedCostTokens += allMessageTokens;
-		uncachedFutureCostTokens += allMessageTokens;
+		uncachedFutureCostTokens += contextMessageTokens;
 
 		// Subtract each figure's own cached prefix. `cost` gets back what is cached NOW;
 		// `futureCost` gets back everything that will be cached once the next message goes out,
@@ -1022,7 +1052,8 @@ class ConversationAPI {
 			hasWebSearchResult ||                            // Web search result in history
 			effectiveSettings.enabled_bananagrams ||         // Drive search
 			effectiveSettings.enabled_melange ||             // Memory (files loaded dynamically)
-			projectStats?.use_project_knowledge_search       // Project retrieval
+			projectStats?.use_project_knowledge_search ||    // Project retrieval
+			(compactionIdx >= 0 && !currentTrunk[compactionIdx].compaction_summary?.length) // Merged compaction summary (a constant)
 		);
 
 		// Null when the API reports no model at all, which a freshly created conversation does for a
