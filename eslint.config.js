@@ -5,11 +5,7 @@ const { baseConfig, manifestGroups, htmlGroups, moduleGroup } = require('./commo
 module.exports = baseConfig({
 	root: __dirname,
 	groups: [
-		// injections/webrequest-polyfill.js is injected into the page by a <script> tag
-		// (electron_reciever.js), so it shares the MAIN world with the MAIN content scripts.
-		...['manifest_chrome.json', 'manifest_firefox.json', 'manifest_electron.json']
-			.flatMap(m => manifestGroups(__dirname, m))
-			.map(g => (g.name.endsWith('(MAIN)') ? { ...g, files: [...g.files, 'injections/webrequest-polyfill.js'] } : g)),
+		...['manifest_chrome.json', 'manifest_firefox.json', 'manifest_electron.json'].flatMap(m => manifestGroups(__dirname, m)),
 		...htmlGroups(__dirname, ['popup.html']),
 		moduleGroup(__dirname, 'background.js'),
 	],

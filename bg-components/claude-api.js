@@ -24,14 +24,14 @@ async function Log(...args) {
 	await RawLog("claude-api", ...args);
 }
 
-// Called from the background webRequest hook when the user writes account settings.
+// Called from background.js's request handler when the user writes account settings.
 export async function invalidateAccountSettings(orgId) {
 	if (!orgId) return;
 	await accountSettingsCache.delete(orgId);
 	await Log("Invalidated account settings cache for:", orgId);
 }
 
-// Called from the background webRequest hook on PUT /account_profile - the same request that
+// Called from background.js's request handler on PUT /account_profile - the same request that
 // carries a language change also carries edited conversation preferences.
 export async function invalidateProfileTokens(orgId) {
 	if (!orgId) return;
@@ -45,7 +45,7 @@ const profileTokensCache = new StoredMap("profileTokens");
 
 // Short — feature flags are user-toggleable, so a stale read visibly misprices the
 // conversation. This only exists to absorb the burst of getInfo() calls per message;
-// the webRequest hook in background.js invalidates on an actual settings write.
+// background.js's request handler invalidates on an actual settings write.
 const ACCOUNT_SETTINGS_TTL = 5 * 60 * 1000;
 const PROFILE_TOKENS_TTL = 5 * 60 * 1000;
 

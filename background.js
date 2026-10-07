@@ -28,39 +28,8 @@ import './i18n/ko.js';
 import './i18n/pt-BR.js';
 import './i18n/es.js';
 import './common/i18n/i18n-core.js';
-// Fetch/SSE/gzip helpers, published on globalThis.ClaudeExtNet.
-import './common/net/net.js';
 import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
 import { invalidateAccountSettings, invalidateProfileTokens, storeSseUsage } from './bg-components/claude-api.js';
-
-const INTERCEPT_PATTERNS = {
-	onBeforeRequest: {
-		urls: [
-			"*://claude.ai/api/organizations/*/completion",
-			"*://claude.ai/api/organizations/*/retry_completion",
-			"*://claude.ai/api/settings/billing*",
-			"*://claude.ai/api/account_profile",
-			"*://claude.ai/api/account/settings*"
-		],
-		regexes: [
-			"^https?://claude\\.ai/api/organizations/[^/]*/chat_conversations/[^/]*/completion$",
-			"^https?://claude\\.ai/api/organizations/[^/]*/chat_conversations/[^/]*/retry_completion$",
-			"^https?://claude\\.ai/api/settings/billing",
-			"^https?://claude\\.ai/api/account_profile$",
-			"^https?://claude\\.ai/api/account/settings"
-		]
-	},
-	onCompleted: {
-		urls: [
-			"*://claude.ai/api/organizations/*/chat_conversations/*",
-			"*://claude.ai/v1/sessions/*/events"
-		],
-		regexes: [
-			"^https?://claude\\.ai/api/organizations/[^/]*/chat_conversations/[^/]*$",
-			"^https?://claude\\.ai/v1/sessions/[^/]*/events$"
-		]
-	}
-};
 
 //#region Variable declarations
 let processingLock = null;  // Unix timestamp or null
@@ -142,19 +111,6 @@ if (browser.contextMenus) {
 
 
 if (!isElectron) {
-	// WebRequest listeners
-	browser.webRequest.onBeforeRequest.addListener(
-		(details) => runOnceInitialized(onBeforeRequestHandler, [details]),
-		{ urls: INTERCEPT_PATTERNS.onBeforeRequest.urls },
-		["requestBody"]
-	);
-
-	browser.webRequest.onCompleted.addListener(
-		(details) => runOnceInitialized(onCompletedHandler, [details]),
-		{ urls: INTERCEPT_PATTERNS.onCompleted.urls },
-		["responseHeaders"]
-	);
-
 	initContainerStrategy();
 }
 
@@ -489,7 +445,6 @@ messageRegistry.register('getExtraUsageAgainstLimit', () => getStorageValue('ext
 messageRegistry.register('setExtraUsageAgainstLimit', (message) => setStorageValue('extraUsageAgainstLimit', message.value === true));
 
 messageRegistry.register('isElectron', () => isElectron);
-messageRegistry.register('getMonkeypatchPatterns', () => isElectron ? INTERCEPT_PATTERNS : false);
 
 // The content script reports whether we're on Brave (navigator.brave.isBrave()). On Brave we can't
 // read per-container cookies, so claude.ai fetches are proxied through the originating tab instead.
@@ -718,25 +673,14 @@ async function getPopupUsageData() {
 }
 messageRegistry.register(getPopupUsageData);
 
-async function interceptedRequest(message, sender) {
-	await Log("Got intercepted request, are we in electron?", isElectron);
-	if (!isElectron) return false;
-	message.details.tabId = sender.tab.id;
-	message.details.cookieStoreId = sender.tab.cookieStoreId;
-	onBeforeRequestHandler(message.details);
+// The page's requests, from injections/request-hook.js via content-components/request_relay.js. The
+// tab (and its container) come from the sender, which is all apiForRequest needs.
+const fromTab = (handler) => (message, sender) => {
+	handler({ ...message.details, tabId: sender.tab.id, cookieStoreId: sender.tab.cookieStoreId });
 	return true;
-}
-messageRegistry.register(interceptedRequest);
-
-async function interceptedResponse(message, sender) {
-	await Log("Got intercepted response, are we in electron?", isElectron);
-	if (!isElectron) return false;
-	message.details.tabId = sender.tab.id;
-	message.details.cookieStoreId = sender.tab.cookieStoreId;
-	onCompletedHandler(message.details);
-	return true;
-}
-messageRegistry.register(interceptedResponse);
+};
+messageRegistry.register('interceptedRequest', fromTab(onBeforeRequestHandler));
+messageRegistry.register('interceptedResponse', fromTab(onCompletedHandler));
 
 async function getTotalTokensTracked() {
 	return await tokenStorageManager.getTotalTokens();
@@ -752,53 +696,10 @@ async function handleMessageFromContent(message, sender) {
 
 
 //#region Network handling
-async function parseRequestBody(requestBody) {
-	if (!requestBody?.raw?.[0]?.bytes) return undefined;
-
-	// Handle differently based on source
-	if (requestBody.fromMonkeypatch) {
-		const body = requestBody.raw[0].bytes;
-		try {
-			return JSON.parse(body);
-		} catch (e) {
-			try {
-				const params = new URLSearchParams(body);
-				const formData = {};
-				for (const [key, value] of params) {
-					formData[key] = value;
-				}
-				return formData;
-			} catch (e) {
-				return undefined;
-			}
-		}
-	} else {
-		// webRequest hands over the bytes as they go on the wire, and there is no decoded-body
-		// option. claude.ai gzips the completion upload itself (Content-Encoding: gzip, seen on
-		// Firefox first), so inflate before parsing. Firefox can also split a large upload across
-		// several raw chunks, so concatenate them all rather than reading only the first.
-		try {
-			const chunks = requestBody.raw.map(c => new Uint8Array(c.bytes));
-			let bytes = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
-			let offset = 0;
-			for (const c of chunks) {
-				bytes.set(c, offset);
-				offset += c.length;
-			}
-			// Sniffing the gzip magic beats reading Content-Encoding from onBeforeSendHeaders, which
-			// would mean correlating two listeners by requestId for no gain.
-			if (ClaudeExtNet.isGzipBytes(bytes)) bytes = await ClaudeExtNet.gunzipBytes(bytes);
-			return JSON.parse(new TextDecoder().decode(bytes));
-		} catch (e) {
-			return undefined;
-		}
-	}
-}
-
 // The authoritative pass. One per sent message, triggered by claude.ai's post-message tree GET.
 //
-// `api` is passed in rather than derived because the caller is a webRequest handler and has to
-// build it from `details` via the active container strategy.
+// `api` is passed in rather than derived because the caller is a request handler and has to
+// build it from `details` (the tab the request came from) via the active container strategy.
 async function runAuthoritativePass({ orgId, conversationId, api, tabId }) {
 	await Log("Running authoritative pass for", conversationId);
 
@@ -992,7 +893,7 @@ async function onBeforeRequestHandler(details) {
 	if (details.method === "POST" &&
 		(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
 		await Log("Request sent - URL:", details.url);
-		const requestBodyJSON = await parseRequestBody(details.requestBody);
+		const requestBodyJSON = details.requestBody; // parsed by the hook
 		// Shape only, never the prompt or attachment text: the debug log is persisted and viewable.
 		await Log("Request sent - Body:", {
 			model: requestBodyJSON?.model,
