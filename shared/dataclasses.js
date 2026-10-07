@@ -35,10 +35,12 @@ export function modelFamilyFromVersion(modelVersion) {
 // retries without its date. An ID we don't ship a price for falls back to its family's weight,
 // so a newly released model still prices as roughly the right tier. `family` is only consulted
 // for that fallback, and is derived from the ID when not given.
-export function modelWeight(modelVersion, family = null) {
+// `conversationTokens` picks the tier of a length-tiered entry (see MODEL_WEIGHTS).
+export function modelWeight(modelVersion, family, conversationTokens) {
 	const slug = modelVersion && modelVersion !== MODEL_UNKNOWN ? modelVersion.toLowerCase() : '';
-	return CONFIG.MODEL_WEIGHTS[slug]
-		?? CONFIG.MODEL_WEIGHTS[slug.replace(/-\d{8}$/, '')]
+	const entry = CONFIG.MODEL_WEIGHTS[slug] ?? CONFIG.MODEL_WEIGHTS[slug.replace(/-\d{8}$/, '')];
+	if (typeof entry === 'object') return conversationTokens > entry.longAbove ? entry.longWeight : entry.weight;
+	return entry
 		?? CONFIG.FAMILY_MODEL_WEIGHTS[family ?? modelFamilyFromVersion(slug)]
 		?? CONFIG.FALLBACK_MODEL_WEIGHT;
 }
@@ -452,7 +454,7 @@ export class ConversationData {
 		const modelVersion = modelVersionOverride && modelVersionOverride !== MODEL_UNKNOWN
 			? modelVersionOverride
 			: this.modelVersion;
-		return modelWeight(modelVersion, modelOverride || this.model);
+		return modelWeight(modelVersion, modelOverride || this.model, this.length);
 	}
 
 	// Calculate weighted cost based on model
