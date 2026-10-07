@@ -693,7 +693,9 @@ class ConversationAPI {
 		// that turn paid for: the turn itself, or the one before a trailing human.
 		const lastIdx = currentTrunk.length - 1;
 		const turnIdx = isCompactionDivider(currentTrunk[lastIdx], currentTrunk[lastIdx - 1]) ? lastIdx - 1 : lastIdx;
-		const outputIdx = [turnIdx, turnIdx - 1].find(i => currentTrunk[i]?.sender === "assistant") ?? -1;
+		// (Before a trailing human, step over a divider: reply -> divider -> human right after a compaction.)
+		const beforeHumanIdx = isCompactionDivider(currentTrunk[turnIdx - 1], currentTrunk[turnIdx - 2]) ? turnIdx - 2 : turnIdx - 1;
+		const outputIdx = [turnIdx, beforeHumanIdx].find(i => currentTrunk[i]?.sender === "assistant") ?? -1;
 
 		// The boundary depends only on WHICH humans are eligible to hold the anchor; everything
 		// above (tree, trunk, off-trunk leaves) is shared. So the analysis below is a function of
