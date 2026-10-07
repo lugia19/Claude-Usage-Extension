@@ -524,7 +524,8 @@ async function reportStreamCompletion(message, sender, orgId) {
 	// exist for the account, and it must not be lost to a conversation the estimate can't price.
 	//
 	// Ordering note: the authoritative pass fetches usage ~0.2s later (its trigger is claude.ai's
-	// post-message tree GET), so this write lands first and that fetch picks it up. If it ever lost
+	// post-message tree GET, or on the merged experience the StreamTimeline settle, which follows the
+	// stream's message_limit), so this write lands first and that fetch picks it up. If it ever lost
 	// that race the bars would simply wait for the next message, which is what the free-plan hint
 	// tells the user to do anyway.
 	await storeSseUsage(getStrategy().apiForTab(sender.tab, orgId), message.sseLimits);
