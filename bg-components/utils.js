@@ -161,7 +161,8 @@ function fillEstimatedCaps(caps) {
 CONFIG.ESTIMATED_CAPS = fillEstimatedCaps(CONFIG.ESTIMATED_CAPS);
 
 const isElectron = chrome.action === undefined || navigator.userAgent.includes("Electron");
-browser.storage.local.remove(['force_debug', 'debug_mode_until']).catch(() => { });
+// Retired keys: the old debug toggles, and the Google Drive / GitHub sync-source token cache.
+browser.storage.local.remove(['force_debug', 'debug_mode_until', 'syncTokens']).catch(() => { });
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 

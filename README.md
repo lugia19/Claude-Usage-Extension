@@ -24,10 +24,10 @@ This extension helps you monitor how much of your Claude usage quota remains. It
 
 The extension tracks token usage from:
 
-- **Files** - Documents uploaded to chats or synced via Google Drive, Github, etc
+- **Files** - Documents uploaded to chats
 - **Projects** - Knowledge files and custom instructions
 - **Personal preferences** - Your configured settings
-- **Message history** - Full conversation context
+- **Message history** - Full conversation context, including the results of tools Claude ran (they stay in context for later messages)
 - **System prompts** - Enabled tools (analysis, artifacts) on a per-chat basis
 - **MOST MCPs/Integrations** - There are some limitations in cases where a "Knowledge" object is returned that I can't access, such as with web search
 

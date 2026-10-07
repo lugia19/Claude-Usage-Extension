@@ -39,7 +39,6 @@ export async function invalidateProfileTokens(orgId) {
 	await Log("Invalidated profile tokens cache for:", orgId);
 }
 const subscriptionTiersCache = new StoredMap("subscriptionTiers");
-const syncTokenCache = new StoredMap("syncTokens");
 const projectCache = new StoredMap("projectCache");
 const accountSettingsCache = new StoredMap("accountSettings");
 const profileTokensCache = new StoredMap("profileTokens");
@@ -316,11 +315,6 @@ class ClaudeAPI {
 		return usageData;
 	}
 
-	// Platform operations
-	async getGoogleDriveDocument(uri) {
-		return this.getRequest(`/organizations/${this.orgId}/sync/mcp/drive/document/${uri}`);
-	}
-
 	// Platform operations with business logic
 	async getProjectStats(projectId, isNewMessage = false) {
 		const projectStats = await this.getRequest(`/organizations/${this.orgId}/projects/${projectId}/kb/stats`);
@@ -493,101 +487,6 @@ class MessageAPI {
 		}
 	}
 
-	// Now owns sync text logic
-	async getSyncText(sync) {
-		if (!sync) return "";
-
-		const syncType = sync.type;
-		await Log("Processing sync:", syncType, sync.uuid || sync.id);
-
-		if (syncType === "gdrive") {
-			const uri = sync.config?.uri;
-			if (!uri) return "";
-
-			const response = await this.api.getGoogleDriveDocument(uri);
-			return response?.text || "";
-		}
-		else if (syncType === "github") {
-			try {
-				const { owner, repo, branch, filters } = sync.config || {};
-				if (!owner || !repo || !branch || !filters?.filters) {
-					await Log("warn", "Incomplete GitHub sync config", sync.config);
-					return "";
-				}
-
-				let allContent = "";
-				for (const [filePath, action] of Object.entries(filters.filters)) {
-					if (action !== "include") continue;
-
-					const cleanPath = filePath.startsWith('/') ? filePath.substring(1) : filePath;
-					const githubUrl = `https://github.com/${owner}/${repo}/raw/refs/heads/${branch}/${cleanPath}`;
-
-					try {
-						const response = await this.api.fetchUrl(githubUrl, { method: 'GET' });
-						if (response.ok) {
-							const fileContent = await response.text();
-							allContent += fileContent + "\n";
-						} else {
-							await Log("warn", `Failed to fetch GitHub file: ${githubUrl}, status: ${response.status}`);
-						}
-					} catch (error) {
-						await Log("error", `Error fetching GitHub file: ${githubUrl}`, error);
-					}
-				}
-				return allContent;
-			} catch (error) {
-				await Log("error", "Error processing GitHub sync source:", error);
-				return "";
-			}
-		}
-
-		await Log("warn", `Unsupported sync type: ${syncType}`);
-		return "";
-	}
-
-	async getSyncTokens() {
-		const SYNC_CACHE_TIME_THRESHOLD = 60 * 60 * 1000;
-		const syncPromises = (this.data.sync_sources || []).map(async (sync) => {
-			await Log("Processing sync source:", sync.type, sync.uuid);
-			const cacheKey = `${this.api.orgId}:${sync.uuid}`;
-			const cachedData = await syncTokenCache.get(cacheKey);
-
-			// Check cache first
-			if (cachedData &&
-				cachedData.sizeBytes === sync.status.current_size_bytes &&
-				cachedData.fileCount === sync.status.current_file_count) {
-
-				const timeDiff = new Date(sync.status.last_synced_at).getTime() -
-					new Date(cachedData.lastSyncedAt).getTime();
-
-				if (timeDiff < SYNC_CACHE_TIME_THRESHOLD) {
-					await Log("Using cached sync data for:", sync.type, sync.uuid);
-					return cachedData.tokenCount;
-				}
-			}
-
-			// Cache miss - fetch and count
-			await Log("Cache miss for sync source:", sync.type, sync.uuid);
-			const syncText = await this.getSyncText(sync);
-			if (!syncText) return 0;
-
-			const tokenCount = await tokenCounter.countText(syncText);
-
-			// Update cache
-			await syncTokenCache.set(cacheKey, {
-				sizeBytes: sync.status.current_size_bytes,
-				fileCount: sync.status.current_file_count,
-				lastSyncedAt: sync.status.last_synced_at,
-				tokenCount: tokenCount
-			});
-
-			return tokenCount;
-		});
-
-		const tokenCounts = await Promise.all(syncPromises);
-		return tokenCounts.reduce((total, count) => total + count, 0);
-	}
-
 	async getFileTokens() {
 		const filePromises = (this.data.files_v2 || []).map(async (file) => {
 			const tokenCountingAPIKey = await tokenCounter.getApiKey();
@@ -618,14 +517,15 @@ class MessageAPI {
 		return tokenCounts.reduce((total, count) => total + count, 0);
 	}
 
-	// Get text content (Not tokens, so it can be done all in one call later)
-	async getTextContent(includeEphemeral = false) {
+	// Get text content (Not tokens, so it can be done all in one call later). asOutput picks the
+	// view - see getTextFromContent: context for the message's share of later prompts, output for
+	// what the model generated.
+	async getTextContent(asOutput = false) {
 		let messageContent = [];
 
 		// Process content array
 		for (const content of this.data.content || []) {
-			const textParts = await getTextFromContent(content, includeEphemeral, this.api, this.api.orgId);
-			messageContent = messageContent.concat(textParts);
+			messageContent = messageContent.concat(getTextFromContent(content, asOutput));
 		}
 
 		// Process attachments
@@ -941,27 +841,18 @@ class ConversationAPI {
 				);
 			}
 
-			// Run both in parallel
-			const [fileTokens, syncTokens] = await Promise.all([
-				message.getFileTokens(),
-				message.getSyncTokens()
-			]);
+			const fileTokens = await message.getFileTokens();
 
 			const isCachedNext = cacheIsActiveNext;
 
-			// Then apply the calculations
-			lengthTokens += fileTokens + syncTokens;
-			costTokens += message.isCached ?
-				(fileTokens + syncTokens) * CONFIG.CACHING_MULTIPLIER :
-				(fileTokens + syncTokens);
-			futureCostTokens += isCachedNext ?
-				(fileTokens + syncTokens) * CONFIG.CACHING_MULTIPLIER :
-				(fileTokens + syncTokens);
-			uncachedCostTokens += fileTokens + syncTokens; // Always full price
-			uncachedFutureCostTokens += fileTokens + syncTokens;
+			lengthTokens += fileTokens;
+			costTokens += message.isCached ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
+			futureCostTokens += isCachedNext ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
+			uncachedCostTokens += fileTokens; // Always full price
+			uncachedFutureCostTokens += fileTokens;
 
 			// Text content
-			const textContent = await message.getTextContent(false, this, this.orgId);
+			const textContent = await message.getTextContent(false);
 
 			if (message.sender === "human") {
 				humanMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext });
@@ -975,7 +866,7 @@ class ConversationAPI {
 
 			if ((isLastMessage && message.sender === "assistant") ||
 				(isSecondToLast && message.sender === "assistant" && currentTrunk[currentTrunk.length - 1].sender === "human")) {
-				const lastMessageContent = await message.getTextContent(true, this, this.orgId);
+				const lastMessageContent = await message.getTextContent(true);
 				const outputTokens = await tokenCounter.countText(lastMessageContent) * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
 				costTokens += outputTokens;
 				futureCostTokens += outputTokens;
