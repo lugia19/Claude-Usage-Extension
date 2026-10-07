@@ -454,6 +454,9 @@ export class ConversationData {
 		const modelVersion = modelVersionOverride && modelVersionOverride !== MODEL_UNKNOWN
 			? modelVersionOverride
 			: this.modelVersion;
+		// The tier should go by the whole prompt, but length leaves out tool definitions (see
+		// ConversationAPI.getInfo), so a prompt pushed over a tier's line by its tools prices low.
+		// Accepted until merged-experience tool costs exist; that work carries the tool total here.
 		return modelWeight(modelVersion, modelOverride || this.model, this.length);
 	}
 
