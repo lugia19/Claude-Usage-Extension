@@ -680,25 +680,19 @@ class ConversationAPI {
 		// the context starts after it, and so do the cache anchors (one from before the compaction
 		// can't cover the new prefix). A pre-merge boundary carries the summary text; a merged one is a
 		// divider, priced at CONFIG.COMPACTION_SUMMARY_TOKENS.
-		const boundaries = [];
-		for (let i = currentTrunk.length - 1; i >= 0 && boundaries.length < 2; i--) {
+		let compactionIdx = -1;
+		for (let i = currentTrunk.length - 1; i >= 0; i--) {
 			if (currentTrunk[i].compaction_summary?.length || isCompactionDivider(currentTrunk[i], currentTrunk[i - 1])) {
-				boundaries.push(i);
+				compactionIdx = i;
+				break;
 			}
 		}
-		const compactionIdx = boundaries[0] ?? -1;
-		const lastIdx = currentTrunk.length - 1;
-		// A divider that is the trunk's last message means the turn that just ended did the compacting:
-		// its prompt was the pre-compaction one (from the previous boundary on), which this turn's cost
-		// prices, while length and the next message's cost start from the new summary.
-		const freshCompaction = compactionIdx >= 0 && compactionIdx === lastIdx;
-		const promptStartIdx = (freshCompaction ? (boundaries[1] ?? -1) : compactionIdx) + 1;
-		const previousCompactionIdx = freshCompaction ? (boundaries[1] ?? -1) : -1;
-		const humansFrom = (start) => allTrunkHumans.filter(h => trunkIndexMap.get(h.uuid) >= start);
+		const candidateHumans = allTrunkHumans.filter(h => trunkIndexMap.get(h.uuid) > compactionIdx);
 
 		// The turn the trunk ends on (a divider lands on top of its reply), and the reply whose output
 		// that turn paid for: the turn itself, or the one before a trailing human.
-		const turnIdx = freshCompaction ? lastIdx - 1 : lastIdx;
+		const lastIdx = currentTrunk.length - 1;
+		const turnIdx = isCompactionDivider(currentTrunk[lastIdx], currentTrunk[lastIdx - 1]) ? lastIdx - 1 : lastIdx;
 		const outputIdx = [turnIdx, turnIdx - 1].find(i => currentTrunk[i]?.sender === "assistant") ?? -1;
 
 		// The boundary depends only on WHICH humans are eligible to hold the anchor; everything
@@ -811,13 +805,12 @@ class ConversationAPI {
 		// When !isNewMessage the two candidate lists are identical, so resolve once and share -
 		// which also preserves the old behaviour exactly, where futureCost fell out of the same
 		// numbers as cost.
-		const next = await resolveBoundary(humansFrom(compactionIdx + 1));
-		const nowHumans = humansFrom(promptStartIdx);
+		const next = await resolveBoundary(candidateHumans);
 		const now_ = isNewMessage
-			? await resolveBoundary(nowHumans.filter(h => h !== allTrunkHumans[allTrunkHumans.length - 1]))
-			: freshCompaction ? await resolveBoundary(nowHumans) : next;
+			? await resolveBoundary(candidateHumans.filter(h => h !== allTrunkHumans[allTrunkHumans.length - 1]))
+			: next;
 
-		return { currentTrunk, compactionIdx, previousCompactionIdx, promptStartIdx, turnIdx, outputIdx, now: now_, next };
+		return { currentTrunk, compactionIdx, turnIdx, outputIdx, now: now_, next };
 	}
 
 	// Single pass. Everything the conversation costs - now and next message - comes out of one tree
@@ -855,7 +848,7 @@ class ConversationAPI {
 			});
 		}
 
-		const { currentTrunk, compactionIdx, previousCompactionIdx, promptStartIdx, turnIdx, outputIdx, now, next } = cachingInfo;
+		const { currentTrunk, compactionIdx, turnIdx, outputIdx, now, next } = cachingInfo;
 		const conversationIsCached = now.conversationIsCached;
 
 		// Initialize token counting. Two cache flags walk the trunk in parallel: `now` prices this
@@ -904,34 +897,21 @@ class ConversationAPI {
 		const assistantMessageData = [];
 		let hasWebSearchResult = false;
 
-		// A compaction summary opens the context, so it's cached exactly when the conversation is. A
-		// merged one is priced at a constant, which makes the length an estimate.
-		const summaryTokensAt = async (idx) => currentTrunk[idx].compaction_summary?.length
-			? tokenCounter.countText(currentTrunk[idx].compaction_summary.flatMap(block => getTextFromContent(block)).join("\n"))
-			: CONFIG.COMPACTION_SUMMARY_TOKENS;
-		const freshCompaction = compactionIdx >= 0 && promptStartIdx <= compactionIdx;
+		// The compaction summary opens the context, so it's cached exactly when the conversation is.
+		// The turn that compacted is priced like any other, from the summary on. Its compaction call
+		// read the whole pre-compaction prompt, but nearly all of that was cached (cache reads cost
+		// nothing here), so the difference is the summary's own generation: accepted, once per compaction.
 		if (compactionIdx >= 0) {
-			const summaryTokens = await summaryTokensAt(compactionIdx);
-			await Log(`Compaction at trunk message ${compactionIdx + 1}/${currentTrunk.length}: summary ${summaryTokens} tokens${freshCompaction ? " (made by this turn)" : ""}`);
+			const boundary = currentTrunk[compactionIdx];
+			const summaryTokens = boundary.compaction_summary?.length
+				? await tokenCounter.countText(boundary.compaction_summary.flatMap(block => getTextFromContent(block)).join("\n"))
+				: CONFIG.COMPACTION_SUMMARY_TOKENS;
+			await Log(`Compaction at trunk message ${compactionIdx + 1}/${currentTrunk.length}: summary ${summaryTokens} tokens`);
 			lengthTokens += summaryTokens;
+			costTokens += conversationIsCached ? summaryTokens * CONFIG.CACHING_MULTIPLIER : summaryTokens;
 			futureCostTokens += next.conversationIsCached ? summaryTokens * CONFIG.CACHING_MULTIPLIER : summaryTokens;
+			uncachedCostTokens += summaryTokens;
 			uncachedFutureCostTokens += summaryTokens;
-			if (!freshCompaction) {
-				costTokens += conversationIsCached ? summaryTokens * CONFIG.CACHING_MULTIPLIER : summaryTokens;
-				uncachedCostTokens += summaryTokens;
-			} else {
-				// This turn's two calls: the compaction read the pre-compaction prompt (walked below, from
-				// the previous boundary's summary on) and wrote the summary; the reply then read the
-				// summary, uncached. (It also re-read the turn's own message, which isn't counted here.)
-				const summaryCallTokens = summaryTokens * CONFIG.OUTPUT_TOKEN_MULTIPLIER + summaryTokens;
-				costTokens += summaryCallTokens;
-				uncachedCostTokens += summaryCallTokens;
-				if (previousCompactionIdx >= 0) {
-					const previousSummaryTokens = await summaryTokensAt(previousCompactionIdx);
-					costTokens += conversationIsCached ? previousSummaryTokens * CONFIG.CACHING_MULTIPLIER : previousSummaryTokens;
-					uncachedCostTokens += previousSummaryTokens;
-				}
-			}
 		}
 
 		// The reply's output, priced even when a compaction has since folded it into the summary.
@@ -944,12 +924,9 @@ class ConversationAPI {
 			uncachedFutureCostTokens += outputTokens;
 		}
 
-		// From the start of this turn's prompt. Normally that's the context; after a compaction this turn
-		// made, the messages up to the boundary count toward this turn's cost only.
-		for (let i = promptStartIdx; i < currentTrunk.length; i++) {
+		for (let i = compactionIdx + 1; i < currentTrunk.length; i++) {
 			const rawMessageData = currentTrunk[i];
 			const message = new MessageAPI(rawMessageData, cacheIsActive, this.api);
-			const inContext = i > compactionIdx;
 
 			// Check for web search results in message content
 			if (!hasWebSearchResult && rawMessageData.content) {
@@ -962,21 +939,19 @@ class ConversationAPI {
 
 			const isCachedNext = cacheIsActiveNext;
 
+			lengthTokens += fileTokens;
 			costTokens += message.isCached ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
+			futureCostTokens += isCachedNext ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
 			uncachedCostTokens += fileTokens; // Always full price
-			if (inContext) {
-				lengthTokens += fileTokens;
-				futureCostTokens += isCachedNext ? fileTokens * CONFIG.CACHING_MULTIPLIER : fileTokens;
-				uncachedFutureCostTokens += fileTokens;
-			}
+			uncachedFutureCostTokens += fileTokens;
 
 			// Text content
 			const textContent = await message.getTextContent(false);
 
 			if (message.sender === "human") {
-				humanMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext, inContext });
+				humanMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext });
 			} else {
-				assistantMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext, inContext });
+				assistantMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext });
 			}
 
 
@@ -1008,8 +983,6 @@ class ConversationAPI {
 			return tokenCounter.countMessages(humans, assistants);
 		};
 		const allMessageTokens = await countSlice(() => true);
-		// Only differs right after a compaction this turn made: its prompt vs. the remaining context.
-		const contextMessageTokens = freshCompaction ? await countSlice(m => m.inContext) : allMessageTokens;
 		const cachedNowTokens = await countSlice(m => m.isCachedNow);
 		// Without a new message the two boundaries are literally the same object (getCachingInfo
 		// resolves once and shares it), so every message has isCachedNow === isCachedNext and
@@ -1017,13 +990,13 @@ class ConversationAPI {
 		// answer — on every navigation and every branch switch.
 		const cachedNextTokens = next === now
 			? cachedNowTokens
-			: await countSlice(m => m.inContext && m.isCachedNext);
+			: await countSlice(m => m.isCachedNext);
 
-		lengthTokens += contextMessageTokens;
+		lengthTokens += allMessageTokens;
 		costTokens += allMessageTokens;
-		futureCostTokens += contextMessageTokens;
+		futureCostTokens += allMessageTokens;
 		uncachedCostTokens += allMessageTokens;
-		uncachedFutureCostTokens += contextMessageTokens;
+		uncachedFutureCostTokens += allMessageTokens;
 
 		// Subtract each figure's own cached prefix. `cost` gets back what is cached NOW;
 		// `futureCost` gets back everything that will be cached once the next message goes out,
