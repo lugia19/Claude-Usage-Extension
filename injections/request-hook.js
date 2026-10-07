@@ -61,15 +61,18 @@
 		const method = net.getFetchMethod(args[0], args[1]);
 		if (before) {
 			let readBody = Promise.resolve(null);
-			if (completion && args[1]?.body != null) {
+			if (completion) {
 				let init = args[1];
-				// A stream body can only be read once: tee it so the real request gets an unread copy.
-				if (init.body instanceof ReadableStream) {
+				if (init?.body == null && args[0] instanceof Request) {
+					// fetch(new Request(url, { body })): read a clone, the page's Request stays unread.
+					init = { headers: args[0].headers, body: args[0].clone().body };
+				} else if (init?.body instanceof ReadableStream) {
+					// A stream body can only be read once: tee it so the real request gets an unread copy.
 					const [forPage, forUs] = init.body.tee();
 					args[1] = { ...init, body: forPage };
 					init = { ...init, body: forUs };
 				}
-				readBody = net.readJsonRequestBody(init).catch(() => null);
+				if (init?.body != null) readBody = net.readJsonRequestBody(init).catch(() => null);
 			}
 			// Not awaited: reading (and inflating) the body must not hold up the real request.
 			readBody.then(requestBody => post('interceptedRequest', { url, method, requestBody }));
