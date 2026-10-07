@@ -259,13 +259,16 @@ class TokenStorageManager {
 	}
 
 	async addOrgId(orgId) {
+		if (!orgId) return; // a page that loaded before claude.ai set its org cookie
 		// Always write to refresh the TTL on every sighting.
 		await this.knownOrgs.set(orgId, true, KNOWN_ORG_TTL_MS);
 	}
 
 	// Non-expired orgs we've seen recently (entries() prunes expired keys on read).
 	async getKnownOrgIds() {
-		return (await this.knownOrgs.entries()).map(([orgId]) => orgId);
+		// filter: older builds could store a null org (see addOrgId) that lingers until its TTL runs
+		// out; removable a week after this ships
+		return (await this.knownOrgs.entries()).map(([orgId]) => orgId).filter(Boolean);
 	}
 
 	async getTotalTokens() {

@@ -456,6 +456,7 @@ messageRegistry.register('reportBrave', async (message) => {
 // Complex handlers
 async function requestData(message, sender, orgId) {
 	const { conversationId } = message;
+	if (!orgId) return; // no org cookie: nothing to fetch for
 
 	const api = getStrategy().apiForTab(sender.tab, orgId);
 

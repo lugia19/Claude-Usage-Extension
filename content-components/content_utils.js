@@ -57,6 +57,15 @@ async function reportBraveStatus() {
 	}
 }
 
+// A fresh login can render the app before claude.ai sets the lastActiveOrg cookie, and both
+// requests are per org: sent with none, they'd fetch /organizations/null/usage.
+async function requestInitialData() {
+	if (!getActiveOrgId()) await Log('No org cookie yet, waiting for it before requesting data');
+	while (!getActiveOrgId()) await sleep(500);
+	sendBackgroundMessage({ type: 'requestData' });
+	sendBackgroundMessage({ type: 'initOrg' });
+}
+
 async function waitForElement(target, selector, maxTime = 1000) {
 	let elapsed = 0;
 	const waitInterval = 100
@@ -875,8 +884,7 @@ async function initExtension() {
     // Skip the 6-second wait to avoid a spurious warning and wasted polling.
     if (isIncognito()) {
         await Log('Incognito mode: skipping sidebar anchor wait');
-        sendBackgroundMessage({ type: 'requestData' });
-        sendBackgroundMessage({ type: 'initOrg' });
+        await requestInitialData();
         await Log('Initialization complete. Ready to track tokens.');
         return;
     }
@@ -914,9 +922,7 @@ async function initExtension() {
 		await sleep(LOGIN_CHECK_DELAY);
 	}
 
-	// Request initial data
-	sendBackgroundMessage({ type: 'requestData' });
-	sendBackgroundMessage({ type: 'initOrg' });
+	await requestInitialData();
 
 	await Log('Initialization complete. Ready to track tokens.');
 }

@@ -15,11 +15,16 @@ const CONFIG = {
 	// Cost weight per API model ID - the model's input price in $/MTok. Priced per model rather
 	// than per family because prices vary within a family (Opus 5.5 is cheaper than Opus 5, Sonnet
 	// 5 than Sonnet 4.6). Looked up by modelWeight() in shared/dataclasses.js.
+	//
+	// A model priced by prompt length takes the tiered form { weight, longWeight, longAbove }: past
+	// longAbove tokens of conversation, the message is priced at longWeight.
 	"MODEL_WEIGHTS": {
 		"claude-fable-5-1": 10,
 		"claude-fable-5": 10,
 		"claude-opus-5-5": 4,
 		"claude-opus-5": 5,
+		"claude-sonnet-5-5": 2,
+		"claude-haiku-5-5": { "weight": 0.1, "longWeight": 0.5, "longAbove": 100000 },
 		"claude-sonnet-5": 2,
 		"claude-opus-4-8": 5,
 		"claude-opus-4-7": 5,
@@ -48,7 +53,9 @@ const CONFIG = {
 		"fable 5": "claude-fable-5",
 		"opus 5.5": "claude-opus-5-5",
 		"opus 5": "claude-opus-5",
+		"sonnet 5.5": "claude-sonnet-5-5",
 		"sonnet 5": "claude-sonnet-5",
+		"haiku 5.5": "claude-haiku-5-5",
 		"opus 4.8": "claude-opus-4-8",
 		"opus 4.7": "claude-opus-4-7",
 		"sonnet 4.6": "claude-sonnet-4-6",
@@ -61,16 +68,16 @@ const CONFIG = {
 	// claude.ai's default picker selection depends on the plan: Max lands on Opus,
 	// every other tier on Sonnet.
 	"DEFAULT_MODEL_VERSION_BY_TIER": {
-		"claude_free": "claude-sonnet-5",
-		"claude_pro": "claude-sonnet-5",
-		"claude_team": "claude-sonnet-5",
+		"claude_free": "claude-sonnet-5-5",
+		"claude_pro": "claude-sonnet-5-5",
+		"claude_team": "claude-sonnet-5-5",
 		"claude_max_5x": "claude-opus-5-5",
 		"claude_max_20x": "claude-opus-5-5"
 	},
 	// Used only when the tier isn't known yet (e.g. a content script before the first
 	// updateUsage arrives). Matches the claude_free row, which is where an unresolvable
 	// tier already degrades to.
-	"DEFAULT_MODEL_VERSION": "claude-sonnet-5",
+	"DEFAULT_MODEL_VERSION": "claude-sonnet-5-5",
 	"WARNING_THRESHOLD": 0.9,
 	"PEAK_SESSION_MULTIPLIER": 1.5,
 	"WARNING": {
