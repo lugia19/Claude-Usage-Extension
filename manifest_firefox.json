@@ -23,6 +23,17 @@
 			],
 			"js": [
 				"lib/browser-polyfill.min.js",
+				"common/ext/bridge-isolated.js",
+				"content-components/request_relay.js"
+			],
+			"run_at": "document_start"
+		},
+		{
+			"matches": [
+				"https://claude.ai/*"
+			],
+			"js": [
+				"lib/browser-polyfill.min.js",
 				"lib/o200k_base.js",
 				"common/log/logger.js",
 				"common/i18n/en.js",
@@ -64,6 +75,8 @@
 			],
 			"js": [
 				"common/net/net.js",
+				"common/ext/bridge-main.js",
+				"injections/request-hook.js",
 				"injections/usage-sse-watcher.js",
 				"common/i18n/account-locale-watcher.js"
 			],
@@ -97,7 +110,6 @@
 				"common/log/viewer.js",
 				"update_patchnotes.txt",
 				"tracker-styles.css",
-				"injections/webrequest-polyfill.js",
 				"qol-badge.png",
 				"common/assets/rate-badge.png"
 			],

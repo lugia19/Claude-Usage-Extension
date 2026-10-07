@@ -28,29 +28,10 @@ function getCurrentConversationId() {
 	return isIncognito() ? getIncognitoConversationId() : getConversationId();
 }
 
-async function sendBackgroundMessage(message) {
-	const enrichedMessage = {
-		...message,
-		orgId: getActiveOrgId()
-	};
-	let counter = 10;
-	while (counter > 0) {
-		try {
-			const response = await browser.runtime.sendMessage(enrichedMessage);
-			return response;
-		} catch (error) {
-			// Check if it's the specific "receiving end does not exist" error
-			if (error.message?.includes('Receiving end does not exist')) {
-				await Log("warn", 'Background script not ready, retrying...', error);
-				await sleep(200);
-			} else {
-				// For any other error, throw immediately
-				throw error;
-			}
-		}
-		counter--;
-	}
-	throw new Error("Failed to send message to background script after 10 retries.");
+// Every message carries the active org. The retry while the background wakes up lives in
+// common/ext/bridge.js.
+function sendBackgroundMessage(message) {
+	return ClaudeExtBridge.sendBackgroundMessage('tracker', { ...message, orgId: getActiveOrgId() });
 }
 
 // Encode bytes as base64 (chunked to avoid stack overflow on large file downloads). Used to ship
