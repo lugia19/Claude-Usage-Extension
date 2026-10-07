@@ -1,15 +1,16 @@
 // Tells the background which claude.ai requests the page makes, on every platform. Runs in the page
-// world (MAIN, document_start, after common/net/net.js) and chains onto window.fetch: webRequest
-// can't read what the merged experience sends (binary protobuf) or streams back.
+// world (MAIN, document_start, after common/net/net.js and common/ext/bridge.js) and chains onto
+// window.fetch: webRequest can't read what the merged experience sends (binary protobuf) or streams
+// back.
 //
-// Each matching request is posted to the window as { type: 'claudeUsageTrackerRequest', message },
-// and content-components/request_relay.js forwards `message` to the background as is:
+// Each matching request goes to the background through ClaudeExtBridge (relayed by
+// content-components/request_relay.js, which allow-lists these two types):
 //   interceptedRequest   before the request goes out (onBeforeRequestHandler); the completion POSTs
 //                        carry their parsed JSON body as `requestBody`
 //   interceptedResponse  once the response's headers are in (onCompletedHandler). The background
 //                        refetches whatever it needs, so the body is never read or waited for.
-// Page scripts can post the same message; the background only treats it as a cue to refetch from
-// claude.ai itself, so a forged one costs at most an extra refresh.
+// Page scripts can send the same two messages; the background only treats them as a cue to refetch
+// from claude.ai itself, so a forged one costs at most an extra refresh.
 //
 // The kill switch (localStorage claude_usage_requests_off = '1') turns off ALL request tracking:
 // this is the only transport.
@@ -34,9 +35,7 @@
 	];
 
 	function post(type, details) {
-		// postMessage rather than a CustomEvent: structured clone crosses Firefox's page->content
-		// Xray boundary without needing cloneInto.
-		window.postMessage({ type: 'claudeUsageTrackerRequest', message: { type, details } }, window.location.origin);
+		ClaudeExtBridge.sendBackgroundMessage('tracker', { type, details }).catch(() => { });
 	}
 
 	// Claude-Toolbox patches window.fetch on this same page too. Chain onto whatever is installed
