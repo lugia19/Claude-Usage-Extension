@@ -75,6 +75,7 @@
 			],
 			"js": [
 				"common/net/net.js",
+				"common/net/bard-schema.js",
 				"common/ext/bridge-main.js",
 				"injections/request-hook.js",
 				"injections/usage-sse-watcher.js",
