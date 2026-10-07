@@ -29,7 +29,7 @@ import './i18n/pt-BR.js';
 import './i18n/es.js';
 import './common/i18n/i18n-core.js';
 import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
-import { invalidateAccountSettings, invalidateProfileTokens, storeSseUsage } from './bg-components/claude-api.js';
+import { invalidateAccountSettings, invalidateProfileTokens, storeSseUsage, effectiveLeaf } from './bg-components/claude-api.js';
 
 //#region Variable declarations
 let processingLock = null;  // Unix timestamp or null
@@ -750,7 +750,9 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId, expecte
 	// ~1-2s window), A's one-shot side effects (its usage-delta log line and its cost in the lifetime
 	// token counter) are skipped. The displayed numbers stay right, B's pass prices the whole
 	// conversation; recovering A's share would mean pricing a tree truncated at A, for one statistic.
-	const turnUuid = tree?.current_leaf_message_uuid || null;
+	//
+	// "Leaf" skips a compaction divider, which lands on top of the turn's reply.
+	const turnUuid = effectiveLeaf(tree);
 
 	// Scoped to this generation rather than "whatever is pending for this conversation", so a
 	// message sent while a previous pass was still running can't have its data read here.
