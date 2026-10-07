@@ -890,8 +890,9 @@ async function scheduleResetNotifications(orgId, usageData) {
 // Listen for message sending
 async function onBeforeRequestHandler(details) {
 	await Log("Intercepted request:", details.url);
-	if (details.method === "POST" &&
-		(details.url.includes("/completion") || details.url.includes("/retry_completion"))) {
+	// A message send, from /completion or a merged-experience PerformAction: request-hook.js reports
+	// both as kind 'send' with the ids, isRetry, inheritsModel and the /completion body's fields.
+	if (details.kind === "send") {
 		await Log("Request sent - URL:", details.url);
 		const requestBodyJSON = details.requestBody; // parsed by the hook
 		// Shape only, never the prompt or attachment text: the debug log is persisted and viewable.
@@ -904,11 +905,13 @@ async function onBeforeRequestHandler(details) {
 			files: requestBodyJSON?.files?.length ?? 0,
 			tools: requestBodyJSON?.tools?.length ?? 0,
 		});
-		// Extract IDs from URL - we can refine these regexes
-		const urlParts = details.url.split('/');
-		const orgId = urlParts[urlParts.indexOf('organizations') + 1];
+		const conversationId = details.conversationId;
+		if (!conversationId) {
+			await Log("warn", "Message send without a conversation id, not recorded:", details.url);
+			return;
+		}
+		const orgId = details.orgId || await requestActiveOrgId(details.tabId);
 		await tokenStorageManager.addOrgId(orgId);
-		const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1];
 
 		// Fetch current usage to snapshot before message. Also gives us the subscription
 		// tier, which decides the default model when the request body doesn't name one.
@@ -923,8 +926,11 @@ async function onBeforeRequestHandler(details) {
 			await Log("warn", "Failed to fetch pre-message usage snapshot:", error);
 		}
 
-		const modelVersion = requestBodyJSON?.model || defaultModelVersionForTier(subscriptionTier);
-		const model = modelFamilyFromVersion(modelVersion) || defaultModelForTier(subscriptionTier);
+		// No model in the body: a legacy send means the tier's default; a send that inheritsModel (merged,
+		// which names it only on a conversation's first message) keeps the conversation's own, so record
+		// none rather than a default that would overwrite it.
+		const modelVersion = requestBodyJSON?.model || (details.inheritsModel ? null : defaultModelVersionForTier(subscriptionTier));
+		const model = modelVersion && (modelFamilyFromVersion(modelVersion) || defaultModelForTier(subscriptionTier));
 		await Log("Model from request:", model, modelVersion);
 
 		// The uuid this generation's assistant message will have, declared by the client before the
@@ -998,7 +1004,7 @@ async function onBeforeRequestHandler(details) {
 			previousUsage: previousUsage,
 			promptTokens: promptTokens,
 			hasAttachments: hasAttachments,
-			isRetry: details.url.includes("/retry_completion")
+			isRetry: details.isRetry
 		});
 	}
 
