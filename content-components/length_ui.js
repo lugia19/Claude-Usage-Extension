@@ -1,8 +1,3 @@
-/* global CONFIG, Log, createClaudeTooltip, getResetTimeHTML, sleep, sendBackgroundMessage, getActiveOrgId,
-   isMobileLayout, isCodePage, UsageData, ConversationData, getCurrentConversationId, getCurrentModel,
-   getCurrentModelVersion, getCurrentEffortLabel, RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS,
-   LayoutManager, mountToAnchor, localize, fmtNum, onSsePartialUsage, shouldApplySseSession,
-   LENGTH_DISPLAY_KEY */
 'use strict';
 
 // How long the title line may overflow the header before it moves to the strip (see titleFitsHeader).
@@ -266,7 +261,7 @@ class LengthUI {
 	renderCostAndLength() {
 		const { conversationData, currentModelVersion, currentEffortLabel } = this.state;
 		const currentModel = this.effectiveModel();
-		const { length, cost, cached, container } = this.elements.titleArea;
+		const { length, cost, cached } = this.elements.titleArea;
 
 		if (!conversationData) {
 			length.innerHTML = `${localize('length.label')}: <span>${localize('common.na')}</span> ${localize('common.unit_tokens')}`;

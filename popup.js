@@ -1,4 +1,3 @@
-/* global UsageData, isPeakHours, localize, pinLocale */
 'use strict';
 let CONFIG;
 const BLUE_HIGHLIGHT = '#2c84db';

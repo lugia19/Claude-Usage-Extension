@@ -1,8 +1,3 @@
-/* global CONFIG, Log, ProgressBar, sendBackgroundMessage, getActiveOrgId,
-   createClaudeTooltip, getResetTimeHTML, sleep, isMobileLayout, isCodePage, UsageData, isPeakHours,
-   RED_WARNING, BLUE_HIGHLIGHT, SUCCESS_GREEN, SELECTORS, LayoutManager, mountToAnchor,
-   localize, fmtNum, currentLocale, onSsePartialUsage, shouldApplySseSession,
-   SIDEBAR_DISPLAY_KEY, SIDEBAR_LINK_KEYS, getSidebarDisplayPrefs, isSidebarItemVisible */
 'use strict';
 
 // A limit whose reset time has passed needs fresh data from the server to clear. The server does

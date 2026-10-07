@@ -33,17 +33,7 @@ async function contentScriptActiveOrg(tab) {
 	}
 }
 
-// Base64 <-> bytes, chunked so large file downloads don't blow the call stack.
-function bytesToBase64(buffer) {
-	const bytes = new Uint8Array(buffer);
-	let binary = '';
-	const chunk = 0x8000;
-	for (let i = 0; i < bytes.length; i += chunk) {
-		binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-	}
-	return btoa(binary);
-}
-
+// The Brave proxy returns response bodies as base64 (they cross sendMessage).
 function base64ToBytes(base64) {
 	const binary = atob(base64 || '');
 	const bytes = new Uint8Array(binary.length);

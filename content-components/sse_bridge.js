@@ -1,4 +1,3 @@
-/* global Log, CONFIG, getActiveOrgId, sendBackgroundMessage, GPTTokenizer_o200k_base */
 'use strict';
 
 // Consumes the single `claudeUsageTrackerStream` message that injections/usage-sse-watcher.js
