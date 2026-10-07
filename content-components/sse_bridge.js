@@ -1,7 +1,9 @@
 'use strict';
 
 // Consumes the single `claudeUsageTrackerStream` message that injections/usage-sse-watcher.js
-// emits per completion, and splits it two ways:
+// emits per completion, and splits it two ways. (injections/request-hook.js posts it too, from the
+// merged experience's StreamTimeline, with usage only: there the authoritative pass follows within
+// seconds.)
 //
 //   * session usage -> straight to the UI actors in this same page, which overwrite that one
 //     field on the usage data they already hold. No background hop, so the bars move with zero
@@ -154,10 +156,11 @@ function reportStreamToBackground(data) {
 
 	// CONFIG arrives asynchronously at boot; without it the multiplier is unknown, and a count that
 	// silently omits it would read ~17% low. With no conversation there is nothing to attach an
-	// estimate to either. A refused send is skipped outright: it generated no reply and created no
-	// message, so pricing its empty text would add the prompt to a conversation that never grew.
+	// estimate to either. A usageOnly message (a refused send, or the merged stream) is skipped
+	// outright: there is no reply to price, and counting its missing text as a 0-token reply would
+	// add the prompt to a conversation that never grew.
 	let counted = null;
-	if (!data.rejected && data.conversationId && CONFIG) {
+	if (!data.usageOnly && data.conversationId && CONFIG) {
 		try {
 			counted = countAssistantTokens(data.assistantText);
 		} catch (error) {

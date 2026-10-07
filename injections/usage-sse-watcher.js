@@ -146,10 +146,8 @@
 			conversationId,
 			isRetry,
 			messageLimit,
-			// No reply was generated and no message was created, so there is nothing to price. The
-			// flag is what stops sse_bridge counting an empty assistantText as a real 0-token reply
-			// and charging the prompt to the conversation's length.
-			rejected: true,
+			// No reply was generated and no message was created, so there is nothing to price.
+			usageOnly: true,
 			assistantText: '',
 			sawNonTextBlock: false,
 			assistantUuid: null,

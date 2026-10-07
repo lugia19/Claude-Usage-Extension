@@ -116,12 +116,30 @@
 	const BUSY = new Set(['STATUS_RUNNING', 'STATUS_RECOVERING', 'STATUS_WAITING_FOR_INPUT']);
 	const ENDED = new Set(['STATUS_IDLE', 'STATUS_COMPLETED', 'STATUS_ERROR']);
 
+	// The stream's MessageLimit in the completion SSE's message_limit shape, the one sse_bridge.js
+	// parses: same window keys and utilization, resets_at in unix seconds, and the only status it
+	// reads under its old name.
+	function legacyMessageLimit(limit) {
+		const windows = {};
+		for (const [key, win] of Object.entries(limit.windows ?? {})) {
+			windows[key] = {
+				status: win.status === 'MESSAGE_LIMIT_STATUS_EXCEEDED' ? 'exceeded_limit' : win.status,
+				resets_at: Date.parse(win.resets_at) / 1000,
+				utilization: win.utilization,
+			};
+		}
+		return { windows };
+	}
+
 	// The merged experience has no post-message tree GET to trigger the authoritative pass; its turns
 	// end on the StreamTimeline the page keeps open (reconnected every few seconds while idle). Reads
 	// the page's copy of one such stream and posts turnSettled whenever a turn ends on it: the
 	// conversation leaves a busy state for an ended one. The turn's assistant message is the one with
 	// the highest index seen since it started; a stream that resumed mid-turn may never see it (resumes
 	// send changes only), so it can be missing, and the background then uses the tree's leaf.
+	//
+	// The same stream carries the turn's message_limit (usually just before the settle, sometimes
+	// mid-turn, never on a stopped turn), which goes to sse_bridge like the completion SSE's.
 	async function watchTimeline(response, source) {
 		const orgId = new Headers(source?.headers ?? {}).get('x-organization-uuid');
 		const bytes = await bodyBytes(source);
@@ -135,7 +153,17 @@
 		let assistant = null;
 		await net.readConnectFrames(response, (f) => {
 			if (f.endStream) return;
-			const update = net.decodeBard('StreamTimelineResponse', f.payload).event?.update;
+			const event = net.decodeBard('StreamTimelineResponse', f.payload).event;
+			if (event?.message_limit) {
+				window.postMessage({
+					type: 'claudeUsageTrackerStream',
+					streamOrgId: orgId,
+					messageLimit: legacyMessageLimit(event.message_limit),
+					usageOnly: true,
+				}, window.location.origin);
+				return;
+			}
+			const update = event?.update;
 			if (!update) return;
 			const status = update.conversation?.status;
 			if (BUSY.has(status) && !busy) {
