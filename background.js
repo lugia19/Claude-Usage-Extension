@@ -3,7 +3,7 @@ import './lib/o200k_base.js';
 import { CONFIG, isElectron, RawLog, StoredMap, getStorageValue, setStorageValue, removeStorageValue, sendTabMessage, messageRegistry } from './bg-components/utils.js';
 import { tokenStorageManager, tokenCounter } from './bg-components/tokenManagement.js';
 import { getStrategy, initContainerStrategy, setBrave } from './bg-components/container-strategy.js';
-import { UsageData, modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier } from './shared/dataclasses.js';
+import { modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier } from './shared/dataclasses.js';
 // UI strings: the common and tracker tables, then i18n-core.js, which publishes translate() on
 // globalThis. The popup and this worker can't see claude.ai's localStorage, so they translate with
 // the lastLang the content script stores.
@@ -788,11 +788,8 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId, expecte
 	}
 	await Log('authoritative pass: model final:', conversationData.model, conversationData.modelVersion);
 
-	// If new message: log delta and update total tokens. Once per message, never on a repeat pass.
-	if (isNewMessage && !alreadyCounted && pendingRequest.previousUsage) {
-		const previousUsage = UsageData.fromJSON(pendingRequest.previousUsage);
-		await logUsageDelta(orgId, previousUsage, usageData, conversationData.length, conversationData.model);
-
+	// If new message: update total tokens. Once per message, never on a repeat pass.
+	if (isNewMessage && !alreadyCounted) {
 		// Add message cost to total tracked
 		await tokenStorageManager.addToTotalTokens(conversationData.cost);
 
@@ -871,35 +868,6 @@ async function debugLogMessageCost(usageData, conversationData) {
 	}
 }
 
-async function logUsageDelta(orgId, previousUsage, currentUsage, conversationLength, model) {
-	const deltas = {};
-
-	for (const [key, currentLimit] of Object.entries(currentUsage.limits)) {
-		if (!currentLimit) continue;
-
-		const previousLimit = previousUsage.limits[key];
-		if (!previousLimit) continue;
-
-		const delta = currentLimit.percentage - previousLimit.percentage;
-
-		// Only log if change >= 1%
-		if (delta >= 1) {
-			deltas[key] = delta;
-		}
-	}
-
-	if (Object.keys(deltas).length > 0) {
-		const entry = {
-			timestamp: Date.now(),
-			orgId,
-			conversationLength,
-			model,
-			deltas
-		};
-
-		await Log(`Usage delta: ${JSON.stringify(entry)}`);
-	}
-}
 
 async function scheduleResetNotifications(orgId, usageData) {
 	const threshold = await getStorageValue('resetNotifThreshold', 100);
@@ -947,17 +915,16 @@ async function onBeforeRequestHandler(details) {
 		const orgId = details.orgId || await requestActiveOrgId(details.tabId);
 		await tokenStorageManager.addOrgId(orgId);
 
-		// Fetch current usage to snapshot before message. Also gives us the subscription
-		// tier, which decides the default model when the request body doesn't name one.
-		let previousUsage = null;
+		// Nothing slow is awaited before the pending entry is stored: on the merged experience a short
+		// or failed turn can settle within a second, and its pass must find the entry. The one lookup
+		// left, the subscription tier, is only for a legacy send that names no model, and is cached.
 		let subscriptionTier = null;
-		try {
-			const api = getStrategy().apiForRequest(details, orgId);
-			const usageData = await api.getUsageData();
-			previousUsage = usageData.toJSON();
-			subscriptionTier = usageData.subscriptionTier;
-		} catch (error) {
-			await Log("warn", "Failed to fetch pre-message usage snapshot:", error);
+		if (!requestBodyJSON?.model && !details.inheritsModel) {
+			try {
+				subscriptionTier = await getStrategy().apiForRequest(details, orgId).getSubscriptionTier();
+			} catch (error) {
+				await Log("warn", "Failed to read the subscription tier for the default model:", error);
+			}
 		}
 
 		// No model in the body: a legacy send means the tier's default; a send that inheritsModel (merged,
@@ -1035,7 +1002,6 @@ async function onBeforeRequestHandler(details) {
 			modelVersion: modelVersion,
 			requestTimestamp: Date.now(),
 			toolTokens: toolTokens,
-			previousUsage: previousUsage,
 			promptTokens: promptTokens,
 			hasAttachments: hasAttachments,
 			isRetry: details.isRetry
