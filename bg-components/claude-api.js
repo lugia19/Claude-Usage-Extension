@@ -38,6 +38,21 @@ export async function invalidateProfileTokens(orgId) {
 	await profileTokensCache.delete(orgId);
 	await Log("Invalidated profile tokens cache for:", orgId);
 }
+// A merged-experience compaction divider as the tree shows it: an assistant message with no content
+// whose parent is the turn's reply. (A turn refused as "too long" is also empty, but its parent is
+// the human message.)
+function isCompactionDivider(message, parent) {
+	return message?.sender === "assistant" && !(message.content ?? []).length && parent?.sender === "assistant";
+}
+
+// The turn the tree ends on: its leaf, or the reply under it when a compaction divider landed on top.
+export function effectiveLeaf(tree) {
+	const messages = tree?.chat_messages ?? [];
+	const leaf = messages.find(m => m.uuid === tree?.current_leaf_message_uuid);
+	const parent = leaf && messages.find(m => m.uuid === leaf.parent_message_uuid);
+	return isCompactionDivider(leaf, parent) ? parent.uuid : leaf?.uuid ?? null;
+}
+
 // getSettledTree: how often, and how far apart, to re-read the tree for a settled reply.
 const SETTLED_TREE_RETRIES = 3;
 const SETTLED_TREE_RETRY_MS = 700;
@@ -562,8 +577,10 @@ class ConversationAPI {
 	// tree GET of claude.ai's proving the tree is current, so it checks and may refetch.
 	//
 	// If this legacy endpoint ever goes away (merged accounts already never call it themselves), its
-	// replacement is ConversationService/ReadConversation (Connect, protobuf; decode with
-	// ClaudeExtNet.decodeBard): the whole tree in one call, near-parity with this one. Its gaps: text
+	// replacement is ConversationService/ReadConversation (Connect; JSON works too: content-type
+	// application/json, body {"conversationId"}): the whole tree, branches included, in one call. Not on
+	// legacy accounts (403). It also rejects this background's requests, 403 "origin not allowed" (the
+	// RPC endpoints check Origin, the /api ones don't), so it would need the page's origin. Its gaps: text
 	// attachments come as a URL rather than `extracted_content` (fetch /files/<id>/contents), and
 	// compactions made in the merged experience exist only there (as CompactionDivider extras), not
 	// here. See claude-ext-common scripts/bard/README.md.
@@ -583,7 +600,7 @@ class ConversationAPI {
 	// that it prices the tree as is, with a warning. Memoized like getData, so getInfo reuses it.
 	async getSettledTree(expectedLeaf) {
 		let tree = await this.getData(true, { strong: true });
-		for (let i = 0; expectedLeaf && tree?.current_leaf_message_uuid !== expectedLeaf; i++) {
+		for (let i = 0; expectedLeaf && effectiveLeaf(tree) !== expectedLeaf; i++) {
 			if (i === SETTLED_TREE_RETRIES) {
 				await Log("warn", "Settled turn", expectedLeaf, "isn't the tree's leaf", tree?.current_leaf_message_uuid, "- pricing the tree as is");
 				break;
@@ -658,6 +675,27 @@ class ConversationAPI {
 		// If the most recent assistant on trunk is <1h from now, the latest user message has an active anchor.
 		const trunkAssistants = currentTrunk.filter(m => m.sender === "assistant");
 		const allTrunkHumans = currentTrunk.filter(m => m.sender === "human");
+
+		// Compaction: the trunk up to and including the latest boundary was replaced by a summary, so
+		// the context starts after it, and so do the cache anchors (one from before the compaction
+		// can't cover the new prefix). A pre-merge boundary carries the summary text; a merged one is a
+		// divider, priced at CONFIG.COMPACTION_SUMMARY_TOKENS.
+		let compactionIdx = -1;
+		for (let i = currentTrunk.length - 1; i >= 0; i--) {
+			if (currentTrunk[i].compaction_summary?.length || isCompactionDivider(currentTrunk[i], currentTrunk[i - 1])) {
+				compactionIdx = i;
+				break;
+			}
+		}
+		const candidateHumans = allTrunkHumans.filter(h => trunkIndexMap.get(h.uuid) > compactionIdx);
+
+		// The turn the trunk ends on (a divider lands on top of its reply), and the reply whose output
+		// that turn paid for: the turn itself, or the one before a trailing human.
+		const lastIdx = currentTrunk.length - 1;
+		const turnIdx = isCompactionDivider(currentTrunk[lastIdx], currentTrunk[lastIdx - 1]) ? lastIdx - 1 : lastIdx;
+		// (Before a trailing human, step over a divider: reply -> divider -> human right after a compaction.)
+		const beforeHumanIdx = isCompactionDivider(currentTrunk[turnIdx - 1], currentTrunk[turnIdx - 2]) ? turnIdx - 2 : turnIdx - 1;
+		const outputIdx = [turnIdx, beforeHumanIdx].find(i => currentTrunk[i]?.sender === "assistant") ?? -1;
 
 		// The boundary depends only on WHICH humans are eligible to hold the anchor; everything
 		// above (tree, trunk, off-trunk leaves) is shared. So the analysis below is a function of
@@ -769,12 +807,12 @@ class ConversationAPI {
 		// When !isNewMessage the two candidate lists are identical, so resolve once and share -
 		// which also preserves the old behaviour exactly, where futureCost fell out of the same
 		// numbers as cost.
-		const next = await resolveBoundary(allTrunkHumans);
+		const next = await resolveBoundary(candidateHumans);
 		const now_ = isNewMessage
-			? await resolveBoundary(allTrunkHumans.slice(0, -1))
+			? await resolveBoundary(candidateHumans.filter(h => h !== allTrunkHumans[allTrunkHumans.length - 1]))
 			: next;
 
-		return { currentTrunk, now: now_, next };
+		return { currentTrunk, compactionIdx, turnIdx, outputIdx, now: now_, next };
 	}
 
 	// Single pass. Everything the conversation costs - now and next message - comes out of one tree
@@ -812,7 +850,7 @@ class ConversationAPI {
 			});
 		}
 
-		const { currentTrunk, now, next } = cachingInfo;
+		const { currentTrunk, compactionIdx, turnIdx, outputIdx, now, next } = cachingInfo;
 		const conversationIsCached = now.conversationIsCached;
 
 		// Initialize token counting. Two cache flags walk the trunk in parallel: `now` prices this
@@ -861,7 +899,37 @@ class ConversationAPI {
 		const assistantMessageData = [];
 		let hasWebSearchResult = false;
 
-		for (let i = 0; i < currentTrunk.length; i++) {
+		// The compaction summary opens the context, so it's cached exactly when the conversation is.
+		// The turn that compacted is priced like any other, from the summary on. Its compaction call
+		// read the whole pre-compaction prompt, but nearly all of that was cached (cache reads cost
+		// nothing here), so the difference is the summary's own generation: accepted, once per compaction.
+		if (compactionIdx >= 0) {
+			const boundary = currentTrunk[compactionIdx];
+			const summaryTokens = boundary.compaction_summary?.length
+				? await tokenCounter.countText(boundary.compaction_summary.flatMap(block => getTextFromContent(block)).join("\n"))
+				: CONFIG.COMPACTION_SUMMARY_TOKENS;
+			await Log(`Compaction at trunk message ${compactionIdx + 1}/${currentTrunk.length}: summary ${summaryTokens} tokens`);
+			lengthTokens += summaryTokens;
+			costTokens += conversationIsCached ? summaryTokens * CONFIG.CACHING_MULTIPLIER : summaryTokens;
+			futureCostTokens += next.conversationIsCached ? summaryTokens * CONFIG.CACHING_MULTIPLIER : summaryTokens;
+			uncachedCostTokens += summaryTokens;
+			uncachedFutureCostTokens += summaryTokens;
+		}
+
+		// The reply's output, priced even when a compaction has since folded it into the summary.
+		// OUTPUT_TOKEN_MULTIPLIER is the surcharge on top of the reply's 1x in the walk below; a folded
+		// reply isn't walked, so it takes that 1x here.
+		if (outputIdx >= 0) {
+			const reply = new MessageAPI(currentTrunk[outputIdx], false, this.api);
+			const multiplier = CONFIG.OUTPUT_TOKEN_MULTIPLIER + (outputIdx <= compactionIdx ? 1 : 0);
+			const outputTokens = await tokenCounter.countText(await reply.getTextContent(true)) * multiplier;
+			costTokens += outputTokens;
+			futureCostTokens += outputTokens;
+			uncachedCostTokens += outputTokens;
+			uncachedFutureCostTokens += outputTokens;
+		}
+
+		for (let i = compactionIdx + 1; i < currentTrunk.length; i++) {
 			const rawMessageData = currentTrunk[i];
 			const message = new MessageAPI(rawMessageData, cacheIsActive, this.api);
 
@@ -891,19 +959,6 @@ class ConversationAPI {
 				assistantMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext });
 			}
 
-			// Last message output tokens (or second to last if last is human)
-			const isLastMessage = i === currentTrunk.length - 1;
-			const isSecondToLast = i === currentTrunk.length - 2;
-
-			if ((isLastMessage && message.sender === "assistant") ||
-				(isSecondToLast && message.sender === "assistant" && currentTrunk[currentTrunk.length - 1].sender === "human")) {
-				const lastMessageContent = await message.getTextContent(true);
-				const outputTokens = await tokenCounter.countText(lastMessageContent) * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
-				costTokens += outputTokens;
-				futureCostTokens += outputTokens;
-				uncachedCostTokens += outputTokens;
-				uncachedFutureCostTokens += outputTokens;
-			}
 
 			// Update cache status — each boundary flips its own flag
 			if (message.uuid === now.cacheEndId) {
@@ -975,7 +1030,8 @@ class ConversationAPI {
 			hasWebSearchResult ||                            // Web search result in history
 			effectiveSettings.enabled_bananagrams ||         // Drive search
 			effectiveSettings.enabled_melange ||             // Memory (files loaded dynamically)
-			projectStats?.use_project_knowledge_search       // Project retrieval
+			projectStats?.use_project_knowledge_search ||    // Project retrieval
+			(compactionIdx >= 0 && !currentTrunk[compactionIdx].compaction_summary?.length) // Merged compaction summary (a constant)
 		);
 
 		// Null when the API reports no model at all, which a freshly created conversation does for a
@@ -1027,7 +1083,7 @@ class ConversationAPI {
 		const cachedUntil = next.conversationIsCachedUntil;
 
 		let lastMessageTimestamp = null;
-		const lastRawMessage = currentTrunk[currentTrunk.length - 1];
+		const lastRawMessage = currentTrunk[turnIdx];
 		if (lastRawMessage) {
 			lastMessageTimestamp = new Date(lastRawMessage.created_at).getTime();
 		}
@@ -1041,7 +1097,7 @@ class ConversationAPI {
 			uncachedFutureCost: uncachedFutureCost,
 			model: conversationModelType,
 			modelVersion: conversationModelVersion,
-			lastMessageUuid: conversationData.current_leaf_message_uuid || null,
+			lastMessageUuid: currentTrunk[turnIdx]?.uuid || null,
 			costUsedCache: conversationIsCached,
 			conversationIsCachedUntil: cachedUntil,
 			projectUuid: conversationData.project_uuid,

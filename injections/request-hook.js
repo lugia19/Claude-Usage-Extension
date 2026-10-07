@@ -116,6 +116,10 @@
 	const BUSY = new Set(['STATUS_RUNNING', 'STATUS_RECOVERING', 'STATUS_WAITING_FOR_INPUT']);
 	const ENDED = new Set(['STATUS_IDLE', 'STATUS_COMPLETED', 'STATUS_ERROR']);
 
+	// A merged-experience compaction divider: the empty assistant message that lands after the turn's
+	// reply, in the same frame as the settle.
+	const isDivider = (m) => (m.extras ?? []).some(e => e['@type']?.endsWith('CompactionDivider'));
+
 	// The stream's MessageLimit in the completion SSE's message_limit shape, the one sse_bridge.js
 	// parses: same window keys and utilization, resets_at in unix seconds, and the only status it
 	// reads under its old name.
@@ -136,7 +140,8 @@
 	// the page's copy of one such stream and posts turnSettled whenever a turn ends on it: the
 	// conversation leaves a busy state for an ended one. The turn's assistant message is the one with
 	// the highest index seen since it started; a stream that resumed mid-turn may never see it (resumes
-	// send changes only), so it can be missing, and the background then uses the tree's leaf.
+	// send changes only), so it can be missing, and the background then uses the tree's leaf. A
+	// compaction divider is skipped: it isn't the turn's reply.
 	//
 	// The same stream carries the turn's message_limit (usually just before the settle, sometimes
 	// mid-turn, never on a stopped turn), which goes to sse_bridge like the completion SSE's.
@@ -171,7 +176,7 @@
 				assistant = null;
 			}
 			for (const m of update.messages ?? []) {
-				if (m.role === 'ROLE_ASSISTANT' && (!assistant || (m.index ?? 0) >= (assistant.index ?? 0))) assistant = m;
+				if (m.role === 'ROLE_ASSISTANT' && !isDivider(m) && (!assistant || (m.index ?? 0) >= (assistant.index ?? 0))) assistant = m;
 			}
 			if (ENDED.has(status) && busy) {
 				busy = false;

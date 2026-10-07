@@ -78,6 +78,11 @@ const CONFIG = {
 	// updateUsage arrives). Matches the claude_free row, which is where an unresolvable
 	// tier already degrades to.
 	"DEFAULT_MODEL_VERSION": "claude-sonnet-5-5",
+	// Tokens priced for a merged-experience compaction summary. Its real size (CompactionDivider
+	// post_tokens) exists only in the new API, which this background can't call (see getData). Observed:
+	// 2629-9916, mean ~5.2K, and post_tokens itself overstated one measured summary by ~1.7x; summaries
+	// barely track the history they replace (1.4-5% of it), so a constant is about as good. Errs high.
+	"COMPACTION_SUMMARY_TOKENS": 6000,
 	"WARNING_THRESHOLD": 0.9,
 	"PEAK_SESSION_MULTIPLIER": 1.5,
 	"WARNING": {
