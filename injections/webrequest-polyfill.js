@@ -1,4 +1,3 @@
-/* global ClaudeExtNet */
 // Runs in the page, next to the MAIN-world content scripts, so common/net/net.js's ClaudeExtNet is
 // already loaded.
 (function () {

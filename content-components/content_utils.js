@@ -1,7 +1,3 @@
-/* global createLogger, configureLogger, localize, fmtNum, getActiveOrgId, getConversationId, getIncognitoConversationId, isIncognito,
-   isCodePage, currentLocale, pinLocale, refreshAccountLocale, getLanguageOverride,
-   setLanguageOverride, createClaudeTooltip, isMobileLayout,
-   modelFamilyFromVersion, MODEL_UNKNOWN */
 'use strict';
 
 // Constants

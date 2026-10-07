@@ -1,6 +1,6 @@
 import './lib/browser-polyfill.min.js';
 import './lib/o200k_base.js';
-import { CONFIG, isElectron, RawLog, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './bg-components/utils.js';
+import { CONFIG, isElectron, RawLog, StoredMap, getStorageValue, setStorageValue, removeStorageValue, sendTabMessage, messageRegistry } from './bg-components/utils.js';
 import { tokenStorageManager, tokenCounter } from './bg-components/tokenManagement.js';
 import { getStrategy, initContainerStrategy, setBrave } from './bg-components/container-strategy.js';
 import { UsageData, modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier } from './shared/dataclasses.js';
@@ -30,7 +30,6 @@ import './i18n/es.js';
 import './common/i18n/i18n-core.js';
 // Fetch/SSE/gzip helpers, published on globalThis.ClaudeExtNet.
 import './common/net/net.js';
-/* global translate, ClaudeExtNet */
 import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
 import { invalidateAccountSettings, invalidateProfileTokens, storeSseUsage } from './bg-components/claude-api.js';
 
@@ -69,7 +68,6 @@ const pendingTasks = [];
 const LOCK_TIMEOUT = 30000;  // 30 seconds - if a task takes longer, something's wrong
 let pendingRequests;
 let scheduledNotifications;
-let electronPollingInterval = null;
 let electronPollInFlight = false;
 
 let isInitialized = false;
@@ -191,7 +189,7 @@ async function checkResetNotifications() {
 	const now = Date.now();
 	let shouldNotify = false;
 
-	for (const [timestampKey, orgId] of entries) {
+	for (const [timestampKey] of entries) {
 		const resetTime = parseInt(timestampKey);
 		if (resetTime > now) continue;
 
@@ -1293,7 +1291,7 @@ Log("Done initializing.")
 
 if (isElectron) {
 	const ELECTRON_POLL_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
-	electronPollingInterval = setInterval(electronUsagePoll, ELECTRON_POLL_INTERVAL_MS);
+	setInterval(electronUsagePoll, ELECTRON_POLL_INTERVAL_MS);
 	Log("Electron usage polling started with interval:", ELECTRON_POLL_INTERVAL_MS, "ms");
 }
 //#endregion

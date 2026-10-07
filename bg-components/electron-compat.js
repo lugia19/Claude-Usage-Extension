@@ -1,9 +1,5 @@
 import '../lib/browser-polyfill.min.js';
-import { CONFIG, isElectron, sleep, RawLog, StoredMap, getStorageValue, setStorageValue, removeStorageValue, getOrgStorageKey, sendTabMessage, messageRegistry } from './utils.js';
-
-async function Log(...args) {
-	await RawLog("electron-compat", ...args)
-};
+import { isElectron, StoredMap } from './utils.js';
 
 const electronAlarms = new StoredMap('electronAlarms');
 

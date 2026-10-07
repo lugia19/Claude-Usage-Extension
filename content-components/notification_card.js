@@ -1,7 +1,3 @@
-/* global Log, RED_WARNING, sendBackgroundMessage, localize, usageUI, getSidebarDisplayPrefs,
-   setSidebarDisplayPrefs, isSidebarItemVisible, SIDEBAR_LINK_KEYS, LENGTH_DISPLAY_KEY, localeReady,
-   FloatingCard, initNotificationCards, isChromeBrowser, ClaudeModal, createClaudeInput,
-   createClaudeToggle, createLanguageSelect, setLanguageOverride, openDebugLogs */
 'use strict';
 
 // Settings modal, and the notification cards (common/ui/cards.js) with the tracker's extras.

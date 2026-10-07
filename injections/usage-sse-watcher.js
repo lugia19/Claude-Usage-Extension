@@ -1,4 +1,3 @@
-/* global ClaudeExtNet */
 // Reads the session usage percentage AND the reply text out of the completion SSE stream, so the
 // usage bars, conversation length and next-message cost can all move as soon as generation
 // finishes, instead of waiting for the page's post-stream conversation GET and the background's

@@ -1,0 +1,21 @@
+{
+  "name": "claude-usage-extension",
+  "version": "1.0.0",
+  "description": "Track your Claude.ai token usage across conversations with this browser extension.",
+  "main": "background.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.31.0",
+    "espree": "^10.4.0",
+    "globals": "^16.3.0"
+  }
+}
