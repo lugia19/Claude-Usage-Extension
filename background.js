@@ -717,8 +717,8 @@ async function handleMessageFromContent(message, sender) {
 //#region Network handling
 // The authoritative pass. One per sent message, triggered by claude.ai's post-message tree GET
 // (onCompletedHandler), or on merged-experience accounts, which make no such GET, by the turn
-// settling on its StreamTimeline (onTurnSettled), which passes `expectedTurn`: the settled reply's
-// id, or null when the stream didn't see it.
+// settling on its StreamTimeline (onTurnSettled), which passes `expectedTurn`: the reply the tree
+// should end on (null if not even a pending send names one).
 //
 // `api` is passed in rather than derived because the caller is a request handler and has to
 // build it from `details` (the tab the request came from) via the active container strategy.
@@ -738,7 +738,12 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId, expecte
 	// the StreamTimeline settle (onTurnSettled), and getSettledTree makes up for the missing proof.
 	// The tree is memoized per shape, so getInfo below reuses this read.
 	const tree = expectedTurn === undefined ? await conversation.getData(true) : await conversation.getSettledTree(expectedTurn);
-	const turnUuid = expectedTurn || tree?.current_leaf_message_uuid || null;
+	// Always the tree's own leaf. expectedTurn only steers the freshness wait: if the tree never
+	// caught up (or a fast next turn already moved the leaf on), pricing it as expectedTurn would pair
+	// that turn's pending entry with another generation's data and settle it for good. Keyed on the
+	// leaf, a stale tree finds no pending entry (a display refresh), and a newer leaf is priced as
+	// itself (its own settle then repeats harmlessly).
+	const turnUuid = tree?.current_leaf_message_uuid || null;
 
 	// Scoped to this generation rather than "whatever is pending for this conversation", so a
 	// message sent while a previous pass was still running can't have its data read here.
@@ -1057,13 +1062,19 @@ async function onBeforeRequestHandler(details) {
 
 // A merged-experience turn ended (request-hook.js watches the page's StreamTimeline): the merged
 // experience's stand-in for the post-message tree GET below. assistantMessageId is the turn's key in
-// pendingRequests (recorded from its PerformAction send); it can be missing when the turn straddled a
-// stream reconnect, and then the pass falls back to the tree's leaf.
+// pendingRequests (recorded from its PerformAction send). It can be missing when the turn straddled a
+// stream reconnect; then the newest turn sent here and not yet priced stands in, so the pass still
+// waits for the tree to show it rather than pricing whatever leaf the first read has.
 async function onTurnSettled(details) {
 	const { orgId, conversationId, assistantMessageId, stopReason } = details;
 	if (!orgId || !conversationId) return;
-	await Log("Turn settled:", conversationId, assistantMessageId, stopReason);
-	triggerAuthoritativePass(details, orgId, conversationId, { expectedTurn: assistantMessageId || null });
+	let expectedTurn = assistantMessageId || null;
+	if (!expectedTurn) {
+		const unsettled = Object.values(await getPendingBucket(orgId, conversationId)).filter(e => !e.settled);
+		expectedTurn = newestPending(Object.fromEntries(unsettled.map(e => [e.turnUuid, e])))?.turnUuid ?? null;
+	}
+	await Log("Turn settled:", conversationId, assistantMessageId ?? `(no id; newest unsettled send: ${expectedTurn})`, stopReason);
+	triggerAuthoritativePass(details, orgId, conversationId, { expectedTurn });
 }
 
 async function onCompletedHandler(details) {
