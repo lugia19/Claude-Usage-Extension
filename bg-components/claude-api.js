@@ -915,9 +915,12 @@ class ConversationAPI {
 		}
 
 		// The reply's output, priced even when a compaction has since folded it into the summary.
+		// OUTPUT_TOKEN_MULTIPLIER is the surcharge on top of the reply's 1x in the walk below; a folded
+		// reply isn't walked, so it takes that 1x here.
 		if (outputIdx >= 0) {
 			const reply = new MessageAPI(currentTrunk[outputIdx], false, this.api);
-			const outputTokens = await tokenCounter.countText(await reply.getTextContent(true)) * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
+			const multiplier = CONFIG.OUTPUT_TOKEN_MULTIPLIER + (outputIdx <= compactionIdx ? 1 : 0);
+			const outputTokens = await tokenCounter.countText(await reply.getTextContent(true)) * multiplier;
 			costTokens += outputTokens;
 			futureCostTokens += outputTokens;
 			uncachedCostTokens += outputTokens;
