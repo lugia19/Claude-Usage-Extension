@@ -624,32 +624,50 @@ async function reportStreamCompletion(message, sender, orgId) {
 	// start it bought (claude.ai refetches the tree ~0.2s after the stream ends) was invisible —
 	// the provisional above already landed at ~50ms with values that converge exactly. What it cost
 	// was a second trigger source for the same message, and with it a stale-tree retry, a dedupe
-	// window, an in-flight/deferral dance, and two bugs. onCompletedHandler's tree GET is the one
-	// trigger, and its completing is proof the tree exists.
+	// window, an in-flight/deferral dance, and two bugs. onCompletedHandler's tree GET is the
+	// trigger, and its completing is proof the tree exists. (Merged-experience accounts make no such
+	// GET and no completion stream; their trigger is onTurnSettled.)
 	return true;
 }
 messageRegistry.register(reportStreamCompletion);
 
-// Serialises the authoritative pass onto the existing task queue, one at a time per conversation.
+// Serialises the authoritative pass onto the existing task queue, dropping a trigger that overlaps
+// one already in flight for the same message.
 //
-// Dropping (rather than queueing) an overlapping trigger is safe here because every trigger is a
-// tree GET, and overlapping tree GETs are always about the same message: claude.ai's own refetch
-// and Claude QoL's TTS interceptor arrive ~0.1s apart, while the next message's GET cannot arrive
-// until a whole generation later. The flag is cleared in a finally, so nothing stays suppressed.
+// Tree-GET triggers don't say which message they're about, so they collapse per conversation, which
+// is safe: overlapping tree GETs are always about the same message (claude.ai's own refetch and
+// Claude QoL's TTS interceptor arrive ~0.1s apart; the next message's GET can't come until a whole
+// generation later). Stream settles do name their turn, and their pass can wait ~2s for the tree to
+// catch up, long enough for a fast next turn to settle; so they collapse per conversation AND turn,
+// and a different turn queues instead of being dropped. The flag is cleared in a finally, so nothing
+// stays suppressed.
 function queueAuthoritativePass(options) {
-	const conversationId = options.conversationId;
-	if (authoritativeInFlight.has(conversationId)) return;
-	authoritativeInFlight.add(conversationId);
+	const key = options.expectedTurn ? `${options.conversationId}:${options.expectedTurn}` : options.conversationId;
+	if (authoritativeInFlight.has(key)) return;
+	authoritativeInFlight.add(key);
 	pendingTasks.push(async () => {
 		try {
 			await runAuthoritativePass(options);
 		} catch (error) {
 			await logError(error);
 		} finally {
-			authoritativeInFlight.delete(conversationId);
+			authoritativeInFlight.delete(key);
 		}
 	});
 	processNextTask();
+}
+
+// Both triggers' common half: queue the pass for the tab the trigger came from. extra carries the
+// stream trigger's expectedTurn.
+function triggerAuthoritativePass(details, orgId, conversationId, extra = {}) {
+	queueAuthoritativePass({
+		orgId,
+		conversationId,
+		api: getStrategy().apiForRequest(details, orgId),
+		tabId: details.tabId,
+		...extra,
+	});
+	tokenStorageManager.addOrgId(orgId);
 }
 
 async function getPopupUsageData() {
@@ -681,6 +699,7 @@ const fromTab = (handler) => (message, sender) => {
 };
 messageRegistry.register('interceptedRequest', fromTab(onBeforeRequestHandler));
 messageRegistry.register('interceptedResponse', fromTab(onCompletedHandler));
+messageRegistry.register('turnSettled', fromTab(onTurnSettled));
 
 async function getTotalTokensTracked() {
 	return await tokenStorageManager.getTotalTokens();
@@ -696,12 +715,15 @@ async function handleMessageFromContent(message, sender) {
 
 
 //#region Network handling
-// The authoritative pass. One per sent message, triggered by claude.ai's post-message tree GET.
+// The authoritative pass. One per sent message, triggered by claude.ai's post-message tree GET
+// (onCompletedHandler), or on merged-experience accounts, which make no such GET, by the turn
+// settling on its StreamTimeline (onTurnSettled), which passes `expectedTurn`: the settled reply's
+// id, or null when the stream didn't see it.
 //
 // `api` is passed in rather than derived because the caller is a request handler and has to
 // build it from `details` (the tab the request came from) via the active container strategy.
-async function runAuthoritativePass({ orgId, conversationId, api, tabId }) {
-	await Log("Running authoritative pass for", conversationId);
+async function runAuthoritativePass({ orgId, conversationId, api, tabId, expectedTurn }) {
+	await Log("Running authoritative pass for", conversationId, expectedTurn !== undefined ? `(stream settle, turn ${expectedTurn})` : '');
 
 	// Fetch current usage limits from endpoint
 	const usageData = await api.getUsageData();
@@ -709,12 +731,14 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId }) {
 	// Fetch conversation data
 	const conversation = await api.getConversation(conversationId);
 
-	// Which generation this pass is about. The tree GET that triggered us has already completed, so
-	// the tree is guaranteed to contain the new reply and its leaf IS that reply — no staleness
-	// check needed, which is the main reason this is triggered from the tree GET rather than from
-	// the completion stream. getData memoizes per shape, so getInfo below reuses this fetch.
-	const tree = await conversation.getData(true);
-	const turnUuid = tree?.current_leaf_message_uuid || null;
+	// Which generation this pass is about. When the tree GET triggered us, it has already completed,
+	// so the tree is guaranteed to contain the new reply and its leaf IS that reply — no staleness
+	// check needed, which is the main reason legacy accounts trigger from the tree GET rather than
+	// from the completion stream. The merged experience makes no such GET, so there the trigger is
+	// the StreamTimeline settle (onTurnSettled), and getSettledTree makes up for the missing proof.
+	// The tree is memoized per shape, so getInfo below reuses this read.
+	const tree = expectedTurn === undefined ? await conversation.getData(true) : await conversation.getSettledTree(expectedTurn);
+	const turnUuid = expectedTurn || tree?.current_leaf_message_uuid || null;
 
 	// Scoped to this generation rather than "whatever is pending for this conversation", so a
 	// message sent while a previous pass was still running can't have its data read here.
@@ -1031,6 +1055,17 @@ async function onBeforeRequestHandler(details) {
 
 }
 
+// A merged-experience turn ended (request-hook.js watches the page's StreamTimeline): the merged
+// experience's stand-in for the post-message tree GET below. assistantMessageId is the turn's key in
+// pendingRequests (recorded from its PerformAction send); it can be missing when the turn straddled a
+// stream reconnect, and then the pass falls back to the tree's leaf.
+async function onTurnSettled(details) {
+	const { orgId, conversationId, assistantMessageId, stopReason } = details;
+	if (!orgId || !conversationId) return;
+	await Log("Turn settled:", conversationId, assistantMessageId, stopReason);
+	triggerAuthoritativePass(details, orgId, conversationId, { expectedTurn: assistantMessageId || null });
+}
+
 async function onCompletedHandler(details) {
 	if (details.method === "GET" &&
 		details.url.includes("/chat_conversations/") &&
@@ -1040,8 +1075,9 @@ async function onCompletedHandler(details) {
 		const urlParts = details.url.split('/');
 		const conversationId = urlParts[urlParts.indexOf('chat_conversations') + 1]?.split('?')[0];
 
-		// The only trigger for the authoritative pass. claude.ai refetches the tree ~0.2s after a
-		// completion stream ends, and that GET completing is proof the new reply is in the tree —
+		// The legacy trigger for the authoritative pass (merged-experience accounts never make this
+		// GET; their trigger is onTurnSettled, from the StreamTimeline). claude.ai refetches the tree
+		// ~0.2s after a completion stream ends, and that GET completing is proof the new reply is in the tree —
 		// which is why triggering here needs no staleness check.
 		//
 		// Measured with every extension disabled: claude.ai issues exactly ONE of these per message
@@ -1057,14 +1093,7 @@ async function onCompletedHandler(details) {
 			return;
 		}
 
-		const treeOrgId = urlParts[urlParts.indexOf('organizations') + 1];
-		queueAuthoritativePass({
-			orgId: treeOrgId,
-			conversationId,
-			api: getStrategy().apiForRequest(details, treeOrgId),
-			tabId: details.tabId
-		});
-		tokenStorageManager.addOrgId(treeOrgId);
+		triggerAuthoritativePass(details, urlParts[urlParts.indexOf('organizations') + 1], conversationId);
 	}
 
 	// Branch switch — debounce, then invalidate cache and fetch fresh data
