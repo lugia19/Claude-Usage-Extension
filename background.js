@@ -743,6 +743,11 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId, expecte
 	// that turn's pending entry with another generation's data and settle it for good. Keyed on the
 	// leaf, a stale tree finds no pending entry (a display refresh), and a newer leaf is priced as
 	// itself (its own settle then repeats harmlessly).
+	//
+	// Accepted by design: in that last case (turn B settled before turn A's pass read the tree, a
+	// ~1-2s window), A's one-shot side effects (its usage-delta log line and its cost in the lifetime
+	// token counter) are skipped. The displayed numbers stay right, B's pass prices the whole
+	// conversation; recovering A's share would mean pricing a tree truncated at A, for one statistic.
 	const turnUuid = tree?.current_leaf_message_uuid || null;
 
 	// Scoped to this generation rather than "whatever is pending for this conversation", so a
