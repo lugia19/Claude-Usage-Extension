@@ -53,7 +53,7 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['en'] ??= {}, {
 	"length.cost": "Cost",
 	"length.cached_prefix": "Cached for:",
 	"length.tooltip_length": "Length of the conversation, in tokens.",
-	"length.tooltip_system_prompt": "Roughly {tokens} of them are the system prompt, which doesn't use up your limits.",
+	"length.tooltip_system_prompt": "Roughly {tokens} of them are the system prompt, which is cached and doesn't use up your limits. The rest grows with every message, and so does the cost of each message once the cache expires.",
 	"length.tooltip_length_note": "NOTE: Count may be inaccurate due to enabled features.",
 	"length.tooltip_cost": "Estimated cost of sending another message\nIncludes ephemeral items like thinking.\nCost = length*model mult / caching factor",
 	"length.tooltip_cached": "Follow up messages in this conversation will have a reduced cost",

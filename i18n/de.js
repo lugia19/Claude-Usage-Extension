@@ -53,7 +53,7 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['de'] ??= {}, {
 	"length.cost": "Kosten",
 	"length.cached_prefix": "Zwischengespeichert für:",
 	"length.tooltip_length": "Länge der Unterhaltung in Tokens.",
-	"length.tooltip_system_prompt": "Etwa {tokens} davon sind der Systemprompt, der deine Limits nicht verbraucht.",
+	"length.tooltip_system_prompt": "Etwa {tokens} davon sind der Systemprompt, der zwischengespeichert ist und deine Limits nicht verbraucht. Der Rest wächst mit jeder Nachricht, und damit auch die Kosten jeder Nachricht, sobald der Cache abläuft.",
 	"length.tooltip_length_note": "HINWEIS: Die Zählung kann aufgrund aktivierter Funktionen ungenau sein.",
 	"length.tooltip_cost": "Geschätzte Kosten für das Senden einer weiteren Nachricht\nEnthält flüchtige Elemente wie das Nachdenken.\nKosten = Länge × Modellfaktor / Caching-Faktor",
 	"length.tooltip_cached": "Folgenachrichten in dieser Unterhaltung haben reduzierte Kosten",

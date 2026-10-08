@@ -53,7 +53,7 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['id'] ??= {}, {
 	"length.cost": "Biaya",
 	"length.cached_prefix": "Di-cache selama:",
 	"length.tooltip_length": "Panjang percakapan, dalam token.",
-	"length.tooltip_system_prompt": "Sekitar {tokens} di antaranya adalah prompt sistem, yang tidak memakai batas Anda.",
+	"length.tooltip_system_prompt": "Sekitar {tokens} di antaranya adalah prompt sistem, yang di-cache dan tidak memakai batas Anda. Sisanya bertambah setiap pesan, begitu pula biaya tiap pesan setelah cache kedaluwarsa.",
 	"length.tooltip_length_note": "CATATAN: Hitungan mungkin tidak akurat karena fitur yang diaktifkan.",
 	"length.tooltip_cost": "Perkiraan biaya untuk mengirim pesan lain\nTermasuk item sementara seperti proses berpikir.\nBiaya = panjang × pengali model / faktor caching",
 	"length.tooltip_cached": "Pesan lanjutan dalam percakapan ini akan memiliki biaya lebih rendah",

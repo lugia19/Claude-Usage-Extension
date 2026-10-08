@@ -53,7 +53,7 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['fr'] ??= {}, {
 	"length.cost": "Coût",
 	"length.cached_prefix": "En cache pendant :",
 	"length.tooltip_length": "Longueur de la conversation, en jetons.",
-	"length.tooltip_system_prompt": "Environ {tokens} d'entre eux forment le prompt système, qui n'entame pas vos limites.",
+	"length.tooltip_system_prompt": "Environ {tokens} d'entre eux forment le prompt système, qui est mis en cache et n'entame pas vos limites. Le reste grandit à chaque message, tout comme le coût de chaque message une fois le cache expiré.",
 	"length.tooltip_length_note": "REMARQUE : le décompte peut être inexact en raison des fonctionnalités activées.",
 	"length.tooltip_cost": "Coût estimé de l'envoi d'un autre message\nInclut les éléments éphémères comme la réflexion.\nCoût = longueur × mult. du modèle / facteur de mise en cache",
 	"length.tooltip_cached": "Les messages suivants de cette conversation auront un coût réduit",
