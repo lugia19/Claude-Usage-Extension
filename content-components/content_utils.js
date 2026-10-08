@@ -30,7 +30,7 @@ function getCurrentConversationId() {
 }
 
 // Every message carries the active org. The retry while the background wakes up lives in
-// common/ext/bridge.js.
+// common/ext/bridge-isolated.js.
 function sendBackgroundMessage(message) {
 	return ClaudeExtBridge.sendBackgroundMessage('tracker', { ...message, orgId: getActiveOrgId() });
 }

@@ -1,5 +1,5 @@
 // Tells the background which claude.ai requests the page makes, on every platform. Runs in the page
-// world (MAIN, document_start, after common/net/net.js and common/ext/bridge.js) and chains onto
+// world (MAIN, document_start, after common/net/net.js and common/ext/bridge-main.js) and chains onto
 // window.fetch: webRequest can't read what the merged experience sends (binary protobuf) or streams
 // back.
 //
