@@ -17,7 +17,7 @@ const WORKSPACE_ATTACHMENT_MAX_TOKENS = 25000;
 // Files on `trunk` (from `fromIdx` on) the model never had. The tree keeps every text attachment's
 // full extracted_content and every PDF's page count, but once a conversation runs in a workspace
 // (workspace_upgraded) a file can sit in the sandbox instead: the files on the turn that forced the
-// upgrade and, after it, every PDF (only its path reaches the context) and any text attachment over
+// upgrade and, after it, every PDF or blob (only its path reaches the context) and any text attachment over
 // the Read cap. Files sent before the upgrade went in inline and stay in context; images always do.
 //
 // The upgrade is the earliest of, anywhere in the tree (the workspace belongs to the conversation, so
@@ -49,7 +49,7 @@ function sandboxedFiles(messages, trunk, fromIdx, workspaceUpgraded) {
 			if (attachment.extracted_content && (forcedHere || overCap(attachment.extracted_content))) sandboxed.add(attachment);
 		}
 		for (const file of message.files ?? []) {
-			if (file.file_kind === "document") sandboxed.add(file);
+			if (file.file_kind === "document" || file.file_kind === "blob") sandboxed.add(file);
 		}
 	}
 	return sandboxed;
