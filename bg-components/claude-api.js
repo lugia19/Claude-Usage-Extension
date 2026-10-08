@@ -7,6 +7,38 @@ import { UsageData, ConversationData, modelFamilyFromVersion } from '../shared/d
 // has no entry, and is priced without it.
 const VISUALIZE_TOOL = "6f616b42-0ed8-571e-823f-ee4aca6b7ce9:show_widget";
 
+// Tools that run in the conversation's workspace (sandbox): the first one on the trunk marks where it
+// was upgraded to a workspace. prepare_session is the upgrade a file too big for the context forces.
+const SANDBOX_TOOLS = new Set(["prepare_session", "Bash", "Read", "Write", "Edit", "Glob", "Grep", "NotebookEdit"]);
+// In a workspace, an attached text file is read into context only up to Claude Code's Read cap; a
+// bigger one stays in /mnt/user-data/uploads with only its path in context.
+const WORKSPACE_ATTACHMENT_MAX_TOKENS = 25000;
+
+// Text attachments on `trunk` (from `fromIdx` on) the model never had. The tree keeps every
+// attachment's full extracted_content, but once a conversation runs in a workspace
+// (workspace_upgraded) a file can sit in the sandbox instead: the one that forced the upgrade (its
+// reply calls prepare_session) and, after the upgrade, any over the Read cap. Files sent before the
+// upgrade went in inline and stay in context. The upgrade is the first reply using a sandbox tool.
+function sandboxedAttachments(trunk, fromIdx, workspaceUpgraded) {
+	const sandboxTool = m => m.sender === "assistant" &&
+		(m.content ?? []).find(c => c.type === "tool_use" && SANDBOX_TOOLS.has(c.name));
+	const upgradeIdx = workspaceUpgraded ? trunk.findIndex(sandboxTool) : -1;
+	if (upgradeIdx < 0) return new Set();
+	const forced = trunk[upgradeIdx].content.some(c => c.type === "tool_use" && c.name === "prepare_session");
+	// Under the cap in characters is under it in tokens too, so only longer files get tokenized.
+	const overCap = text => text.length > WORKSPACE_ATTACHMENT_MAX_TOKENS &&
+		tokenCounter.countTextLocal(text) > WORKSPACE_ATTACHMENT_MAX_TOKENS;
+	const sandboxed = new Set();
+	for (let i = Math.max(fromIdx, upgradeIdx - 1); i < trunk.length; i++) {
+		if (trunk[i].sender !== "human") continue;
+		for (const attachment of trunk[i].attachments ?? []) {
+			if (!attachment.extracted_content) continue;
+			if (i < upgradeIdx ? forced : overCap(attachment.extracted_content)) sandboxed.add(attachment);
+		}
+	}
+	return sandboxed;
+}
+
 // The fixed system prompt's total (CONFIG.SYSTEM_PROMPT_TOKENS lists it by section).
 const FIXED_PROMPT_TOKENS = Object.values(CONFIG.SYSTEM_PROMPT_TOKENS).reduce((a, b) => a + b, 0);
 
@@ -528,7 +560,8 @@ class MessageAPI {
 	// Get text content (Not tokens, so it can be done all in one call later). asOutput picks the
 	// view - see getTextFromContent: context for the message's share of later prompts, output for
 	// what the model generated.
-	async getTextContent(asOutput = false) {
+	// `includeAttachment` picks the text attachments that were in context (all, by default).
+	async getTextContent(asOutput = false, includeAttachment = () => true) {
 		let messageContent = [];
 
 		// Process content array
@@ -538,7 +571,7 @@ class MessageAPI {
 
 		// Process attachments
 		for (const attachment of this.data.attachments || []) {
-			if (attachment.extracted_content) {
+			if (attachment.extracted_content && includeAttachment(attachment)) {
 				messageContent.push(attachment.extracted_content);
 			}
 		}
@@ -910,6 +943,8 @@ class ConversationAPI {
 			uncachedFutureCostTokens += outputTokens;
 		}
 
+		const sandboxed = sandboxedAttachments(currentTrunk, compactionIdx + 1, conversationData.workspace_upgraded);
+
 		for (let i = compactionIdx + 1; i < currentTrunk.length; i++) {
 			const rawMessageData = currentTrunk[i];
 			const message = new MessageAPI(rawMessageData, cacheIsActive, this.api);
@@ -932,7 +967,7 @@ class ConversationAPI {
 			uncachedFutureCostTokens += fileTokens;
 
 			// Text content
-			const textContent = await message.getTextContent(false);
+			const textContent = await message.getTextContent(false, attachment => !sandboxed.has(attachment));
 
 			if (message.sender === "human") {
 				humanMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext });
@@ -1011,6 +1046,7 @@ class ConversationAPI {
 			effectiveSettings.enabled_bananagrams ||         // Drive search
 			effectiveSettings.memory ||                      // Memory (its files aren't counted)
 			projectStats?.use_project_knowledge_search ||    // Project retrieval
+			sandboxed.size > 0 ||                            // A file in the sandbox (the model may read parts)
 			(compactionIdx >= 0 && !currentTrunk[compactionIdx].compaction_summary?.length) // Merged compaction summary (a constant)
 		);
 
