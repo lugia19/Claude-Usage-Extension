@@ -7,7 +7,8 @@ const SUCCESS_GREEN = "#22c55e";
 
 const SELECTORS = {
 	MODEL_PICKER: '[data-testid="model-selector-dropdown"]',
-	CHAT_MENU: '[data-testid="chat-title-split"]',
+	// "session-title-split" since the merged experience (2026-10).
+	CHAT_MENU: '[data-testid="session-title-split"], [data-testid="chat-title-split"]',
 	MODEL_SELECTOR: '[data-testid="model-selector-dropdown"]',
 	INIT_LOGIN_SCREEN: 'button[data-testid="login-with-google"]',
 	VERIF_LOGIN_SCREEN: 'input[data-testid="code"]'
@@ -667,7 +668,7 @@ const pageLayouts = {
 				const chatTitle = document.querySelector(SELECTORS.CHAT_MENU);
 				if (!chatTitle) return null;
 
-				const titleLine = chatTitle.closest('.font-base-bold') || chatTitle.parentElement;
+				const titleLine = chatTitle.closest('.font-base-bold, .font-base') || chatTitle.parentElement;
 				if (!titleLine) return null;
 
 				const headerRow = titleLine.parentElement;
