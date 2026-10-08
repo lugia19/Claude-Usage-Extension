@@ -855,6 +855,12 @@ class ConversationAPI {
 			...(accountSettings || {}),
 			...(conversationData.settings || {})
 		};
+		// The composer's per-chat Memory checkbox: unticked, the chat gets neither the memory
+		// sections and tools nor chat search.
+		if (effectiveSettings.chat_memory_mode === "disabled") {
+			effectiveSettings.memory = false;
+			effectiveSettings.enabled_saffron_search = false;
+		}
 
 		// The parts of the system prompt a setting switches on (prompt sections plus their tools),
 		// static and in the cached prefix like the rest of it. One log line, not one per setting:
