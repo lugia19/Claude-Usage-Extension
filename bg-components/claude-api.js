@@ -875,6 +875,7 @@ class ConversationAPI {
 			return new ConversationData({
 				conversationId: this.conversationId,
 				length: FIXED_PROMPT_TOKENS,
+				systemPromptTokens: FIXED_PROMPT_TOKENS,
 				cost: FIXED_PROMPT_TOKENS * CONFIG.CACHING_MULTIPLIER,
 				futureCost: FIXED_PROMPT_TOKENS * CONFIG.CACHING_MULTIPLIER,
 				model: undefined,
@@ -923,6 +924,8 @@ class ConversationAPI {
 			.filter(([setting]) => effectiveSettings[setting])
 			.reduce((sum, [, tokens]) => sum + tokens, 0);
 		lengthTokens += featureTokens;
+		// The cached system prompt's share of the length: fixed part, feature sections, preferences.
+		let systemPromptTokens = FIXED_PROMPT_TOKENS + featureTokens;
 		costTokens += featureTokens * CONFIG.CACHING_MULTIPLIER;
 		futureCostTokens += featureTokens * CONFIG.CACHING_MULTIPLIER;
 
@@ -1089,6 +1092,7 @@ class ConversationAPI {
 		// different cost depending on how you arrived at it.
 		const profileTokens = await this.api.getProfileTokens();
 		lengthTokens += profileTokens;
+		systemPromptTokens += profileTokens;
 		// Preferences sit in the system-prompt prefix, right next to the fixed prompt, which
 		// this function already prices at CACHING_MULTIPLIER. Once anything is cached they are too,
 		// and by the next message they always are.
@@ -1114,6 +1118,7 @@ class ConversationAPI {
 		return new ConversationData({
 			conversationId: this.conversationId,
 			length: Math.round(lengthTokens),
+			systemPromptTokens: Math.round(systemPromptTokens),
 			cost: Math.round(costTokens),
 			uncachedCost: Math.round(uncachedCostTokens),
 			futureCost: futureCost,

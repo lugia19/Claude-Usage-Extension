@@ -2,6 +2,8 @@
 
 // How long the title line may overflow the header before it moves to the strip (see titleFitsHeader).
 const TITLE_OVERFLOW_GRACE_MS = 1500;
+// Above this, "Messages left" shows as "1,000+" (see messagesLeftHTML).
+const MESSAGES_LEFT_CAP = 1000;
 
 // Length UI actor - handles all conversation-related displays
 class LengthUI {
@@ -277,7 +279,11 @@ class LengthUI {
 		length.innerHTML = `${lengthLabel}: <span style="color: ${lengthColor}">${fmtNum(conversationData.length)}</span> ${localize('common.unit_tokens')}`;
 
 		// Update length tooltip based on estimate status
-		const baseTooltip = localize('length.tooltip_length');
+		let baseTooltip = localize('length.tooltip_length');
+		if (conversationData.systemPromptTokens) {
+			const tokens = fmtNum(Math.round(conversationData.systemPromptTokens / 1000) * 1000);
+			baseTooltip += ' ' + localize('length.tooltip_system_prompt', { tokens });
+		}
 		this.elements.tooltips.length.updateText(conversationData.lengthIsEstimate
 			? baseTooltip + '\n\n' + localize('length.tooltip_length_note')
 			: baseTooltip);
@@ -427,11 +433,13 @@ class LengthUI {
 	}
 
 	// Whole messages in the user's number format; a decimal only below 10, where it still says
-	// something. Rounded down: a part of a message can't be sent.
+	// something. Rounded down: a part of a message can't be sent. Capped: with a fully cached
+	// conversation a message costs next to nothing, and "1,860,000" reads as nonsense.
 	messagesLeftHTML(messagesLeft) {
-		const shown = messagesLeft < 10 ? Math.floor(messagesLeft * 10) / 10 : Math.floor(messagesLeft);
+		const shown = messagesLeft >= MESSAGES_LEFT_CAP ? `${fmtNum(MESSAGES_LEFT_CAP)}+`
+			: fmtNum(messagesLeft < 10 ? Math.floor(messagesLeft * 10) / 10 : Math.floor(messagesLeft));
 		const color = messagesLeft < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
-		return `<span style="color: ${color}">${fmtNum(shown)}</span>`;
+		return `<span style="color: ${color}">${shown}</span>`;
 	}
 
 	// ========== MESSAGE HANDLERS ==========

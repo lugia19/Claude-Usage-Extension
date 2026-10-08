@@ -356,6 +356,7 @@ export class ConversationData {
 
 		// Calculated metrics
 		this.length = data.length || 0;  // Total tokens in conversation
+		this.systemPromptTokens = data.systemPromptTokens || 0; // The part of `length` that is the (cached) system prompt
 		this.cost = data.cost || 0;		 // Token cost (with caching possibly considered)
 		this.uncachedCost = data.uncachedCost || 0;       // Without caching
 		this.futureCost = data.futureCost || 0; // Estimated cost of future messages
@@ -483,6 +484,7 @@ export class ConversationData {
 			conversationId: this.conversationId,
 			messages: this.messages,
 			length: this.length,
+			systemPromptTokens: this.systemPromptTokens,
 			cost: this.cost,
 			uncachedCost: this.uncachedCost,
 			futureCost: this.futureCost,
