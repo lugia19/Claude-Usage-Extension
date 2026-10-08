@@ -87,10 +87,30 @@ const CONFIG = {
 	"PEAK_SESSION_MULTIPLIER": 1.5,
 	"WARNING": {
 		"PERCENT_THRESHOLD": 0.9,
-		"LENGTH": 50000,
+		"LENGTH": 150000, // total context, system prompt included (see SYSTEM_PROMPT_TOKENS)
 		"COST": 250000
 	},
-	"BASE_SYSTEM_PROMPT_LENGTH": 3200,
+	// The fixed system prompt every conversation carries, in Claude's current (Opus 4.7+) tokenizer,
+	// measured on the merged-experience prompt 2026-10-08 (claude-ext-common scripts/bard/README.md,
+	// "Fixed overhead, current variant"). Static and in the cached prefix; tool definitions live here
+	// too, not on each request. Assumes the variant most chats get: some chats switch to a Claude Code
+	// variant after their environment is set up, ~7K smaller. Legacy accounts get the same figures.
+	"SYSTEM_PROMPT_TOKENS": {
+		"behavior": 28600,	// claude_behavior, agentic_behavior, search + copyright, image search, citations, end_conversation, thinking
+		"tools": 58500,		// the 60 built-in tool schemas
+		"skills": 5500,		// available_skills; per-account, measured with 22 skills
+		"trailing": 2300	// trailing system text plus the first turn's reminders
+	},
+	// Added when the account has conversation preferences: the section explaining how to apply them
+	// (the preference text itself is counted separately).
+	"PREFERENCES_SECTION_TOKENS": 2000,
+	// Prompt sections and tool schemas that only exist with a setting on, keyed by the flag
+	// getAccountSettings reports (same tokenizer and source as SYSTEM_PROMPT_TOKENS).
+	"FEATURE_PROMPT_TOKENS": {
+		"memory": 24800,				// memory_filesystem and its guidance + 6 memory tools (memory files not included)
+		"enabled_saffron_search": 3700,	// past_chats_tools + conversation_search, read_conversation, recent_chats
+		"inline_visuals": 4200			// visualizer sections + the visualize read_me / show_widget tools
+	},
 	"CACHING_MULTIPLIER": 0, // Seems to be free.
 	// o200k undercounts against Claude's real tokenizer; this closes the gap. Lives in CONFIG
 	// rather than on TokenCounter so the content script gets the same figure via getConfig —

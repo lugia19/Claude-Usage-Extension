@@ -302,7 +302,7 @@ const PENDING_MODEL_TRUST_MS = 5 * 60 * 1000;
 // which message they are talking about, instead of "whatever is pending for this conversation".
 //
 // That ambiguity is what made a second message sent moments after the first read the previous
-// message's prompt/tools/model and skip its own accounting. Keeping the conversation as the OUTER
+// message's prompt/model and skip its own accounting. Keeping the conversation as the OUTER
 // key preserves StoredMap's per-key TTL at the granularity that matters for eviction, and keeps the
 // two consumers that legitimately want "the newest request here" on a single get.
 // Marks a bucket key that isn't a real turn uuid — see getPendingRequest.
@@ -335,7 +335,7 @@ async function getPendingRequest(orgId, conversationId, turnUuid) {
 	// Exact miss. Fall back ONLY to entries stored under a synthetic key: those are requests whose
 	// body carried no turn_message_uuids, so they can never match the real uuid the callers hold and
 	// would otherwise be unreachable — the fallback key would defeat the fallback. A miss against
-	// real keys is left as a miss, because borrowing another turn's tools and model would be worse
+	// real keys is left as a miss, because borrowing another turn's prompt and model would be worse
 	// than reporting none.
 	const synthetic = Object.fromEntries(
 		Object.entries(bucket).filter(([key]) => key.startsWith(SYNTHETIC_TURN_PREFIX))
@@ -352,8 +352,7 @@ function newestPending(bucket) {
 }
 
 // Writes one generation's entry, dropping siblings that have aged out. No size cap: entries are a
-// handful of numbers and short strings now that tool definitions are stored as a count, so a burst
-// of regenerations inside the TTL costs bytes rather than the ~15KB per turn it used to.
+// handful of numbers and short strings, so a burst of regenerations inside the TTL costs bytes.
 async function setPendingRequest(orgId, conversationId, turnUuid, entry) {
 	// Sweep other conversations' expired buckets while we're writing anyway. Nothing else reads
 	// them — a conversation you never revisit is never read, so its bucket would otherwise sit in
@@ -367,20 +366,6 @@ async function setPendingRequest(orgId, conversationId, turnUuid, entry) {
 	const kept = Object.entries(bucket).filter(([, e]) => (e.requestTimestamp || 0) > cutoff);
 
 	await pendingRequests.set(`${orgId}:${conversationId}`, Object.fromEntries(kept), PENDING_REQUEST_TTL);
-}
-
-// Tool definitions are appended to every request, so the next message in this conversation will
-// carry them whether or not we are the ones who just sent one. Reading them back from the last
-// request keeps a conversation priced the same however you arrived at it.
-//
-// Narrower than it looks: conversationCache lives 60 minutes and pendingRequests 10, so whenever an
-// entry is fresh enough to consult here, the cache is fresh too and requestData never reaches its
-// miss path. The one route that does reach it is a BRANCH SWITCH, which deletes conversationCache
-// explicitly — that is what this is keeping alive. Returns null once the entry expires, which is
-// the honest answer: we no longer know what tools were sent.
-async function lastToolTokens(orgId, conversationId) {
-	const pending = newestPending(await getPendingBucket(orgId, conversationId));
-	return pending?.toolTokens || 0;
 }
 
 async function applyPendingModel(conversationData, orgId, conversationId) {
@@ -485,11 +470,7 @@ async function requestData(message, sender, orgId) {
 		} else {
 			await Log(`Cache miss for conversation: ${conversationId}`);
 			const conversation = await api.getConversation(conversationId);
-			// Profile tokens are applied inside getInfo now — this used to add them here with
-			// arithmetic that disagreed with processResponse's.
-			const conversationData = await conversation.getInfo(false, {
-				toolTokens: await lastToolTokens(orgId, conversationId)
-			});
+			const conversationData = await conversation.getInfo(false);
 
 			if (conversationData) {
 				// Before caching, so the correction sticks for the cache's lifetime too.
@@ -535,14 +516,14 @@ async function reportStreamCompletion(message, sender, orgId) {
 	if (!conversationId || message.assistantTokens === null) return false;
 
 	// Indexed by the assistant uuid the stream just reported, so this reads THIS generation's
-	// prompt/tools/model even if the next message went out while the previous pass was still
+	// prompt/model even if the next message went out while the previous pass was still
 	// running. Without the uuid (shouldn't happen - message_start always carries it) fall back to
 	// the newest entry, which is the pre-uuid behaviour.
 	const pending = await getPendingRequest(orgId, conversationId, message.assistantUuid);
 	const cached = await conversationCache.get(conversationId);
-	// No baseline, no estimate. Synthesizing one from BASE_SYSTEM_PROMPT_LENGTH would miss feature
-	// costs (web search alone is 10250) and profile tokens, and read wildly wrong - a brand-new
-	// conversation is better off waiting the second for the real numbers.
+	// No baseline, no estimate. Synthesizing one from the fixed system prompt would miss profile
+	// tokens, files and project knowledge - a brand-new conversation is better off waiting the
+	// second for the real numbers.
 	if (!pending || !cached) {
 		await Log("Stream completion: no baseline for", conversationId, "- skipping estimate");
 		return false;
@@ -557,10 +538,6 @@ async function reportStreamCompletion(message, sender, orgId) {
 	// but be explicit rather than relying on that.
 	const promptTokens = pending.isRetry ? 0 : Math.max(0, pending.promptTokens || 0);
 
-	// Tool definitions are re-sent with every request at full price. Already counted when the POST
-	// went out, so this stays network-free and costs nothing here.
-	const toolTokens = pending.toolTokens || 0;
-
 	// A regeneration replaces the previous reply rather than appending to it, so adding both would
 	// double-count. We don't know the replaced message's size, so hold the length and let the
 	// estimate asterisk say so.
@@ -574,12 +551,7 @@ async function reportStreamCompletion(message, sender, orgId) {
 	// cached prefix straight back out (:715, since 1 - CACHING_MULTIPLIER is 1), so once a reply
 	// lands the only survivor is that reply. Hence assign, never +=. Adding to the previous value
 	// would carry the last turn's reply forward and roughly double the displayed cost each message.
-	//
-	// Tools are included because they genuinely are re-sent, appended to every request rather than
-	// living in the cached prefix. The authoritative pass now prices them the same way, and no
-	// longer charges profile tokens to futureCost, so the two should land on the same number
-	// instead of the estimate/pass/settled disagreement this used to document.
-	provisional.futureCost = Math.round((1 + CONFIG.OUTPUT_TOKEN_MULTIPLIER) * assistantTokens + toolTokens);
+	provisional.futureCost = Math.round((1 + CONFIG.OUTPUT_TOKEN_MULTIPLIER) * assistantTokens);
 	provisional.cost = provisional.futureCost;
 
 	// uncachedCost genuinely IS cumulative - it never subtracts a cached prefix - so it keeps
@@ -615,7 +587,7 @@ async function reportStreamCompletion(message, sender, orgId) {
 
 	await Log("Stream completion: provisional length", provisional.length,
 		"futureCost", provisional.futureCost, "(assistant", assistantTokens,
-		"prompt", promptTokens, "tools", toolTokens, ")");
+		"prompt", promptTokens, ")");
 
 	await sendTabMessage(sender.tab.id, {
 		type: 'updateConversationData',
@@ -759,23 +731,18 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId, expecte
 	const pendingRequest = await getPendingRequest(orgId, conversationId, turnUuid);
 	const isNewMessage = pendingRequest !== undefined;
 	// The entry is no longer deleted after the first pass — deleting it is what made the second run
-	// disagree with the first, dropping the tool definitions and changing the displayed cost. It is
+	// disagree with the first, dropping the request's model and changing the displayed cost. It is
 	// marked instead, so a repeat pass over the same message still prices it identically while the
 	// one-shot side effects (lifetime token counter, usage delta log) fire exactly once.
 	const alreadyCounted = !!pendingRequest?.settled;
 
-	const conversationData = await conversation.getInfo(isNewMessage, {
-		toolTokens: pendingRequest?.toolTokens || 0
-	});
+	const conversationData = await conversation.getInfo(isNewMessage);
 
 	if (!conversationData) {
 		await Log("warn", "Could not get conversation data, exiting...");
 		return false;
 	}
 
-	// Profile and tool tokens are applied inside getInfo now, so there is exactly one place that
-	// knows how they are priced. Nothing to patch here.
-	//
 	// Both model fields are overridden only when the request that triggered this pass actually knows
 	// better. getInfo already derives them from the conversation's own `model`, and the pass also
 	// runs on plain navigation, where there is no pendingRequest at all - assigning the tier default
@@ -804,7 +771,7 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId, expecte
 	// Marks THIS generation settled and nothing else. The previous version wrote the whole
 	// conversation's entry back from a snapshot taken at the top of the pass, so a message sent
 	// during the pass had its freshly-stored data reverted and pre-marked settled — losing its
-	// prompt/tools/model and skipping its own accounting.
+	// prompt/model and skipping its own accounting.
 	if (isNewMessage && !alreadyCounted && pendingRequest.turnUuid) {
 		await setPendingRequest(orgId, conversationId, pendingRequest.turnUuid,
 			{ ...pendingRequest, settled: true });
@@ -955,29 +922,6 @@ async function onBeforeRequestHandler(details) {
 		}
 		await Log(`Message sent - conversation ${conversationId}, turn ${turnUuid}`);
 
-		// Tool definitions, counted here and NOT stored. The definitions themselves run to ~15KB of
-		// descriptions and JSON schemas, and the only thing anything downstream ever did with them
-		// was total their tokens — so keeping the array meant parking 15KB per turn, per
-		// conversation, in storage.local, which StoredMap only reclaims if that conversation is read
-		// again. Same reasoning as promptTokens directly below: store the number, drop the text.
-		const toolDefs = requestBodyJSON?.tools?.filter(tool =>
-			tool.name && !['artifacts_v0', 'repl_v0'].includes(tool.type)
-		)?.map(tool => ({
-			name: tool.name,
-			description: tool.description || '',
-			schema: JSON.stringify(tool.input_schema || {})
-		})) || [];
-		await Log("Tool definitions:", toolDefs.map(t => t.name));
-
-		let toolTokens = 0;
-		try {
-			for (const tool of toolDefs) {
-				toolTokens += tokenCounter.countTextLocal(`${tool.name} ${tool.description} ${tool.schema}`);
-			}
-		} catch (error) {
-			await Log("warn", "Failed to size tool definitions:", error);
-		}
-
 		// Size of the outgoing message, for the provisional estimate in reportStreamCompletion.
 		// This is the only place the prompt is visible - by the time the stream ends it is gone.
 		// Deliberately a COUNT and not the text: pendingRequests is a StoredMap, so anything put
@@ -1005,7 +949,6 @@ async function onBeforeRequestHandler(details) {
 			model: model,
 			modelVersion: modelVersion,
 			requestTimestamp: Date.now(),
-			toolTokens: toolTokens,
 			promptTokens: promptTokens,
 			hasAttachments: hasAttachments,
 			isRetry: details.isRetry
@@ -1101,10 +1044,7 @@ async function onCompletedHandler(details) {
 
 				const api = getStrategy().apiForRequest(details, orgId);
 				const conversation = await api.getConversation(conversationId);
-				// Profile tokens applied inside getInfo — see requestData.
-				const conversationData = await conversation.getInfo(false, {
-					toolTokens: await lastToolTokens(orgId, conversationId)
-				});
+				const conversationData = await conversation.getInfo(false);
 
 				if (conversationData) {
 					await conversationCache.set(conversationId, conversationData.toJSON(), CONVERSATION_CACHE_TTL);
@@ -1190,10 +1130,9 @@ const branchSwitchTimers = new Map(); // conversationId → timeoutId (debounce)
 // message, so a second trigger arriving while one is in flight is a duplicate and gets dropped.
 const authoritativeInFlight = new Set();
 
-// pendingRequests entries used to be deleted by the first pass that consumed them. They now expire
-// instead — long enough that any fallback pass for the same message still sees the tool definitions
-// and the model the request was sent with, short enough that revisiting the conversation later is
-// not mistaken for a fresh send.
+// pendingRequests entries expire rather than being deleted by the pass that consumes them: long
+// enough that a repeat pass for the same message still sees the model it was sent with, short
+// enough that revisiting the conversation later isn't read as a fresh send.
 const PENDING_REQUEST_TTL = 10 * 60 * 1000;
 
 // Set up repeating alarm for reset notification polling (every 3 minutes)
