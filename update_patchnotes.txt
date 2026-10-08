@@ -1,3 +1,4 @@
-TODO: Support the merged cowork/chat experience. The API has changed, so I need it on my account before I can do this.
-Various bugfixes.
-Mostly a refactor of a lot of code, so it's shared between this extension and QoL.
+Total API rework to work with the new merged experience
+Compacted conversations are now priced correctly
+Sonnet 5.5 and Haiku 5.5 support
+UI fixes and improvements
