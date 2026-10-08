@@ -411,10 +411,7 @@ class LengthUI {
 
 			if (costPerMessageDollars > 0) {
 				const remainingDollars = usageData.getExtraUsageRemaining() / 100;
-				const messagesLeft = remainingDollars / costPerMessageDollars;
-				const estimateValue = messagesLeft.toFixed(1);
-				const color = parseFloat(estimateValue) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
-				estimate.innerHTML = `${msgPrefix} <span style="color: ${color}">${estimateValue}</span>`;
+				estimate.innerHTML = `${msgPrefix} ${this.messagesLeftHTML(remainingDollars / costPerMessageDollars)}`;
 				return;
 			}
 		}
@@ -422,13 +419,19 @@ class LengthUI {
 		// Regular limits estimate — skipped for a credit-funded model, whose messages don't draw
 		// on the plan limits at all, so falling back to them would report a plausible but wrong number.
 		if (!usageData.isModelCreditFunded(currentModel) && limiting && limiting.messagesLeft > 0) {
-			const estimateValue = limiting.messagesLeft.toFixed(1);
-			const color = parseFloat(estimateValue) < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
-			estimate.innerHTML = `${msgPrefix} <span style="color: ${color}">${estimateValue}</span>`;
+			estimate.innerHTML = `${msgPrefix} ${this.messagesLeftHTML(limiting.messagesLeft)}`;
 			return;
 		}
 
 		estimate.innerHTML = `${msgPrefix} <span>${localize('common.na')}</span>`;
+	}
+
+	// Whole messages in the user's number format; a decimal only below 10, where it still says
+	// something. Rounded down: a part of a message can't be sent.
+	messagesLeftHTML(messagesLeft) {
+		const shown = messagesLeft < 10 ? Math.floor(messagesLeft * 10) / 10 : Math.floor(messagesLeft);
+		const color = messagesLeft < 15 ? RED_WARNING : BLUE_HIGHLIGHT;
+		return `<span style="color: ${color}">${fmtNum(shown)}</span>`;
 	}
 
 	// ========== MESSAGE HANDLERS ==========
