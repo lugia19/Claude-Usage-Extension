@@ -448,7 +448,9 @@ const TITLE_AREA_STYLE_RESET = {
 	maxWidth: '',
 	alignSelf: '',
 	marginTop: '',
+	marginBottom: '',
 	marginLeft: '',
+	lineHeight: '',
 	paddingLeft: '',
 	paddingRight: '',
 	paddingBottom: '',
@@ -617,11 +619,28 @@ function getPhoneTitleAreaAnchor(titleLine, headerRow) {
 // wrap there (see TITLE_AREA_SINGLE_LINE). When it doesn't fit, `strip` is where it goes instead
 // (see getTitleStripAnchor). LengthUI decides between the two (see mountTitleArea). `strip` is null
 // on a layout without that slot, and the line then stays in the header and truncates.
+// Our title line's height (text-xs).
+const TITLE_LINE_HEIGHT = 16;
+
 function getDesktopTitleAreaAnchor(titleLine, headerRow) {
 	clearMobileTitleAreaOffset(headerRow);
 	titleLine.classList.add('flex-wrap');
 
 	const strip = getTitleStripAnchor(titleLine);
+
+	// Claude Desktop puts the title in the window's title bar, 36px tall (the browser's header is
+	// 48px): too short for the title button's 28px plus our 16, and the centred pair would clip the
+	// title at the top. So our line tucks a little into the button's bottom padding (12px line height
+	// for 12px text, 3px up), and a negative bottom margin keeps most of it out of the centring: the
+	// pair counts as 4px shorter than the bar, which sets the title 2px below the top edge, and our
+	// line hangs a few pixels below the bar (it doesn't clip). Tucking it further up to fit instead
+	// presses the two lines together.
+	const header = titleLine.closest('[data-testid="chat-header"]') ?? titleLine.parentElement;
+	const title = titleLine.querySelector('button');
+	const barHeight = header?.clientHeight ?? 0;
+	const tighten = title && title.offsetHeight + TITLE_LINE_HEIGHT > barHeight
+		? { lineHeight: '12px', marginTop: '-3px', marginBottom: `${barHeight - 4 - (title.offsetHeight + 12 - 3)}px` }
+		: {};
 
 	return {
 		parent: titleLine,
@@ -636,6 +655,7 @@ function getDesktopTitleAreaAnchor(titleLine, headerRow) {
 			// space other header occupants need to see. The basis still stretches it at layout.
 			width: '0',
 			paddingLeft: `${getTitleTextInset(titleLine)}px`,
+			...tighten,
 		},
 		classes: { toggle: { 'text-text-500': true, 'bg-surface-1': false } },
 		strip,
