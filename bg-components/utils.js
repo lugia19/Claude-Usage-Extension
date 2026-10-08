@@ -192,8 +192,9 @@ function fillEstimatedCaps(caps) {
 CONFIG.ESTIMATED_CAPS = fillEstimatedCaps(CONFIG.ESTIMATED_CAPS);
 
 const isElectron = chrome.action === undefined || navigator.userAgent.includes("Electron");
-// Retired keys: the old debug toggles, and the Google Drive / GitHub sync-source token cache.
-browser.storage.local.remove(['force_debug', 'debug_mode_until', 'syncTokens']).catch(() => { });
+// Retired keys: the old debug toggles, the Google Drive / GitHub sync-source token cache, and the
+// file token cache that also held metadata estimates (now fileTokensV2).
+browser.storage.local.remove(['force_debug', 'debug_mode_until', 'syncTokens', 'fileTokens']).catch(() => { });
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 

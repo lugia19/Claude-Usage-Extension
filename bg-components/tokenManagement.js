@@ -50,7 +50,8 @@ class TokenCounter {
 	constructor() {
 		this.tokenizer = GPTTokenizer_o200k_base;
 		this.ESTIMATION_MULTIPLIER = CONFIG.ESTIMATION_MULTIPLIER;
-		this.fileTokenCache = new StoredMap("fileTokens");
+		// API counts only. V2: the old store also held metadata estimates, from an older formula.
+		this.fileTokenCache = new StoredMap("fileTokensV2");
 	}
 
 	// Core text counting - the main workhorse
@@ -127,10 +128,8 @@ class TokenCounter {
 			}
 		}
 
-		// Fallback to estimation using file metadata
-		tokens = this.estimateFileTokens(fileMetadata);
-		await this.fileTokenCache.set(cacheKey, tokens);
-		return tokens;
+		// Fallback to estimation using file metadata (free, so not cached)
+		return this.estimateFileTokens(fileMetadata);
 	}
 
 	// Estimate file tokens based on type
