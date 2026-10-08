@@ -14,22 +14,28 @@ const SANDBOX_TOOLS = new Set(["prepare_session", "Bash", "Read", "Write", "Edit
 // bigger one stays in /mnt/user-data/uploads with only its path in context.
 const WORKSPACE_ATTACHMENT_MAX_TOKENS = 25000;
 
-// Text attachments on `trunk` (from `fromIdx` on) the model never had. The tree keeps every
-// attachment's full extracted_content, but once a conversation runs in a workspace
-// (workspace_upgraded) a file can sit in the sandbox instead: the one that forced the upgrade (its
-// reply calls prepare_session) and, after the upgrade, any over the Read cap. Files sent before the
-// upgrade went in inline and stay in context. The upgrade is the earliest reply anywhere in the tree
-// using a sandbox tool: the workspace belongs to the conversation, so it may have happened on a
-// branch that was since retried or edited away.
-function sandboxedAttachments(messages, trunk, fromIdx, workspaceUpgraded) {
+// Files on `trunk` (from `fromIdx` on) the model never had. The tree keeps every text attachment's
+// full extracted_content and every PDF's page count, but once a conversation runs in a workspace
+// (workspace_upgraded) a file can sit in the sandbox instead: the files on the turn that forced the
+// upgrade and, after it, every PDF (only its path reaches the context) and any text attachment over
+// the Read cap. Files sent before the upgrade went in inline and stay in context; images always do.
+//
+// The upgrade is the earliest of, anywhere in the tree (the workspace belongs to the conversation, so
+// it may have happened on a branch since retried or edited away): a reply using a sandbox tool (the
+// turn it forced, if that tool is prepare_session), or a message carrying a "blob" file, one claude.ai
+// can't put in context (a PDF over the page cap, an archive), whose upgrade shows no tool call.
+function sandboxedFiles(messages, trunk, fromIdx, workspaceUpgraded) {
 	const sandboxed = new Set();
 	if (!workspaceUpgraded) return sandboxed;
-	const upgrade = messages
-		.filter(m => m.sender === "assistant" && (m.content ?? []).some(c => c.type === "tool_use" && SANDBOX_TOOLS.has(c.name)))
-		.reduce((first, m) => !first || Date.parse(m.created_at) < Date.parse(first.created_at) ? m : first, null);
+	const usesTool = (m, names) => (m.content ?? []).some(c => c.type === "tool_use" && names.has(c.name));
+	const upgrade = messages.flatMap(m => {
+		if (m.sender === "assistant" && usesTool(m, SANDBOX_TOOLS))
+			return [{ at: Date.parse(m.created_at), forcedTurn: usesTool(m, new Set(["prepare_session"])) ? m.parent_message_uuid : null }];
+		if (m.sender === "human" && (m.files ?? []).some(f => f.file_kind === "blob"))
+			return [{ at: Date.parse(m.created_at), forcedTurn: m.uuid }];
+		return [];
+	}).reduce((first, u) => !first || u.at < first.at ? u : first, null);
 	if (!upgrade) return sandboxed;
-	const upgradeAt = Date.parse(upgrade.created_at);
-	const forced = upgrade.content.some(c => c.type === "tool_use" && c.name === "prepare_session");
 	// A token is at least one UTF-8 byte, so a file under the cap in bytes is under it in tokens and
 	// skips the tokenizer.
 	const overCap = text => new TextEncoder().encode(text).length * CONFIG.ESTIMATION_MULTIPLIER > WORKSPACE_ATTACHMENT_MAX_TOKENS &&
@@ -37,11 +43,13 @@ function sandboxedAttachments(messages, trunk, fromIdx, workspaceUpgraded) {
 	for (let i = fromIdx; i < trunk.length; i++) {
 		const message = trunk[i];
 		if (message.sender !== "human") continue;
-		const forcedHere = forced && message.uuid === upgrade.parent_message_uuid;
-		const afterUpgrade = Date.parse(message.created_at) > upgradeAt;
-		if (!forcedHere && !afterUpgrade) continue;
+		const forcedHere = message.uuid === upgrade.forcedTurn;
+		if (!forcedHere && !(Date.parse(message.created_at) > upgrade.at)) continue;
 		for (const attachment of message.attachments ?? []) {
 			if (attachment.extracted_content && (forcedHere || overCap(attachment.extracted_content))) sandboxed.add(attachment);
+		}
+		for (const file of message.files ?? []) {
+			if (file.file_kind === "document") sandboxed.add(file);
 		}
 	}
 	return sandboxed;
@@ -535,8 +543,12 @@ class MessageAPI {
 		}
 	}
 
-	async getFileTokens() {
-		const filePromises = (this.data.files_v2 || []).map(async (file) => {
+	// `includeFile` picks the files that were in context (all, by default). Only images and documents
+	// can be: anything else ("blob") stays in the workspace.
+	async getFileTokens(includeFile = () => true) {
+		const inContext = (this.data.files || [])
+			.filter(file => (file.file_kind === "image" || file.file_kind === "document") && includeFile(file));
+		const filePromises = inContext.map(async (file) => {
 			const tokenCountingAPIKey = await tokenCounter.getApiKey();
 			if (tokenCountingAPIKey) {
 				try {
@@ -951,7 +963,7 @@ class ConversationAPI {
 			uncachedFutureCostTokens += outputTokens;
 		}
 
-		const sandboxed = sandboxedAttachments(conversationData.chat_messages, currentTrunk, compactionIdx + 1, conversationData.workspace_upgraded);
+		const sandboxed = sandboxedFiles(conversationData.chat_messages, currentTrunk, compactionIdx + 1, conversationData.workspace_upgraded);
 
 		for (let i = compactionIdx + 1; i < currentTrunk.length; i++) {
 			const rawMessageData = currentTrunk[i];
@@ -964,7 +976,7 @@ class ConversationAPI {
 				);
 			}
 
-			const fileTokens = await message.getFileTokens();
+			const fileTokens = await message.getFileTokens(file => !sandboxed.has(file));
 
 			const isCachedNext = cacheIsActiveNext;
 

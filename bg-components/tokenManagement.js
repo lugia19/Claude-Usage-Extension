@@ -140,7 +140,8 @@ class TokenCounter {
 			const height = fileMetadata.preview_asset.image_height;
 			return Math.min(1600, Math.ceil((width * height) / 750));
 		} else if (fileMetadata.file_kind === "document") {
-			return 2250 * fileMetadata.document_asset.page_count;
+			// claude.ai's own figure (a flat 1,570 per page, 2026-10).
+			return fileMetadata.document_asset.token_count ?? 2250 * fileMetadata.document_asset.page_count;
 		}
 		return 0;
 	}
