@@ -18,22 +18,30 @@ const WORKSPACE_ATTACHMENT_MAX_TOKENS = 25000;
 // attachment's full extracted_content, but once a conversation runs in a workspace
 // (workspace_upgraded) a file can sit in the sandbox instead: the one that forced the upgrade (its
 // reply calls prepare_session) and, after the upgrade, any over the Read cap. Files sent before the
-// upgrade went in inline and stay in context. The upgrade is the first reply using a sandbox tool.
-function sandboxedAttachments(trunk, fromIdx, workspaceUpgraded) {
-	const sandboxTool = m => m.sender === "assistant" &&
-		(m.content ?? []).find(c => c.type === "tool_use" && SANDBOX_TOOLS.has(c.name));
-	const upgradeIdx = workspaceUpgraded ? trunk.findIndex(sandboxTool) : -1;
-	if (upgradeIdx < 0) return new Set();
-	const forced = trunk[upgradeIdx].content.some(c => c.type === "tool_use" && c.name === "prepare_session");
-	// Under the cap in characters is under it in tokens too, so only longer files get tokenized.
-	const overCap = text => text.length > WORKSPACE_ATTACHMENT_MAX_TOKENS &&
-		tokenCounter.countTextLocal(text) > WORKSPACE_ATTACHMENT_MAX_TOKENS;
+// upgrade went in inline and stay in context. The upgrade is the earliest reply anywhere in the tree
+// using a sandbox tool: the workspace belongs to the conversation, so it may have happened on a
+// branch that was since retried or edited away.
+function sandboxedAttachments(messages, trunk, fromIdx, workspaceUpgraded) {
 	const sandboxed = new Set();
-	for (let i = Math.max(fromIdx, upgradeIdx - 1); i < trunk.length; i++) {
-		if (trunk[i].sender !== "human") continue;
-		for (const attachment of trunk[i].attachments ?? []) {
-			if (!attachment.extracted_content) continue;
-			if (i < upgradeIdx ? forced : overCap(attachment.extracted_content)) sandboxed.add(attachment);
+	if (!workspaceUpgraded) return sandboxed;
+	const upgrade = messages
+		.filter(m => m.sender === "assistant" && (m.content ?? []).some(c => c.type === "tool_use" && SANDBOX_TOOLS.has(c.name)))
+		.reduce((first, m) => !first || Date.parse(m.created_at) < Date.parse(first.created_at) ? m : first, null);
+	if (!upgrade) return sandboxed;
+	const upgradeAt = Date.parse(upgrade.created_at);
+	const forced = upgrade.content.some(c => c.type === "tool_use" && c.name === "prepare_session");
+	// A token is at least one UTF-8 byte, so a file under the cap in bytes is under it in tokens and
+	// skips the tokenizer.
+	const overCap = text => new TextEncoder().encode(text).length * CONFIG.ESTIMATION_MULTIPLIER > WORKSPACE_ATTACHMENT_MAX_TOKENS &&
+		tokenCounter.countTextLocal(text) > WORKSPACE_ATTACHMENT_MAX_TOKENS;
+	for (let i = fromIdx; i < trunk.length; i++) {
+		const message = trunk[i];
+		if (message.sender !== "human") continue;
+		const forcedHere = forced && message.uuid === upgrade.parent_message_uuid;
+		const afterUpgrade = Date.parse(message.created_at) > upgradeAt;
+		if (!forcedHere && !afterUpgrade) continue;
+		for (const attachment of message.attachments ?? []) {
+			if (attachment.extracted_content && (forcedHere || overCap(attachment.extracted_content))) sandboxed.add(attachment);
 		}
 	}
 	return sandboxed;
@@ -943,7 +951,7 @@ class ConversationAPI {
 			uncachedFutureCostTokens += outputTokens;
 		}
 
-		const sandboxed = sandboxedAttachments(currentTrunk, compactionIdx + 1, conversationData.workspace_upgraded);
+		const sandboxed = sandboxedAttachments(conversationData.chat_messages, currentTrunk, compactionIdx + 1, conversationData.workspace_upgraded);
 
 		for (let i = compactionIdx + 1; i < currentTrunk.length; i++) {
 			const rawMessageData = currentTrunk[i];
