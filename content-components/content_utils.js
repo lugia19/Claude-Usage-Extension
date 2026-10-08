@@ -450,6 +450,7 @@ const TITLE_AREA_STYLE_RESET = {
 	marginTop: '',
 	marginBottom: '',
 	marginLeft: '',
+	left: '',
 	lineHeight: '',
 	paddingLeft: '',
 	paddingRight: '',
@@ -541,57 +542,56 @@ function getTitleTextInset(titleLine) {
 	return Math.max(0, Math.round(btnRect.left + padding - wrapperLeft));
 }
 
-// The strip: the normal-flow slot directly under claude.ai's header (after
-// .dframe-below-header-banner), which has the whole column's width. Null on a layout without that
-// slot. Used on desktop when the line doesn't fit in the header, and always on phones.
+// The strip: a band directly under claude.ai's header, the whole column wide. Used on desktop when
+// the line doesn't fit in the header, and always on phones. It used to be the normal-flow slot after
+// .dframe-below-header-banner, which claude.ai has since dropped (2026-10), so the line now hangs
+// from the header itself: its last child, positioned just below it. The header is absolute over the
+// message list, which starts below it, so nothing in the flow moves. Null without a header.
 function getTitleStripAnchor(titleLine) {
 	const header = titleLine.closest('.dframe-header');
-	const banner = header?.parentElement?.querySelector(':scope > .dframe-below-header-banner');
-	if (!banner) return null;
+	if (!header) return null;
 
-	// Line up with the title's glyphs, measured against the strip's own left edge.
+	// Line up with the title's glyphs, measured against the header's left edge.
 	const btn = titleLine.querySelector('button');
 	const btnRect = btn?.getBoundingClientRect();
-	const stripLeft = banner.parentElement.getBoundingClientRect().left;
+	const column = header.getBoundingClientRect();
 	const inset = btnRect?.width
-		? Math.max(0, Math.round(btnRect.left + (parseFloat(getComputedStyle(btn).paddingLeft) || 0) - stripLeft))
+		? Math.max(0, Math.round(btnRect.left + (parseFloat(getComputedStyle(btn).paddingLeft) || 0) - column.left))
 		: parseFloat(getComputedStyle(header).paddingLeft) || 0;
 
-	// The strip is above everything in the header (see alignSelf below), so it must end before
-	// anything the header hangs down into this band - Claude QoL's phone buttons do, at the right
-	// edge. Shrinking to the text isn't enough on its own: a long line (German, with the cache timer)
-	// fills the column. Found by geometry rather than by class name: a header descendant that
-	// reaches below the header, sits right of where our text starts, and is narrower than the column
-	// (which rules out the header's full-width gradient backdrop).
-	const column = banner.parentElement.getBoundingClientRect();
-	const bandTop = header.getBoundingClientRect().bottom;
+	// The strip must end before anything else the header hangs down into this band - Claude QoL's
+	// phone buttons do, at the right edge. Shrinking to the text isn't enough on its own: a long line
+	// (German, with the cache timer) fills the column. Found by geometry rather than by class name: a
+	// header descendant that reaches below the header, sits right of where our text starts, and is
+	// narrower than the column (which rules out the header's full-width gradient backdrop). Our own
+	// line is a header descendant too, so it's skipped.
+	const bandTop = column.bottom;
 	const BAND_HEIGHT = 32;
 	let freeRight = column.right;
 	for (const el of header.querySelectorAll('*')) {
+		if (el.closest('.ut-title-stats')) continue;
 		const r = el.getBoundingClientRect();
 		if (!r.width || r.bottom <= bandTop + 1 || r.top >= bandTop + BAND_HEIGHT) continue;
-		if (r.left <= stripLeft + inset || r.width >= column.width * 0.6) continue;
+		if (r.left <= column.left + inset || r.width >= column.width * 0.6) continue;
 		freeRight = Math.min(freeRight, r.left);
 	}
-	const maxWidth = freeRight < column.right ? `${Math.max(0, Math.floor(freeRight - stripLeft - 8))}px` : '100%';
+	const maxWidth = freeRight < column.right ? `${Math.max(0, Math.floor(freeRight - column.left - 8))}px` : '100%';
 
 	return {
 		isStrip: true,
-		insertAfter: banner,
+		parent: header,
+		referenceNode: null,
 		styles: {
 			...TITLE_AREA_STYLE_RESET,
 			...TITLE_AREA_SINGLE_LINE,
+			position: 'absolute',
+			top: '100%',
+			left: '0',
 			paddingLeft: `${inset}px`,
-			paddingRight: getComputedStyle(header).paddingRight,
+			paddingRight: '6px',
 			paddingBottom: '4px',
-			// Above the header's gradient backdrop, which reaches down over this slot, and opaque
-			// so the messages scrolling up beneath don't show through the text.
-			position: 'relative',
-			zIndex: '11',
-			// Only as wide as the text. The header is a stacking context (z-10), so being above its
-			// backdrop means being above everything in it - including whatever hangs from it into this
-			// band, like Claude QoL's phone buttons at the right edge. A full-width strip covered them.
-			alignSelf: 'flex-start',
+			// Only as wide as the text (an absolute box shrinks to fit), and opaque so the messages
+			// scrolling up beneath don't show through it.
 			maxWidth,
 		},
 		classes: { toggle: { 'text-text-500': true, 'bg-surface-1': true, 'bg-bg-100': false, '!px-2': false } },
