@@ -87,8 +87,8 @@ const CONFIG = {
 	"PEAK_SESSION_MULTIPLIER": 1.5,
 	"WARNING": {
 		"PERCENT_THRESHOLD": 0.9,
-		"LENGTH": 150000, // total context, system prompt included (see SYSTEM_PROMPT_TOKENS)
-		"COST": 250000
+		"LENGTH": 500000, // total context, system prompt included (see SYSTEM_PROMPT_TOKENS)
+		"COST": 1000000
 	},
 	// The fixed system prompt every conversation carries, in Claude's current (Opus 4.7+) tokenizer,
 	// measured on the merged-experience prompt 2026-10-08 (claude-ext-common scripts/bard/README.md,
