@@ -2,23 +2,13 @@ import { CONFIG, RawLog, StoredMap, getStorageValue, sleep } from './utils.js';
 import { tokenCounter, getTextFromContent } from './tokenManagement.js';
 import { UsageData, ConversationData, modelFamilyFromVersion } from '../shared/dataclasses.js';
 
-const FEATURE_COSTS = {
-	"enabled_artifacts_attachments": 2200,	// DEPRECATED: Analysis tool
-	"preview_feature_uses_artifacts": 8400,	// Artifacts
-	"preview_feature_uses_latex": 200,		// DEPRECATED: LaTeX
-	"enabled_bananagrams": 750,				// Drive search
-	"enabled_sourdough": 900,				// GCal or GMail search (not sure which)
-	"enabled_foccacia": 1350,				// GCal or GMail search (not sure which) - note the API's spelling
-	"enabled_web_search": 10250,			// Web search
-	"citation_info": 450,					// Citation info
-	"enabled_compass": 1000,				// Research tool
-	"profile_preferences": 850,				// Base preferences cost
-	"enabled_turmeric": 2000,				// AI artifacts
-	"enabled_saffron": 4250,				// Memory base cost (actual memory content counted separately)
-	"enabled_saffron_search": 3000,			// Memory search
-	"enabled_melange": 14000,				// Per-file memory system (contents loaded dynamically, not counted)
-	"enabled_monkeys_in_a_barrel": 5300		// Code Interpreter
-};
+// The "Inline visualizations" switch enables the `visualize` MCP server's tools; this is one of
+// them. The id is name-based, the same on every account. An account that never touched the switch
+// has no entry, and is priced without it.
+const VISUALIZE_TOOL = "6f616b42-0ed8-571e-823f-ee4aca6b7ce9:show_widget";
+
+// The fixed system prompt's total (CONFIG.SYSTEM_PROMPT_TOKENS lists it by section).
+const FIXED_PROMPT_TOKENS = Object.values(CONFIG.SYSTEM_PROMPT_TOKENS).reduce((a, b) => a + b, 0);
 
 async function Log(...args) {
 	await RawLog("claude-api", ...args);
@@ -61,10 +51,10 @@ const projectCache = new StoredMap("projectCache");
 const accountSettingsCache = new StoredMap("accountSettings");
 const profileTokensCache = new StoredMap("profileTokens");
 
-// Short — feature flags are user-toggleable, so a stale read visibly misprices the
-// conversation. This only exists to absorb the burst of getInfo() calls per message;
-// background.js's request handler invalidates on an actual settings write.
-const ACCOUNT_SETTINGS_TTL = 5 * 60 * 1000;
+// Feature flags change only when the user flips a switch, and background.js's request handler
+// invalidates on a settings write, so the TTL only covers changes made elsewhere. Not shorter: each
+// refill is the ~850KB bootstrap (see fetchBootstrap).
+const ACCOUNT_SETTINGS_TTL = 30 * 60 * 1000;
 const PROFILE_TOKENS_TTL = 5 * 60 * 1000;
 
 // Last usage the completion stream reported, per org. Not a cache of anything fetchable - on the
@@ -365,31 +355,37 @@ class ClaudeAPI {
 		};
 	}
 
-	// Account-level feature flags. The conversation payload only carries a subset of these
-	// (notably it has no enabled_melange), so it can't be relied on alone for pricing.
-	// Endpoint is account-scoped, not org-scoped - we key the cache by orgId only to keep
-	// multi-account containers separate. Returns null on failure rather than throwing:
-	// the Brave strategy throws when a container has no open tab, and that must not take
-	// down the whole cost computation.
+	// The bootstrap feeds two caches, so one fetch (~850KB) refills both: the org record
+	// (subscription tier) and the account flags pricing reads. Flags come from here rather than
+	// /account because the merged experience's memory switches don't show in /account
+	// (enabled_melange stays null with memory on); the bootstrap has them and a top-level
+	// memory_mode. Only the few flags used are kept: the raw settings carry hundreds of dismissed
+	// banners and per-tool MCP booleans that would bloat storage.local.
+	async fetchBootstrap() {
+		const data = await this.getRequest(`/bootstrap/${this.orgId}/app_start?statsig_hashing_algorithm=djb2`);
+		const org = data.account?.memberships?.find(membership => membership.organization.uuid === this.orgId)?.organization;
+		await subscriptionTiersCache.set(this.orgId, org, 24 * 60 * 60 * 1000);
+		const settings = data.account?.settings;
+		const flags = settings ? {
+			memory: data.memory_mode === "melange",
+			inline_visuals: settings.enabled_mcp_tools?.[VISUALIZE_TOOL] === true,
+			enabled_saffron_search: settings.enabled_saffron_search,
+			enabled_bananagrams: settings.enabled_bananagrams	// Drive search: only marks the length an estimate
+		} : null;
+		if (flags) await accountSettingsCache.set(this.orgId, flags, ACCOUNT_SETTINGS_TTL);
+		await Log("Fetched bootstrap for:", this.orgId, org?.name, flags);
+		return { org, flags };
+	}
+
+	// Account-level feature flags (see fetchBootstrap). The conversation payload only carries a
+	// subset of these, so it can't be relied on alone for pricing. Returns null on failure rather
+	// than throwing: the Brave strategy throws when a container has no open tab, and that must not
+	// take down the whole cost computation.
 	async getAccountSettings() {
 		try {
 			const cached = await accountSettingsCache.get(this.orgId);
 			if (cached && typeof cached === 'object') return cached;
-
-			const accountData = await this.getRequest('/account');
-			const settings = accountData?.settings;
-			if (!settings) return null;
-
-			// Keep only what we price. The raw payload carries hundreds of dismissed banners
-			// and per-tool MCP booleans - persisting all of it would bloat storage.local.
-			const flags = {};
-			for (const key of Object.keys(FEATURE_COSTS)) {
-				if (key in settings) flags[key] = settings[key];
-			}
-
-			await Log("Fetched account settings for:", this.orgId, flags);
-			await accountSettingsCache.set(this.orgId, flags, ACCOUNT_SETTINGS_TTL);
-			return flags;
+			return (await this.fetchBootstrap()).flags;
 		} catch (error) {
 			await Log("error", "Failed to fetch account settings:", error);
 			return null;
@@ -412,7 +408,7 @@ class ClaudeAPI {
 		const profileData = await this.getRequest('/account_profile');
 		let totalTokens = 0;
 		if (profileData.conversation_preferences) {
-			totalTokens = await tokenCounter.countText(profileData.conversation_preferences) + FEATURE_COSTS["profile_preferences"];
+			totalTokens = await tokenCounter.countText(profileData.conversation_preferences) + CONFIG.PREFERENCES_SECTION_TOKENS;
 		}
 		await Log(`Profile tokens: ${totalTokens}`);
 		await profileTokensCache.set(this.orgId, totalTokens, PROFILE_TOKENS_TTL);
@@ -423,13 +419,7 @@ class ClaudeAPI {
 		try {
 			const cached = await subscriptionTiersCache.get(this.orgId);
 			if (cached && !skipCache && typeof cached === 'object' && cached.capabilities) return cached;
-			const appStartData = await this.getRequest(`/bootstrap/${this.orgId}/app_start?statsig_hashing_algorithm=djb2`);
-			const memberships = appStartData.account?.memberships || [];
-			const org = memberships.find(membership => membership.organization.uuid === this.orgId)?.organization;
-
-			await Log("Fetched org info for:", this.orgId, org?.name);
-			await subscriptionTiersCache.set(this.orgId, org, 24 * 60 * 60 * 1000);
-			return org;
+			return (await this.fetchBootstrap()).org;
 		} catch (error) {
 			await Log("error", "Failed to fetch org info:", error);
 			return null;
@@ -823,12 +813,7 @@ class ConversationAPI {
 	// one thing: where the cache boundary sits once the just-sent message is allowed to hold an
 	// anchor. getCachingInfo now returns both boundaries from one analysis, so the walk below
 	// accumulates the "now" and "next" figures side by side instead.
-	//
-	// `toolTokens` is the already-counted size of the tool definitions the request carried, taken
-	// from pendingRequests. Counted at request time rather than here so the definitions themselves
-	// never have to be stored - see onBeforeRequestHandler. Callers only reading a conversation
-	// pass nothing.
-	async getInfo(isNewMessage, { toolTokens = 0 } = {}) {
+	async getInfo(isNewMessage) {
 		await Log("API: Requesting information for conversation:", this.conversationId);
 		const conversationData = await this.getData(true);
 		const cachingInfo = await this.getCachingInfo(isNewMessage);
@@ -836,9 +821,9 @@ class ConversationAPI {
 			// Something is VERY wrong if we can't get caching info - return base prompt cost as fallback
 			return new ConversationData({
 				conversationId: this.conversationId,
-				length: CONFIG.BASE_SYSTEM_PROMPT_LENGTH,
-				cost: CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER,
-				futureCost: CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER,
+				length: FIXED_PROMPT_TOKENS,
+				cost: FIXED_PROMPT_TOKENS * CONFIG.CACHING_MULTIPLIER,
+				futureCost: FIXED_PROMPT_TOKENS * CONFIG.CACHING_MULTIPLIER,
 				model: undefined,
 				costUsedCache: false,
 				conversationIsCachedUntil: null,
@@ -857,40 +842,30 @@ class ConversationAPI {
 		// message, `next` prices the one after it. They differ only in where the boundary sits.
 		let cacheIsActive = now.conversationIsCached;
 		let cacheIsActiveNext = next.conversationIsCached;
-		let lengthTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH;
-		let costTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER;
-		let futureCostTokens = CONFIG.BASE_SYSTEM_PROMPT_LENGTH * CONFIG.CACHING_MULTIPLIER;
+		let lengthTokens = FIXED_PROMPT_TOKENS;
+		let costTokens = FIXED_PROMPT_TOKENS * CONFIG.CACHING_MULTIPLIER;
+		let futureCostTokens = FIXED_PROMPT_TOKENS * CONFIG.CACHING_MULTIPLIER;
 
-		// Whether a flag appears in the conversation's own settings determines how it behaves,
-		// so this spread order handles both classes without special-casing:
-		//   - present (artifacts, code execution, turmeric): frozen at creation. A feature off
-		//     when the chat was created can't be enabled in it later, so the snapshot wins.
-		//   - absent (melange, bananagrams, sourdough, foccacia, compass): no snapshot exists,
-		//     so they track the account profile live and change mid-conversation.
-		// Verified empirically - don't "simplify" by picking one source.
+		// The conversation's own settings win over the account's: a flag snapshotted into the
+		// conversation (code execution, artifacts) is frozen at creation, while one it doesn't carry
+		// follows the account live. The flags pricing reads (memory, inline_visuals, chat search,
+		// Drive) never appear in a conversation's settings, so in practice they follow the account.
 		const accountSettings = await this.api.getAccountSettings();
 		const effectiveSettings = {
 			...(accountSettings || {}),
 			...(conversationData.settings || {})
 		};
 
-		// Add settings costs
-		// One line, not one per setting: logging is always on, and ~25 lines per conversation load
-		// would crowd everything else out of the capped log.
+		// The parts of the system prompt a setting switches on (prompt sections plus their tools),
+		// static and in the cached prefix like the rest of it. One log line, not one per setting:
+		// logging is always on and the log is capped.
 		await Log("Enabled settings:", Object.keys(effectiveSettings).filter(key => effectiveSettings[key]).join(', '));
-		for (const [setting, enabled] of Object.entries(effectiveSettings)) {
-			if (enabled && FEATURE_COSTS[setting]) {
-				lengthTokens += FEATURE_COSTS[setting];
-				costTokens += FEATURE_COSTS[setting] * CONFIG.CACHING_MULTIPLIER;
-				futureCostTokens += FEATURE_COSTS[setting] * CONFIG.CACHING_MULTIPLIER;
-			}
-		}
-
-		if (effectiveSettings.enabled_web_search || effectiveSettings.enabled_bananagrams) {
-			lengthTokens += FEATURE_COSTS["citation_info"];
-			costTokens += FEATURE_COSTS["citation_info"] * CONFIG.CACHING_MULTIPLIER;
-			futureCostTokens += FEATURE_COSTS["citation_info"] * CONFIG.CACHING_MULTIPLIER;
-		}
+		const featureTokens = Object.entries(CONFIG.FEATURE_PROMPT_TOKENS)
+			.filter(([setting]) => effectiveSettings[setting])
+			.reduce((sum, [, tokens]) => sum + tokens, 0);
+		lengthTokens += featureTokens;
+		costTokens += featureTokens * CONFIG.CACHING_MULTIPLIER;
+		futureCostTokens += featureTokens * CONFIG.CACHING_MULTIPLIER;
 
 		let uncachedCostTokens = costTokens; // Same — system prompts are always platform-cached
 		let uncachedFutureCostTokens = costTokens;
@@ -1026,10 +1001,9 @@ class ConversationAPI {
 
 		// Determine if length is an estimate (features that add unknown tokens)
 		const lengthIsEstimate = !!(
-			effectiveSettings.enabled_monkeys_in_a_barrel ||  // Code execution
 			hasWebSearchResult ||                            // Web search result in history
 			effectiveSettings.enabled_bananagrams ||         // Drive search
-			effectiveSettings.enabled_melange ||             // Memory (files loaded dynamically)
+			effectiveSettings.memory ||                      // Memory (its files aren't counted)
 			projectStats?.use_project_knowledge_search ||    // Project retrieval
 			(compactionIdx >= 0 && !currentTrunk[compactionIdx].compaction_summary?.length) // Merged compaction summary (a constant)
 		);
@@ -1053,26 +1027,13 @@ class ConversationAPI {
 		// different cost depending on how you arrived at it.
 		const profileTokens = await this.api.getProfileTokens();
 		lengthTokens += profileTokens;
-		// Preferences sit in the system-prompt prefix, right next to BASE_SYSTEM_PROMPT_LENGTH, which
+		// Preferences sit in the system-prompt prefix, right next to the fixed prompt, which
 		// this function already prices at CACHING_MULTIPLIER. Once anything is cached they are too,
 		// and by the next message they always are.
 		costTokens += conversationIsCached ? profileTokens * CONFIG.CACHING_MULTIPLIER : profileTokens;
 		futureCostTokens += profileTokens * CONFIG.CACHING_MULTIPLIER;
 		uncachedCostTokens += profileTokens; // the "no cache at all" figure — always full price
 		uncachedFutureCostTokens += profileTokens;
-
-		// Tool definitions are appended to the CURRENT prompt rather than sitting in the cached
-		// prefix, so they are re-sent uncached with every single request. Full price everywhere,
-		// now and next, and no caching multiplier applies.
-		if (toolTokens) {
-			// Deliberately NOT added to lengthTokens: length describes the conversation, and tool
-			// definitions are a property of the request, not of the thread. Matches the old
-			// processResponse, which added only profileTokens to length.
-			costTokens += toolTokens;
-			futureCostTokens += toolTokens;
-			uncachedCostTokens += toolTokens;
-			uncachedFutureCostTokens += toolTokens;
-		}
 
 		// Step 12: Future cost — straight out of the same walk now, no second pass.
 		const futureCost = Math.round(futureCostTokens);
