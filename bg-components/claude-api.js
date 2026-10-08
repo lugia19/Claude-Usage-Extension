@@ -7,6 +7,54 @@ import { UsageData, ConversationData, modelFamilyFromVersion } from '../shared/d
 // has no entry, and is priced without it.
 const VISUALIZE_TOOL = "6f616b42-0ed8-571e-823f-ee4aca6b7ce9:show_widget";
 
+// Tools that run in the conversation's workspace (sandbox): the first one on the trunk marks where it
+// was upgraded to a workspace. prepare_session is the upgrade a file too big for the context forces.
+const SANDBOX_TOOLS = new Set(["prepare_session", "Bash", "Read", "Write", "Edit", "Glob", "Grep", "NotebookEdit"]);
+// In a workspace, an attached text file is read into context only up to Claude Code's Read cap; a
+// bigger one stays in /mnt/user-data/uploads with only its path in context.
+const WORKSPACE_ATTACHMENT_MAX_TOKENS = 25000;
+
+// Files on `trunk` (from `fromIdx` on) the model never had. The tree keeps every text attachment's
+// full extracted_content and every PDF's page count, but once a conversation runs in a workspace
+// (workspace_upgraded) a file can sit in the sandbox instead: the files on the turn that forced the
+// upgrade and, after it, every PDF or blob (only its path reaches the context) and any text attachment over
+// the Read cap. Files sent before the upgrade went in inline and stay in context; images always do.
+//
+// The upgrade is the earliest of, anywhere in the tree (the workspace belongs to the conversation, so
+// it may have happened on a branch since retried or edited away): a reply using a sandbox tool (the
+// turn it forced, if that tool is prepare_session), or a message carrying a "blob" file, one claude.ai
+// can't put in context (a PDF over the page cap, an archive), whose upgrade shows no tool call.
+function sandboxedFiles(messages, trunk, fromIdx, workspaceUpgraded) {
+	const sandboxed = new Set();
+	if (!workspaceUpgraded) return sandboxed;
+	const usesTool = (m, names) => (m.content ?? []).some(c => c.type === "tool_use" && names.has(c.name));
+	const upgrade = messages.flatMap(m => {
+		if (m.sender === "assistant" && usesTool(m, SANDBOX_TOOLS))
+			return [{ at: Date.parse(m.created_at), forcedTurn: usesTool(m, new Set(["prepare_session"])) ? m.parent_message_uuid : null }];
+		if (m.sender === "human" && (m.files ?? []).some(f => f.file_kind === "blob"))
+			return [{ at: Date.parse(m.created_at), forcedTurn: m.uuid }];
+		return [];
+	}).reduce((first, u) => !first || u.at < first.at ? u : first, null);
+	if (!upgrade) return sandboxed;
+	// A token is at least one UTF-8 byte, so a file under the cap in bytes is under it in tokens and
+	// skips the tokenizer.
+	const overCap = text => new TextEncoder().encode(text).length * CONFIG.ESTIMATION_MULTIPLIER > WORKSPACE_ATTACHMENT_MAX_TOKENS &&
+		tokenCounter.countTextLocal(text) > WORKSPACE_ATTACHMENT_MAX_TOKENS;
+	for (let i = fromIdx; i < trunk.length; i++) {
+		const message = trunk[i];
+		if (message.sender !== "human") continue;
+		const forcedHere = message.uuid === upgrade.forcedTurn;
+		if (!forcedHere && !(Date.parse(message.created_at) > upgrade.at)) continue;
+		for (const attachment of message.attachments ?? []) {
+			if (attachment.extracted_content && (forcedHere || overCap(attachment.extracted_content))) sandboxed.add(attachment);
+		}
+		for (const file of message.files ?? []) {
+			if (file.file_kind === "document" || file.file_kind === "blob") sandboxed.add(file);
+		}
+	}
+	return sandboxed;
+}
+
 // The fixed system prompt's total (CONFIG.SYSTEM_PROMPT_TOKENS lists it by section).
 const FIXED_PROMPT_TOKENS = Object.values(CONFIG.SYSTEM_PROMPT_TOKENS).reduce((a, b) => a + b, 0);
 
@@ -495,8 +543,12 @@ class MessageAPI {
 		}
 	}
 
-	async getFileTokens() {
-		const filePromises = (this.data.files_v2 || []).map(async (file) => {
+	// `includeFile` picks the files that were in context (all, by default). Only images and documents
+	// can be: anything else ("blob") stays in the workspace.
+	async getFileTokens(includeFile = () => true) {
+		const inContext = (this.data.files || [])
+			.filter(file => (file.file_kind === "image" || file.file_kind === "document") && includeFile(file));
+		const filePromises = inContext.map(async (file) => {
 			const tokenCountingAPIKey = await tokenCounter.getApiKey();
 			if (tokenCountingAPIKey) {
 				try {
@@ -528,7 +580,8 @@ class MessageAPI {
 	// Get text content (Not tokens, so it can be done all in one call later). asOutput picks the
 	// view - see getTextFromContent: context for the message's share of later prompts, output for
 	// what the model generated.
-	async getTextContent(asOutput = false) {
+	// `includeAttachment` picks the text attachments that were in context (all, by default).
+	async getTextContent(asOutput = false, includeAttachment = () => true) {
 		let messageContent = [];
 
 		// Process content array
@@ -538,7 +591,7 @@ class MessageAPI {
 
 		// Process attachments
 		for (const attachment of this.data.attachments || []) {
-			if (attachment.extracted_content) {
+			if (attachment.extracted_content && includeAttachment(attachment)) {
 				messageContent.push(attachment.extracted_content);
 			}
 		}
@@ -910,6 +963,8 @@ class ConversationAPI {
 			uncachedFutureCostTokens += outputTokens;
 		}
 
+		const sandboxed = sandboxedFiles(conversationData.chat_messages, currentTrunk, compactionIdx + 1, conversationData.workspace_upgraded);
+
 		for (let i = compactionIdx + 1; i < currentTrunk.length; i++) {
 			const rawMessageData = currentTrunk[i];
 			const message = new MessageAPI(rawMessageData, cacheIsActive, this.api);
@@ -921,7 +976,7 @@ class ConversationAPI {
 				);
 			}
 
-			const fileTokens = await message.getFileTokens();
+			const fileTokens = await message.getFileTokens(file => !sandboxed.has(file));
 
 			const isCachedNext = cacheIsActiveNext;
 
@@ -932,7 +987,7 @@ class ConversationAPI {
 			uncachedFutureCostTokens += fileTokens;
 
 			// Text content
-			const textContent = await message.getTextContent(false);
+			const textContent = await message.getTextContent(false, attachment => !sandboxed.has(attachment));
 
 			if (message.sender === "human") {
 				humanMessageData.push({ content: textContent, isCachedNow: message.isCached, isCachedNext });
@@ -1011,6 +1066,7 @@ class ConversationAPI {
 			effectiveSettings.enabled_bananagrams ||         // Drive search
 			effectiveSettings.memory ||                      // Memory (its files aren't counted)
 			projectStats?.use_project_knowledge_search ||    // Project retrieval
+			sandboxed.size > 0 ||                            // A file in the sandbox (the model may read parts)
 			(compactionIdx >= 0 && !currentTrunk[compactionIdx].compaction_summary?.length) // Merged compaction summary (a constant)
 		);
 
