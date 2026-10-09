@@ -85,16 +85,23 @@ class ContainerStrategy {
 		return [...byOrg.values()];
 	}
 
-	apiFor(ctx, orgId) {
-		return new ClaudeAPI(orgId, (url, options) => this.fetch(ctx, url, options));
+	// A fetch made by a claude.ai tab's content script, as that page, rather than by the background:
+	// for the endpoints that refuse the extension's origin (the CCR session API). The same on every
+	// platform, since the tab is already in the right account and container. Null without a tab.
+	pageFetchFor(tabId) {
+		return tabId != null && tabId >= 0 ? (url, options) => proxyFetchViaTab(tabId, url, options) : null;
+	}
+
+	apiFor(ctx, orgId, tabId = null) {
+		return new ClaudeAPI(orgId, (url, options) => this.fetch(ctx, url, options), this.pageFetchFor(tabId));
 	}
 
 	apiForTab(tab, orgId) {
-		return this.apiFor(tab ? this.ctxForTab(tab) : null, orgId);
+		return this.apiFor(tab ? this.ctxForTab(tab) : null, orgId, tab?.id);
 	}
 
 	apiForRequest(details, orgId) {
-		return this.apiFor(this.ctxForRequest(details), orgId);
+		return this.apiFor(this.ctxForRequest(details), orgId, details?.tabId);
 	}
 }
 
@@ -154,8 +161,9 @@ class BraveStrategy extends ContainerStrategy {
 	}
 }
 
-// Brave transport: ask the tab's content script to perform the fetch (in its container context) and
-// rebuild a real Response, so every caller (.json()/.text()/.blob()) works unchanged.
+// Ask the tab's content script to perform the fetch (as the page, in its container) and rebuild a real
+// Response, so every caller (.json()/.text()/.blob()) works unchanged. Brave's transport, and every
+// platform's pageFetchFor.
 async function proxyFetchViaTab(tabId, url, options = {}) {
 	const result = await sendTabMessage(tabId, {
 		type: 'proxyFetch',

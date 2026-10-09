@@ -11,7 +11,8 @@
 //   interceptedResponse  once the response's headers are in (onCompletedHandler). The background
 //                        refetches whatever it needs, so the body is never read or waited for.
 //   turnSettled          a merged-experience turn ended on the page's StreamTimeline (onTurnSettled),
-//                        see watchTimeline
+//                        see watchTimeline. On a workspace-upgraded chat it also names the chat's
+//                        Claude Code session, which getInfo asks for the real context size
 // Page scripts can send the same messages; the background only treats them as a cue to refetch from
 // claude.ai itself, so a forged one costs at most an extra refresh.
 //
@@ -35,7 +36,7 @@
 		/\/api\/account\/settings/,
 	];
 	// What onCompletedHandler looks at: the conversation tree GET, a branch switch, and Claude Code
-	// session events.
+	// session events. (Not /v1/code/sessions/: getInfo's context-usage calls aren't reported.)
 	const COMPLETED = [
 		/\/api\/organizations\/[^/]+\/chat_conversations\/[^/]+$/,
 		/\/api\/organizations\/[^/]+\/chat_conversations\/[^/]+\/current_leaf_message_uuid$/,
@@ -120,6 +121,16 @@
 	// reply, in the same frame as the settle.
 	const isDivider = (m) => (m.extras ?? []).some(e => e['@type']?.endsWith('CompactionDivider'));
 
+	// A workspace-upgraded chat runs on a Claude Code session (cse_...), named in the conversation's
+	// WorkspaceUpgradeState extra. Only full snapshots carry it (a stream that resumed mid-turn sends
+	// changes only), so it's kept per conversation across streams. Read from every frame: on the turn
+	// that upgrades the chat, it first shows up mid-stream.
+	const sessionIds = new Map();
+	function noteSession(conversationId, conversation) {
+		const state = (conversation?.extras ?? []).find(e => e['@type']?.endsWith('.WorkspaceUpgradeState'));
+		if (state?.upgraded && state.session_id) sessionIds.set(conversationId, state.session_id);
+	}
+
 	// The stream's MessageLimit in the completion SSE's message_limit shape, the one sse_bridge.js
 	// parses: same window keys and utilization, resets_at in unix seconds, and the only status it
 	// reads under its old name.
@@ -142,6 +153,8 @@
 	// the highest index seen since it started; a stream that resumed mid-turn may never see it (resumes
 	// send changes only), so it can be missing, and the background then uses the tree's leaf. A
 	// compaction divider is skipped: it isn't the turn's reply.
+	//
+	// On a workspace-upgraded chat the settle also carries the session id (see noteSession).
 	//
 	// The same stream carries the turn's message_limit (usually just before the settle, sometimes
 	// mid-turn, never on a stopped turn), which goes to sse_bridge like the completion SSE's.
@@ -170,6 +183,7 @@
 			}
 			const update = event?.update;
 			if (!update) return;
+			noteSession(conversationId, update.conversation);
 			const status = update.conversation?.status;
 			if (BUSY.has(status) && !busy) {
 				busy = true;
@@ -180,7 +194,13 @@
 			}
 			if (ENDED.has(status) && busy) {
 				busy = false;
-				post('turnSettled', { orgId, conversationId, assistantMessageId: assistant?.id ?? null, stopReason: assistant?.stop_reason ?? null });
+				post('turnSettled', {
+					orgId,
+					conversationId,
+					assistantMessageId: assistant?.id ?? null,
+					stopReason: assistant?.stop_reason ?? null,
+					sessionId: sessionIds.get(conversationId) ?? null,
+				});
 			}
 		});
 	}

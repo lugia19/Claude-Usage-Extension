@@ -696,11 +696,17 @@ async function handleMessageFromContent(message, sender) {
 //
 // `api` is passed in rather than derived because the caller is a request handler and has to
 // build it from `details` (the tab the request came from) via the active container strategy.
-async function runAuthoritativePass({ orgId, conversationId, api, tabId, expectedTurn }) {
+//
+// `sessionId`: on a workspace-upgraded chat, the settle also names the chat's Claude Code session,
+// and getInfo reads the real context size from it (once per settled turn: see getContextUsage).
+async function runAuthoritativePass({ orgId, conversationId, api, tabId, expectedTurn, sessionId }) {
 	await Log("Running authoritative pass for", conversationId, expectedTurn !== undefined ? `(stream settle, turn ${expectedTurn})` : '');
 
-	// Fetch current usage limits from endpoint
+	// Fetch current usage limits from endpoint, and send them out before getInfo, which can wait on a
+	// Claude Code session for a few seconds.
 	const usageData = await api.getUsageData();
+	await scheduleResetNotifications(orgId, usageData);
+	await updateAllTabsWithUsage(usageData);
 
 	// Fetch conversation data
 	const conversation = await api.getConversation(conversationId);
@@ -736,7 +742,7 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId, expecte
 	// one-shot side effects (lifetime token counter, usage delta log) fire exactly once.
 	const alreadyCounted = !!pendingRequest?.settled;
 
-	const conversationData = await conversation.getInfo(isNewMessage);
+	const conversationData = await conversation.getInfo(isNewMessage, sessionId);
 
 	if (!conversationData) {
 		await Log("warn", "Could not get conversation data, exiting...");
@@ -777,11 +783,6 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId, expecte
 			{ ...pendingRequest, settled: true });
 	}
 
-	// Schedule notifications for any maxed limits
-	await scheduleResetNotifications(orgId, usageData);
-
-	// Send updates to UI
-	await updateAllTabsWithUsage(usageData);
 	await updateTabWithConversationData(tabId, conversationData);
 
 	await conversationCache.set(conversationId, conversationData.toJSON(), CONVERSATION_CACHE_TTL);
@@ -984,15 +985,15 @@ async function onBeforeRequestHandler(details) {
 // stream reconnect; then the newest turn sent here and not yet priced stands in, so the pass still
 // waits for the tree to show it rather than pricing whatever leaf the first read has.
 async function onTurnSettled(details) {
-	const { orgId, conversationId, assistantMessageId, stopReason } = details;
+	const { orgId, conversationId, assistantMessageId, stopReason, sessionId } = details;
 	if (!orgId || !conversationId) return;
 	let expectedTurn = assistantMessageId || null;
 	if (!expectedTurn) {
 		const unsettled = Object.values(await getPendingBucket(orgId, conversationId)).filter(e => !e.settled);
 		expectedTurn = newestPending(Object.fromEntries(unsettled.map(e => [e.turnUuid, e])))?.turnUuid ?? null;
 	}
-	await Log("Turn settled:", conversationId, assistantMessageId ?? `(no id; newest unsettled send: ${expectedTurn})`, stopReason);
-	triggerAuthoritativePass(details, orgId, conversationId, { expectedTurn });
+	await Log("Turn settled:", conversationId, assistantMessageId ?? `(no id; newest unsettled send: ${expectedTurn})`, stopReason, sessionId ?? '');
+	triggerAuthoritativePass(details, orgId, conversationId, { expectedTurn, sessionId: typeof sessionId === 'string' ? sessionId : null });
 }
 
 async function onCompletedHandler(details) {
