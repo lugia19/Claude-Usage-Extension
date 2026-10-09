@@ -11,7 +11,8 @@
 //   interceptedResponse  once the response's headers are in (onCompletedHandler). The background
 //                        refetches whatever it needs, so the body is never read or waited for.
 //   turnSettled          a merged-experience turn ended on the page's StreamTimeline (onTurnSettled),
-//                        see watchTimeline
+//                        see watchTimeline. On a workspace-upgraded chat it waits for, and carries,
+//                        the session's real context size (see readContextUsage)
 // Page scripts can send the same messages; the background only treats them as a cue to refetch from
 // claude.ai itself, so a forged one costs at most an extra refresh.
 //
@@ -35,7 +36,7 @@
 		/\/api\/account\/settings/,
 	];
 	// What onCompletedHandler looks at: the conversation tree GET, a branch switch, and Claude Code
-	// session events.
+	// session events. (Not /v1/code/sessions/: readContextUsage's own calls aren't reported.)
 	const COMPLETED = [
 		/\/api\/organizations\/[^/]+\/chat_conversations\/[^/]+$/,
 		/\/api\/organizations\/[^/]+\/chat_conversations\/[^/]+\/current_leaf_message_uuid$/,
@@ -120,6 +121,72 @@
 	// reply, in the same frame as the settle.
 	const isDivider = (m) => (m.extras ?? []).some(e => e['@type']?.endsWith('CompactionDivider'));
 
+	// A workspace-upgraded chat runs on a Claude Code session (cse_...), named in the conversation's
+	// WorkspaceUpgradeState extra. Only full snapshots carry it (a stream that resumed mid-turn sends
+	// changes only), so it's kept per conversation across streams. Read from every frame: on the turn
+	// that upgrades the chat, it first shows up mid-stream.
+	const sessionIds = new Map();
+	function noteSession(conversationId, conversation) {
+		const state = (conversation?.extras ?? []).find(e => e['@type']?.endsWith('.WorkspaceUpgradeState'));
+		if (state?.upgraded && state.session_id) sessionIds.set(conversationId, state.session_id);
+	}
+
+	const CONTEXT_USAGE_TIMEOUT_MS = 10000;
+	const CONTEXT_USAGE_POLL_MS = 250;
+
+	// The session's real context size, from Claude Code's own get_context_usage control request, or
+	// null if it can't be had within CONTEXT_USAGE_TIMEOUT_MS. Made from the page because the session
+	// API refuses the extension's origin (the background's POST gets 401 "Credential is invalid"), and
+	// the page is already in the right account and container. The request goes into the session's
+	// event log and the answer is polled from it. Both stay there for good, so this runs once per
+	// settled turn and never on a timer.
+	//
+	// Returns only what the background prices with: totalTokens (the categories that count, and so the
+	// context the next request reads), the fixed prefix (system prompt, tools, skills), and the last
+	// real request's input split (apiUsage). That split covers the context before the turn's final reply,
+	// so it is smaller than totalTokens.
+	async function readContextUsage(orgId, sessionId) {
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), CONTEXT_USAGE_TIMEOUT_MS);
+		const url = `/v1/code/sessions/${encodeURIComponent(sessionId)}/events`;
+		const headers = {
+			'anthropic-version': '2023-06-01',
+			'anthropic-beta': 'ccr-byoc-2025-07-29',
+			'anthropic-client-feature': 'ccr',
+			'x-organization-uuid': orgId,
+		};
+		const requestId = `claude-usage-tracker-${crypto.randomUUID()}`;
+		try {
+			const sent = await prevFetch.call(window, url, {
+				method: 'POST',
+				headers: { ...headers, 'content-type': 'application/json' },
+				body: JSON.stringify({ events: [{ payload: { type: 'control_request', request_id: requestId, request: { subtype: 'get_context_usage' } } }] }),
+				signal: controller.signal,
+			});
+			if (!sent.ok) return null; // 404: no such session, 400: malformed id
+			for (;;) {
+				await new Promise(resolve => setTimeout(resolve, CONTEXT_USAGE_POLL_MS));
+				const page = await prevFetch.call(window, `${url}?limit=10&sort_order=desc`, { headers, signal: controller.signal });
+				if (!page.ok) return null;
+				const reply = (await page.json()).data?.find(e => e.payload?.type === 'control_response' && e.payload.response?.request_id === requestId);
+				if (!reply) continue;
+				const { subtype, response } = reply.payload.response;
+				if (subtype !== 'success' || !response) return null;
+				const used = (name) => response.categories?.find(c => c.name === name && c.kind === 'used')?.tokens ?? 0;
+				const { input_tokens, cache_creation_input_tokens, cache_read_input_tokens } = response.apiUsage ?? {};
+				return {
+					totalTokens: response.totalTokens,
+					systemPromptTokens: used('System prompt') + used('System tools') + used('Skills'),
+					apiUsage: { input_tokens, cache_creation_input_tokens, cache_read_input_tokens },
+				};
+			}
+		} catch (e) {
+			return null; // aborted on the deadline, or a network error
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
 	// The stream's MessageLimit in the completion SSE's message_limit shape, the one sse_bridge.js
 	// parses: same window keys and utilization, resets_at in unix seconds, and the only status it
 	// reads under its old name.
@@ -142,6 +209,10 @@
 	// the highest index seen since it started; a stream that resumed mid-turn may never see it (resumes
 	// send changes only), so it can be missing, and the background then uses the tree's leaf. A
 	// compaction divider is skipped: it isn't the turn's reply.
+	//
+	// On a workspace-upgraded chat the settle waits for the session's real context size (0.6s warm,
+	// ~4s if the container has to wake, null after 10s) and carries it, so the one pass the settle
+	// triggers prices the turn exactly.
 	//
 	// The same stream carries the turn's message_limit (usually just before the settle, sometimes
 	// mid-turn, never on a stopped turn), which goes to sse_bridge like the completion SSE's.
@@ -170,6 +241,7 @@
 			}
 			const update = event?.update;
 			if (!update) return;
+			noteSession(conversationId, update.conversation);
 			const status = update.conversation?.status;
 			if (BUSY.has(status) && !busy) {
 				busy = true;
@@ -180,9 +252,16 @@
 			}
 			if (ENDED.has(status) && busy) {
 				busy = false;
-				post('turnSettled', { orgId, conversationId, assistantMessageId: assistant?.id ?? null, stopReason: assistant?.stop_reason ?? null });
+				settle({ orgId, conversationId, assistantMessageId: assistant?.id ?? null, stopReason: assistant?.stop_reason ?? null });
 			}
 		});
+	}
+
+	// Not awaited by the frame reader: the stream keeps being read while the context size is fetched.
+	async function settle(details) {
+		const sessionId = sessionIds.get(details.conversationId);
+		const contextUsage = sessionId ? await readContextUsage(details.orgId, sessionId) : null;
+		post('turnSettled', { ...details, contextUsage });
 	}
 
 	// Claude-Toolbox patches window.fetch on this same page too. Chain onto whatever is installed

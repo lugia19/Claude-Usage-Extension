@@ -29,7 +29,7 @@ import './i18n/pt-BR.js';
 import './i18n/es.js';
 import './common/i18n/i18n-core.js';
 import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
-import { invalidateAccountSettings, invalidateProfileTokens, storeSseUsage, effectiveLeaf } from './bg-components/claude-api.js';
+import { invalidateAccountSettings, invalidateProfileTokens, storeSseUsage, storeContextUsage, effectiveLeaf } from './bg-components/claude-api.js';
 
 //#region Variable declarations
 let processingLock = null;  // Unix timestamp or null
@@ -696,7 +696,11 @@ async function handleMessageFromContent(message, sender) {
 //
 // `api` is passed in rather than derived because the caller is a request handler and has to
 // build it from `details` (the tab the request came from) via the active container strategy.
-async function runAuthoritativePass({ orgId, conversationId, api, tabId, expectedTurn }) {
+//
+// `contextUsage`: on a workspace-upgraded chat, the settle also carries the real context size the
+// page read from the chat's Claude Code session (null if it couldn't). Stored for the turn it was
+// read on, so this getInfo, and any later one while that turn is the leaf, price with it.
+async function runAuthoritativePass({ orgId, conversationId, api, tabId, expectedTurn, contextUsage }) {
 	await Log("Running authoritative pass for", conversationId, expectedTurn !== undefined ? `(stream settle, turn ${expectedTurn})` : '');
 
 	// Fetch current usage limits from endpoint
@@ -725,6 +729,10 @@ async function runAuthoritativePass({ orgId, conversationId, api, tabId, expecte
 	//
 	// "Leaf" skips a compaction divider, which lands on top of the turn's reply.
 	const turnUuid = effectiveLeaf(tree);
+
+	// Keyed on the settled turn, not the leaf: if the tree hasn't caught up, getInfo doesn't match it
+	// now, and a later read that does see the turn will.
+	if (contextUsage) await storeContextUsage(conversationId, expectedTurn ?? turnUuid, contextUsage);
 
 	// Scoped to this generation rather than "whatever is pending for this conversation", so a
 	// message sent while a previous pass was still running can't have its data read here.
@@ -984,15 +992,16 @@ async function onBeforeRequestHandler(details) {
 // stream reconnect; then the newest turn sent here and not yet priced stands in, so the pass still
 // waits for the tree to show it rather than pricing whatever leaf the first read has.
 async function onTurnSettled(details) {
-	const { orgId, conversationId, assistantMessageId, stopReason } = details;
+	const { orgId, conversationId, assistantMessageId, stopReason, contextUsage } = details;
 	if (!orgId || !conversationId) return;
 	let expectedTurn = assistantMessageId || null;
 	if (!expectedTurn) {
 		const unsettled = Object.values(await getPendingBucket(orgId, conversationId)).filter(e => !e.settled);
 		expectedTurn = newestPending(Object.fromEntries(unsettled.map(e => [e.turnUuid, e])))?.turnUuid ?? null;
 	}
-	await Log("Turn settled:", conversationId, assistantMessageId ?? `(no id; newest unsettled send: ${expectedTurn})`, stopReason);
-	triggerAuthoritativePass(details, orgId, conversationId, { expectedTurn });
+	await Log("Turn settled:", conversationId, assistantMessageId ?? `(no id; newest unsettled send: ${expectedTurn})`, stopReason,
+		contextUsage ? `context ${contextUsage.totalTokens}` : '');
+	triggerAuthoritativePass(details, orgId, conversationId, { expectedTurn, contextUsage });
 }
 
 async function onCompletedHandler(details) {

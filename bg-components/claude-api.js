@@ -76,6 +76,26 @@ export async function invalidateProfileTokens(orgId) {
 	await profileTokensCache.delete(orgId);
 	await Log("Invalidated profile tokens cache for:", orgId);
 }
+
+// A workspace-upgraded chat's real context size, as the page read it from its Claude Code session
+// when `turnUuid` settled (injections/request-hook.js readContextUsage). Called by the authoritative
+// pass; getInfo prices with it while that turn is still the leaf. Checked rather than trusted: page
+// scripts can post the same bridge message.
+export async function storeContextUsage(conversationId, turnUuid, usage) {
+	const count = (n) => Number.isFinite(n) && n >= 0;
+	const { input_tokens, cache_creation_input_tokens, cache_read_input_tokens } = usage?.apiUsage ?? {};
+	if (!conversationId || !turnUuid || !count(usage?.totalTokens) || !count(usage.systemPromptTokens)
+		|| ![input_tokens, cache_creation_input_tokens, cache_read_input_tokens].every(count)) {
+		await Log("warn", "Ignoring malformed context usage for", conversationId, usage);
+		return;
+	}
+	await contextUsageCache.set(conversationId, {
+		turnUuid,
+		totalTokens: usage.totalTokens,
+		systemPromptTokens: usage.systemPromptTokens,
+		apiUsage: { input_tokens, cache_creation_input_tokens, cache_read_input_tokens },
+	}, CONTEXT_USAGE_TTL);
+}
 // A merged-experience compaction divider as the tree shows it: an assistant message with no content
 // whose parent is the turn's reply. (A turn refused as "too long" is also empty, but its parent is
 // the human message.)
@@ -104,6 +124,11 @@ const profileTokensCache = new StoredMap("profileTokens");
 // refill is the ~850KB bootstrap (see fetchBootstrap).
 const ACCOUNT_SETTINGS_TTL = 30 * 60 * 1000;
 const PROFILE_TOKENS_TTL = 5 * 60 * 1000;
+
+// Garbage collection, not freshness: an entry is exact for as long as its turn is the leaf, which is
+// what getInfo checks. One small entry per upgraded conversation.
+const contextUsageCache = new StoredMap("contextUsage");
+const CONTEXT_USAGE_TTL = 7 * 24 * 60 * 60 * 1000;
 
 // Last usage the completion stream reported, per org. Not a cache of anything fetchable - on the
 // free plan it is the only copy that exists, so nothing can refill it but another message.
@@ -956,10 +981,11 @@ class ConversationAPI {
 		// The reply's output, priced even when a compaction has since folded it into the summary.
 		// OUTPUT_TOKEN_MULTIPLIER is the surcharge on top of the reply's 1x in the walk below; a folded
 		// reply isn't walked, so it takes that 1x here.
+		let outputTokens = 0;
 		if (outputIdx >= 0) {
 			const reply = new MessageAPI(currentTrunk[outputIdx], false, this.api);
 			const multiplier = CONFIG.OUTPUT_TOKEN_MULTIPLIER + (outputIdx <= compactionIdx ? 1 : 0);
-			const outputTokens = await tokenCounter.countText(await reply.getTextContent(true)) * multiplier;
+			outputTokens = await tokenCounter.countText(await reply.getTextContent(true)) * multiplier;
 			costTokens += outputTokens;
 			futureCostTokens += outputTokens;
 			uncachedCostTokens += outputTokens;
@@ -1101,6 +1127,25 @@ class ConversationAPI {
 		uncachedCostTokens += profileTokens; // the "no cache at all" figure — always full price
 		uncachedFutureCostTokens += profileTokens;
 
+		// A workspace-upgraded chat's real context size, read from its Claude Code session when the
+		// leaf turn settled (storeContextUsage), replaces the token figures above; the estimate still
+		// supplies the reply's output surcharge, the model and the cache expiry. The last request's
+		// input split (apiUsage) prices this message. The next one reads all of totalTokens, and only
+		// the part the last request didn't send (the final reply, mostly) is new to the cache.
+		const real = await contextUsageCache.get(this.conversationId);
+		const lengthIsExact = !!real && real.turnUuid === currentTrunk[turnIdx]?.uuid;
+		if (lengthIsExact) {
+			const { input_tokens, cache_creation_input_tokens, cache_read_input_tokens } = real.apiUsage;
+			const lastInput = input_tokens + cache_creation_input_tokens + cache_read_input_tokens;
+			await Log(`Context of ${this.conversationId} from its session: ${real.totalTokens} tokens (estimated ${Math.round(lengthTokens)})`);
+			lengthTokens = real.totalTokens;
+			systemPromptTokens = real.systemPromptTokens;
+			costTokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens * CONFIG.CACHING_MULTIPLIER + outputTokens;
+			uncachedCostTokens = lastInput + outputTokens;
+			futureCostTokens = Math.max(real.totalTokens - lastInput, 0) + lastInput * CONFIG.CACHING_MULTIPLIER + outputTokens;
+			uncachedFutureCostTokens = real.totalTokens + outputTokens;
+		}
+
 		// Step 12: Future cost — straight out of the same walk now, no second pass.
 		const futureCost = Math.round(futureCostTokens);
 		const uncachedFutureCost = Math.round(uncachedFutureCostTokens);
@@ -1131,7 +1176,7 @@ class ConversationAPI {
 			projectUuid: conversationData.project_uuid,
 			settings: effectiveSettings,
 			lastMessageTimestamp: lastMessageTimestamp,
-			lengthIsEstimate: lengthIsEstimate,
+			lengthIsEstimate: lengthIsEstimate && !lengthIsExact,
 			orgId: this.api.orgId
 		});
 	}
