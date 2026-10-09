@@ -112,6 +112,9 @@ const CONFIG = {
 		"claude-sonnet-5-5": { chat: 1000000, workspace: [500000, 467000] },
 		"claude-sonnet-5": { chat: 1000000, workspace: [500000, 467000] },
 		"claude-sonnet-4-6": { chat: 500000, workspace: [200000, 167000] },
+		// Out of the picker, so its workspace figure can't be measured: assumed like Opus 4.5 and Haiku
+		// 4.5, the other pre-4.6 models. Still reached by conversations that used it.
+		"claude-sonnet-4-5": { chat: 200000, workspace: [200000, 167000] },
 		"claude-haiku-5-5": { chat: 1000000, workspace: [500000, 467000] },
 		"claude-haiku-4-5": { chat: 200000, workspace: [200000, 167000] },
 	},
