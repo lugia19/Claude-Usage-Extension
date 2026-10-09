@@ -1,4 +1,3 @@
-Total API rework to work with the new merged experience
-Compacted conversations are now priced correctly
-Sonnet 5.5 and Haiku 5.5 support
-UI fixes and improvements
+Chats that Claude moved into a workspace (to run code or work with files) now show their exact length, read from the chat's own session
+New "Max" readout (desktop): the selected model's context window, plus where workspace chats get compacted
+The length warning now kicks in at 75% of the context window, instead of a flat 500K
