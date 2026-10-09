@@ -17,6 +17,7 @@ class LengthUI {
 			currentEffortLabel: null,
 			nextMessageCost: null,
 			cachedUntilTimestamp: null,
+			mobileLayout: null,
 		};
 
 		// Element references
@@ -111,6 +112,7 @@ class LengthUI {
 		container.style.flexBasis = '100%'; // Force onto its own line
 
 		const length = document.createElement('span');
+		const max = document.createElement('span');
 		const cost = document.createElement('span');
 		const cached = document.createElement('span');
 
@@ -137,7 +139,7 @@ class LengthUI {
 			pointerEvents: 'none',
 		});
 
-		return { container, length, cost, cached, claim };
+		return { container, length, max, cost, cached, claim };
 	}
 
 	createStatLineElements() {
@@ -151,9 +153,10 @@ class LengthUI {
 
 	createTooltips() {
 		const { titleArea, statLine } = this.elements;
-		for (const el of [titleArea.length, titleArea.cost, titleArea.cached, statLine.estimate]) el.style.cursor = 'help';
+		for (const el of [titleArea.length, titleArea.max, titleArea.cost, titleArea.cached, statLine.estimate]) el.style.cursor = 'help';
 		return {
 			length: createClaudeTooltip(titleArea.length, localize('length.tooltip_length')),
+			max: createClaudeTooltip(titleArea.max, ''), // its text depends on the chat: see renderCostAndLength
 			cost: createClaudeTooltip(titleArea.cost, localize('length.tooltip_cost')),
 			cached: createClaudeTooltip(titleArea.cached, localize('length.tooltip_cached')),
 			estimate: createClaudeTooltip(statLine.estimate, localize('length.tooltip_estimate')),
@@ -263,18 +266,19 @@ class LengthUI {
 	renderCostAndLength() {
 		const { conversationData, currentModelVersion, currentEffortLabel } = this.state;
 		const currentModel = this.effectiveModel();
-		const { length, cost, cached } = this.elements.titleArea;
+		const { length, max, cost, cached } = this.elements.titleArea;
 
 		if (!conversationData) {
 			length.innerHTML = `${localize('length.label')}: <span>${localize('common.na')}</span> ${localize('common.unit_tokens')}`;
+			max.innerHTML = '';
 			cost.innerHTML = '';
 			cached.innerHTML = '';
 			this.renderTitleContainer();
 			return;
 		}
 
-		// Length
-		const lengthColor = conversationData.isLong() ? RED_WARNING : BLUE_HIGHLIGHT;
+		// Length: red when near the context window the next message gets (isLong).
+		const lengthColor = conversationData.isLong(currentModelVersion) ? RED_WARNING : BLUE_HIGHLIGHT;
 		const lengthLabel = conversationData.lengthIsEstimate ? localize('length.label_estimate') : localize('length.label');
 		length.innerHTML = `${lengthLabel}: <span style="color: ${lengthColor}">${fmtNum(conversationData.length)}</span> ${localize('common.unit_tokens')}`;
 
@@ -282,11 +286,26 @@ class LengthUI {
 		let baseTooltip = localize('length.tooltip_length');
 		if (conversationData.systemPromptTokens) {
 			const tokens = fmtNum(Math.round(conversationData.systemPromptTokens / 1000) * 1000);
-			baseTooltip += ' ' + localize('length.tooltip_system_prompt', { tokens });
+			baseTooltip += '\n' + localize('length.tooltip_system_prompt', { tokens });
 		}
 		this.elements.tooltips.length.updateText(conversationData.lengthIsEstimate
 			? baseTooltip + '\n\n' + localize('length.tooltip_length_note')
 			: baseTooltip);
+
+		// Max: that context window, for the picker's model (desktop only, see renderTitleContainer). It
+		// depends on whether the chat runs in a workspace, and only there is the compaction point known.
+		const contextWindow = conversationData.getContextWindow(currentModelVersion);
+		if (contextWindow) {
+			const tokens = fmtCompactNum(contextWindow.window);
+			max.innerHTML = `${localize('length.max')}: <span style="color: ${BLUE_HIGHLIGHT}">${tokens}</span>`;
+			let maxTooltip = localize(conversationData.workspaceUpgraded ? 'length.tooltip_max_workspace' : 'length.tooltip_max_chat', { tokens });
+			if (contextWindow.compactAt) {
+				maxTooltip += '\n\n' + localize('length.tooltip_compaction', { tokens: fmtCompactNum(contextWindow.compactAt) });
+			}
+			this.elements.tooltips.max.updateText(maxTooltip);
+		} else {
+			max.innerHTML = '';
+		}
 
 		// Cost
 		const weightedCost = conversationData.getWeightedFutureCost(currentModel, currentModelVersion, currentEffortLabel);
@@ -335,14 +354,14 @@ class LengthUI {
 	}
 
 	renderTitleContainer() {
-		const { length, cost, cached, container } = this.elements.titleArea;
+		const { length, max, cost, cached, container } = this.elements.titleArea;
 		container.innerHTML = '';
 
 		let elements;
 		if (isMobileLayout()) {
 			elements = [length, cached].filter(el => el.innerHTML);
 		} else {
-			elements = [length, cost, cached].filter(el => el.innerHTML);
+			elements = [length, max, cost, cached].filter(el => el.innerHTML);
 		}
 
 		const separator = ' | ';
@@ -540,6 +559,13 @@ class LengthUI {
 
 				await this.checkConversationChange();
 				await this.checkModelChange();
+				// Which items the strip shows depends on the layout (renderTitleContainer), so a switch
+				// rebuilds it.
+				const mobileLayout = isMobileLayout();
+				if (mobileLayout !== this.state.mobileLayout) {
+					this.state.mobileLayout = mobileLayout;
+					this.renderTitleContainer();
+				}
 				const cacheExpired = this.renderCachedTime();
 				if (cacheExpired && this.state.conversationData?.conversationId) {
 					// Request fresh data since futureCost needs recalculating without cache
