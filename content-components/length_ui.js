@@ -27,7 +27,6 @@ class LengthUI {
 		};
 
 		// Update loop timing
-		this.lastHighUpdate = 0;
 		this.highUpdateFrequency = 750;
 
 		this.uiReady = false;
@@ -534,12 +533,10 @@ class LengthUI {
 	// ========== UPDATE LOOP ==========
 
 	startUpdateLoop() {
-		const update = async (timestamp) => {
-			if (timestamp - this.lastHighUpdate >= this.highUpdateFrequency) {
-				this.lastHighUpdate = timestamp;
-
-				await this.checkConversationChange();
-				await this.checkModelChange();
+		startFrameLoop('LengthUI', this.highUpdateFrequency, [
+			['checkConversationChange', () => this.checkConversationChange()],
+			['checkModelChange', () => this.checkModelChange()],
+			['renderCachedTime', () => {
 				const cacheExpired = this.renderCachedTime();
 				if (cacheExpired && this.state.conversationData?.conversationId) {
 					// Request fresh data since futureCost needs recalculating without cache
@@ -548,13 +545,10 @@ class LengthUI {
 						conversationId: this.state.conversationData.conversationId
 					});
 				}
-				this.mountTitleArea();
-				this.mountStatLine();
-			}
-
-			requestAnimationFrame(update);
-		};
-		requestAnimationFrame(update);
+			}],
+			['mountTitleArea', () => this.mountTitleArea()],
+			['mountStatLine', () => this.mountStatLine()],
+		]);
 	}
 
 	async checkConversationChange() {

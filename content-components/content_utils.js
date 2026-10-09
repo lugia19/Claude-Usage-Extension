@@ -361,10 +361,14 @@ function getSidebarRegularAnchor() {
 
 	const containerWrapper = sidebarNav.querySelector('.flex.flex-grow.flex-col.overflow-y-auto');
 	const containers = containerWrapper?.querySelectorAll('.flex-1.relative');
-	if (!containers) return null;
+	// A NodeList is truthy even when empty, and so is the wrapper while the sidebar is mid-render (or
+	// once claude.ai renames these classes): indexing it then yields undefined, and the querySelector
+	// below used to throw out of whatever loop was asking for the anchor.
+	const lastContainer = containers?.[containers.length - 1];
+	if (!lastContainer) return null;
 
-	let mainContainer = containers[containers.length - 1].querySelector('.px-2.mt-4');
-	if (!mainContainer) mainContainer = containers[containers.length - 1].querySelector('.px-2.pt-2');
+	let mainContainer = lastContainer.querySelector('.px-2.mt-4');
+	if (!mainContainer) mainContainer = lastContainer.querySelector('.px-2.pt-2');
 	if (!mainContainer) return null;
 
 	const starredSection = mainContainer.querySelector('div.flex.flex-col.mb-4');
@@ -825,6 +829,48 @@ const pageLayouts = {
 	},
 };
 
+// ========== FAILURE REPORTING ==========
+// Everything below runs from loops that tick about once a second for as long as the page is open, so
+// anything they report has to be reported on change, not on every tick.
+
+// A failure is logged when it first appears and again only if its message changes; a success re-arms it.
+const reportedFailures = new Map();
+
+function reportFailureOnce(key, what, error) {
+	const message = String(error?.message ?? error);
+	if (reportedFailures.get(key) === message) return;
+	reportedFailures.set(key, message);
+	Log('error', what, error);
+}
+
+function clearReportedFailure(key) {
+	reportedFailures.delete(key);
+}
+
+// An anchor that stays missing is the one failure with no error attached: the actors report "Ready",
+// every mount quietly returns false, and the UI is just absent. A miss that lasts this long is not
+// the page still rendering, so say so - once, and once more when the anchor comes back.
+const ANCHOR_MISSING_WARN_MS = 5000;
+const anchorWatches = new Map(); // anchorName -> { since, warned }
+
+function watchAnchor(anchorName, layoutName, found) {
+	const watch = anchorWatches.get(anchorName);
+	if (found) {
+		if (watch?.warned) Log(`Anchor "${anchorName}" found again (layout: ${layoutName})`);
+		anchorWatches.delete(anchorName);
+		return;
+	}
+
+	const now = Date.now();
+	const current = watch ?? { since: now, warned: false };
+	anchorWatches.set(anchorName, current);
+	if (current.warned || now - current.since < ANCHOR_MISSING_WARN_MS) return;
+
+	current.warned = true;
+	Log('warn', `Anchor "${anchorName}" not found for ${ANCHOR_MISSING_WARN_MS / 1000}s (layout: ${layoutName ?? 'none matched'}), ` +
+		'so its UI is not mounted. claude.ai\'s markup may have changed.');
+}
+
 const LayoutManager = {
 	detectLayout() {
 		for (const [name, layout] of Object.entries(pageLayouts)) {
@@ -832,13 +878,56 @@ const LayoutManager = {
 		}
 		return null;
 	},
+	// null means "nothing to mount into right now" - including when resolving the anchor threw, which
+	// is a DOM we didn't expect and must not take the caller's loop down with it.
 	getAnchor(anchorName) {
 		const layout = this.detectLayout();
 		const anchorFn = layout?.anchors?.[anchorName];
-		if (!anchorFn) return null;
-		return anchorFn();
+		// A layout with no such anchor (the home page has no title area) is a normal answer, not a miss.
+		if (layout && !anchorFn) return null;
+
+		let anchor = null;
+		if (anchorFn) {
+			try {
+				anchor = anchorFn() ?? null;
+				clearReportedFailure(`anchor:${anchorName}`);
+			} catch (error) {
+				reportFailureOnce(`anchor:${anchorName}`, `Resolving the "${anchorName}" anchor failed (layout: ${layout.name}):`, error);
+			}
+		}
+		watchAnchor(anchorName, layout?.name, !!anchor);
+		return anchor;
 	},
 };
+
+// Drives one UI actor's recurring work for as long as the page lives: mounting its elements,
+// mounting them again when React discards them, refreshing what they show. Runs the steps in order,
+// at most once per `intervalMs`, off requestAnimationFrame - so a hidden tab runs nothing, and the
+// first frame after it is shown catches up at once.
+//
+// Each step is isolated. These loops used to be one function whose rescheduling sat at the bottom, so
+// the first exception from ANY step ended the loop for good: the actor kept logging "Ready" while
+// nothing was ever mounted or updated again, and a step that threw every time (a usage payload it
+// couldn't read) starved the mount calls queued behind it even while the loop lived.
+function startFrameLoop(name, intervalMs, steps) {
+	let lastRun = 0;
+	const frame = async (timestamp) => {
+		if (timestamp - lastRun >= intervalMs) {
+			lastRun = timestamp;
+			for (const [stepName, step] of steps) {
+				const key = `${name}.${stepName}`;
+				try {
+					await step();
+					clearReportedFailure(key);
+				} catch (error) {
+					reportFailureOnce(key, `${key} failed; it will be retried on the next update:`, error);
+				}
+			}
+		}
+		requestAnimationFrame(frame);
+	};
+	requestAnimationFrame(frame);
+}
 
 function mountToAnchor(element, anchor) {
 	let needsInsert;
