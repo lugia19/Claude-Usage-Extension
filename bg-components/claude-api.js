@@ -1020,11 +1020,14 @@ class ConversationAPI {
 		// The reply's output, priced even when a compaction has since folded it into the summary.
 		// OUTPUT_TOKEN_MULTIPLIER is the surcharge on top of the reply's 1x in the walk below; a folded
 		// reply isn't walked, so it takes that 1x here.
-		let outputTokens = 0;
+		// The surcharge alone is kept for a session's exact figures (below), which count the reply's 1x
+		// themselves.
+		let outputSurcharge = 0;
 		if (outputIdx >= 0) {
 			const reply = new MessageAPI(currentTrunk[outputIdx], false, this.api);
-			const multiplier = CONFIG.OUTPUT_TOKEN_MULTIPLIER + (outputIdx <= compactionIdx ? 1 : 0);
-			outputTokens = await tokenCounter.countText(await reply.getTextContent(true)) * multiplier;
+			const replyTokens = await tokenCounter.countText(await reply.getTextContent(true));
+			outputSurcharge = replyTokens * CONFIG.OUTPUT_TOKEN_MULTIPLIER;
+			const outputTokens = outputSurcharge + (outputIdx <= compactionIdx ? replyTokens : 0);
 			costTokens += outputTokens;
 			futureCostTokens += outputTokens;
 			uncachedCostTokens += outputTokens;
@@ -1183,10 +1186,10 @@ class ConversationAPI {
 			await Log(`Context of ${this.conversationId} from its session: ${context} tokens (estimated ${Math.round(lengthTokens)})`);
 			lengthTokens = context;
 			systemPromptTokens = used('System prompt') + used('System tools') + used('Skills');
-			costTokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens * CONFIG.CACHING_MULTIPLIER + output_tokens + outputTokens;
-			uncachedCostTokens = lastInput + output_tokens + outputTokens;
-			futureCostTokens = (context - lastInput) + lastInput * CONFIG.CACHING_MULTIPLIER + outputTokens;
-			uncachedFutureCostTokens = context + outputTokens;
+			costTokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens * CONFIG.CACHING_MULTIPLIER + output_tokens + outputSurcharge;
+			uncachedCostTokens = lastInput + output_tokens + outputSurcharge;
+			futureCostTokens = (context - lastInput) + lastInput * CONFIG.CACHING_MULTIPLIER + outputSurcharge;
+			uncachedFutureCostTokens = context + outputSurcharge;
 		}
 
 		// Step 12: Future cost — straight out of the same walk now, no second pass.
