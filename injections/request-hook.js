@@ -141,10 +141,9 @@
 	// event log and the answer is polled from it. Both stay there for good, so this runs once per
 	// settled turn and never on a timer.
 	//
-	// Returns only what the background prices with: totalTokens (the categories that count, and so the
-	// context the next request reads), the fixed prefix (system prompt, tools, skills), and the last
-	// real request's input split (apiUsage). That split covers the context before the turn's final reply,
-	// so it is smaller than totalTokens.
+	// Returns only what the background prices with: totalTokens (the categories that count), the fixed
+	// prefix (system prompt, tools, skills), and the last real request's usage (apiUsage): its input
+	// split and the reply it produced, which totalTokens doesn't always include yet.
 	async function readContextUsage(orgId, sessionId) {
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), CONTEXT_USAGE_TIMEOUT_MS);
@@ -173,11 +172,11 @@
 				const { subtype, response } = reply.payload.response;
 				if (subtype !== 'success' || !response) return null;
 				const used = (name) => response.categories?.find(c => c.name === name && c.kind === 'used')?.tokens ?? 0;
-				const { input_tokens, cache_creation_input_tokens, cache_read_input_tokens } = response.apiUsage ?? {};
+				const { input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens } = response.apiUsage ?? {};
 				return {
 					totalTokens: response.totalTokens,
 					systemPromptTokens: used('System prompt') + used('System tools') + used('Skills'),
-					apiUsage: { input_tokens, cache_creation_input_tokens, cache_read_input_tokens },
+					apiUsage: { input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens },
 				};
 			}
 		} catch (e) {
