@@ -512,7 +512,7 @@ export class ConversationData {
 	isLong(modelVersionOverride) {
 		const window = this.getContextWindow(modelVersionOverride)?.window;
 		return window
-			? this.length >= window * CONFIG.WARNING_THRESHOLD
+			? this.length >= window * CONFIG.WARNING.LENGTH_FRACTION
 			: this.length >= CONFIG.WARNING.LENGTH;
 	}
 

@@ -87,6 +87,7 @@ const CONFIG = {
 	"PEAK_SESSION_MULTIPLIER": 1.5,
 	"WARNING": {
 		"PERCENT_THRESHOLD": 0.9,
+		"LENGTH_FRACTION": 0.75, // of the next message's context window (CONTEXT_WINDOWS): earlier than the usage bars, so there's room to wrap up
 		"LENGTH": 500000, // total context, system prompt included (see SYSTEM_PROMPT_TOKENS); only for a model with no CONTEXT_WINDOWS entry
 		"COST": 1000000
 	},
