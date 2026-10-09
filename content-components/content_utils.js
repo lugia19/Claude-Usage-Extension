@@ -323,9 +323,12 @@ browser.runtime.onMessage.addListener(async (message) => {
 		return Promise.resolve({ orgId: getActiveOrgId() });
 	}
 	if (message.type === 'proxyFetch') {
-		// Brave: perform a fetch in this tab's container context and ship the result to the background.
+		// A fetch made as this page and shipped back to the background: Brave's transport (this tab's
+		// container) and every platform's page fetch (see ContainerStrategy.pageFetchFor). Firefox's
+		// content-script fetch carries the extension's origin; content.fetch is the page's own.
 		try {
-			const r = await fetch(message.url, { ...(message.options || {}), credentials: 'include' });
+			const pageFetch = globalThis.content?.fetch ? (...args) => globalThis.content.fetch(...args) : fetch;
+			const r = await pageFetch(message.url, { ...(message.options || {}), credentials: 'include' });
 			const buf = await r.arrayBuffer();
 			return { ok: r.ok, status: r.status, statusText: r.statusText, body: bytesToBase64(buf) };
 		} catch (e) {

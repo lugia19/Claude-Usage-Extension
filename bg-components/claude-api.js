@@ -77,25 +77,6 @@ export async function invalidateProfileTokens(orgId) {
 	await Log("Invalidated profile tokens cache for:", orgId);
 }
 
-// A workspace-upgraded chat's real context size, as the page read it from its Claude Code session
-// when `turnUuid` settled (injections/request-hook.js readContextUsage). Called by the authoritative
-// pass; getInfo prices with it while that turn is still the leaf. Checked rather than trusted: page
-// scripts can post the same bridge message.
-export async function storeContextUsage(conversationId, turnUuid, usage) {
-	const count = (n) => Number.isFinite(n) && n >= 0;
-	const { input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens } = usage?.apiUsage ?? {};
-	if (!conversationId || !turnUuid || !count(usage?.totalTokens) || !count(usage.systemPromptTokens)
-		|| ![input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens].every(count)) {
-		await Log("warn", "Ignoring malformed context usage for", conversationId, usage);
-		return;
-	}
-	await contextUsageCache.set(conversationId, {
-		turnUuid,
-		totalTokens: usage.totalTokens,
-		systemPromptTokens: usage.systemPromptTokens,
-		apiUsage: { input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens },
-	}, CONTEXT_USAGE_TTL);
-}
 // A merged-experience compaction divider as the tree shows it: an assistant message with no content
 // whose parent is the turn's reply. (A turn refused as "too long" is also empty, but its parent is
 // the human message.)
@@ -125,10 +106,10 @@ const profileTokensCache = new StoredMap("profileTokens");
 const ACCOUNT_SETTINGS_TTL = 30 * 60 * 1000;
 const PROFILE_TOKENS_TTL = 5 * 60 * 1000;
 
-// Garbage collection, not freshness: an entry is exact for as long as its turn is the leaf, which is
-// what getInfo checks. One small entry per upgraded conversation.
-const contextUsageCache = new StoredMap("contextUsage");
-const CONTEXT_USAGE_TTL = 7 * 24 * 60 * 60 * 1000;
+// getContextUsage: how long to wait for the session's answer in all (0.6s warm, ~4s if the container
+// has to wake), and how often to look for it.
+const CONTEXT_USAGE_TIMEOUT_MS = 10000;
+const CONTEXT_USAGE_POLL_MS = 250;
 
 // Last usage the completion stream reported, per org. Not a cache of anything fetchable - on the
 // free plan it is the only copy that exists, so nothing can refill it but another message.
@@ -314,11 +295,14 @@ function buildError(response, label, body) {
 
 class ClaudeAPI {
 	// `fetchImpl(url, options) => Response` is supplied by the active ContainerStrategy, already bound
-	// to this account's container. ClaudeAPI itself is container-agnostic.
-	constructor(orgId, fetchImpl) {
+	// to this account's container. ClaudeAPI itself is container-agnostic. `pageFetchImpl`, same shape,
+	// is the strategy's fetch made by a claude.ai tab rather than the background, for the endpoints
+	// that refuse the extension's origin; null when there's no tab to make it.
+	constructor(orgId, fetchImpl, pageFetchImpl = null) {
 		this.baseUrl = 'https://claude.ai/api';
 		this.orgId = orgId;
 		this.fetchImpl = fetchImpl;
+		this.pageFetchImpl = pageFetchImpl;
 	}
 
 	// Core methods
@@ -883,6 +867,56 @@ class ConversationAPI {
 		return { currentTrunk, compactionIdx, turnIdx, outputIdx, now: now_, next };
 	}
 
+	// A workspace-upgraded chat's real context size, from its Claude Code session: Claude Code's own
+	// get_context_usage control request, sent through the CCR events API, with the answer polled from
+	// the session's event log. Null if it can't be had within CONTEXT_USAGE_TIMEOUT_MS.
+	//
+	// Made by the tab (pageFetchImpl): that API refuses the extension's origin (the background's POST
+	// gets 401 "Credential is invalid", though its GETs work). The request and its answer stay in the
+	// session's event log for good, so getInfo asks only when the authoritative pass hands it the
+	// session of a turn that just settled: never on load or on a timer.
+	async getContextUsage(sessionId) {
+		const pageFetch = this.api.pageFetchImpl;
+		if (!pageFetch) return null;
+		const deadline = Date.now() + CONTEXT_USAGE_TIMEOUT_MS;
+		// The tab's fetch has no abort signal across the message boundary, so each call races the deadline.
+		const beforeDeadline = (promise) => Promise.race([promise, sleep(Math.max(deadline - Date.now(), 0)).then(() => null)]);
+		const url = `https://claude.ai/v1/code/sessions/${encodeURIComponent(sessionId)}/events`;
+		const headers = {
+			'anthropic-version': '2023-06-01',
+			'anthropic-beta': 'ccr-byoc-2025-07-29',
+			'anthropic-client-feature': 'ccr',
+			'x-organization-uuid': this.api.orgId,
+		};
+		const requestId = `claude-usage-tracker-${crypto.randomUUID()}`;
+		try {
+			const sent = await beforeDeadline(pageFetch(url, {
+				method: 'POST',
+				headers: { ...headers, 'content-type': 'application/json' },
+				body: JSON.stringify({ events: [{ payload: { type: 'control_request', request_id: requestId, request: { subtype: 'get_context_usage' } } }] }),
+			}));
+			if (!sent?.ok) {
+				await Log("warn", "get_context_usage for", sessionId, "not sent:", sent ? sent.status : "timed out");
+				return null; // 404: no such session, 400: malformed id
+			}
+			while (Date.now() < deadline) {
+				await sleep(CONTEXT_USAGE_POLL_MS);
+				const page = await beforeDeadline(pageFetch(`${url}?limit=10&sort_order=desc`, { method: 'GET', headers }));
+				if (!page?.ok) break;
+				const reply = (await page.json()).data?.find(e => e.payload?.type === 'control_response' && e.payload.response?.request_id === requestId);
+				if (!reply) continue;
+				const { subtype, response } = reply.payload.response;
+				if (subtype !== 'success' || !response) break;
+				return response;
+			}
+		} catch (e) {
+			await Log("warn", "get_context_usage for", sessionId, "failed:", e);
+			return null;
+		}
+		await Log("warn", "No get_context_usage answer from", sessionId);
+		return null;
+	}
+
 	// Single pass. Everything the conversation costs - now and next message - comes out of one tree
 	// fetch, one walk and one tokenization of each message.
 	//
@@ -891,8 +925,13 @@ class ConversationAPI {
 	// one thing: where the cache boundary sits once the just-sent message is allowed to hold an
 	// anchor. getCachingInfo now returns both boundaries from one analysis, so the walk below
 	// accumulates the "now" and "next" figures side by side instead.
-	async getInfo(isNewMessage) {
+	//
+	// `sessionId`: a workspace-upgraded chat's Claude Code session, passed only by the authoritative
+	// pass of a settled turn. Its real context size then replaces the estimate (see getContextUsage).
+	async getInfo(isNewMessage, sessionId = null) {
 		await Log("API: Requesting information for conversation:", this.conversationId);
+		// Started first: it runs alongside the tokenizing below.
+		const contextUsage = sessionId ? this.getContextUsage(sessionId) : null;
 		const conversationData = await this.getData(true);
 		const cachingInfo = await this.getCachingInfo(isNewMessage);
 		if (!cachingInfo) {
@@ -1127,22 +1166,23 @@ class ConversationAPI {
 		uncachedCostTokens += profileTokens; // the "no cache at all" figure — always full price
 		uncachedFutureCostTokens += profileTokens;
 
-		// A workspace-upgraded chat's real context size, read from its Claude Code session when the
-		// leaf turn settled (storeContextUsage), replaces the token figures above; the estimate still
+		// A workspace-upgraded chat's real context size, read from its Claude Code session, replaces
+		// the token figures above; the estimate still
 		// supplies the reply's output surcharge, the model and the cache expiry. The last request's
 		// usage (apiUsage) prices this message: its input split, plus its reply at 1x (the walk's share
 		// in the estimate). The next request reads at least that input plus that reply, and totalTokens
 		// doesn't always include the reply yet (measured both ways), hence the max; only what the last
 		// request didn't send (the final reply, mostly) is new to the cache.
-		const real = await contextUsageCache.get(this.conversationId);
-		const lengthIsExact = !!real && real.turnUuid === currentTrunk[turnIdx]?.uuid;
+		const real = await contextUsage;
+		const { input_tokens = 0, cache_creation_input_tokens = 0, cache_read_input_tokens = 0, output_tokens = 0 } = real?.apiUsage ?? {};
+		const lengthIsExact = Number.isFinite(real?.totalTokens);
 		if (lengthIsExact) {
-			const { input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens = 0 } = real.apiUsage;
 			const lastInput = input_tokens + cache_creation_input_tokens + cache_read_input_tokens;
 			const context = Math.max(real.totalTokens, lastInput + output_tokens);
+			const used = (name) => real.categories?.find(c => c.name === name && c.kind === 'used')?.tokens ?? 0;
 			await Log(`Context of ${this.conversationId} from its session: ${context} tokens (estimated ${Math.round(lengthTokens)})`);
 			lengthTokens = context;
-			systemPromptTokens = real.systemPromptTokens;
+			systemPromptTokens = used('System prompt') + used('System tools') + used('Skills');
 			costTokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens * CONFIG.CACHING_MULTIPLIER + output_tokens + outputTokens;
 			uncachedCostTokens = lastInput + output_tokens + outputTokens;
 			futureCostTokens = (context - lastInput) + lastInput * CONFIG.CACHING_MULTIPLIER + outputTokens;
