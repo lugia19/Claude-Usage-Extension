@@ -489,12 +489,13 @@ export class ConversationData {
 
 	// The context window the next message gets, as { window, compactAt } (compactAt: where it gets
 	// compacted, null if unknown), or null for a model with no CONTEXT_WINDOWS entry. For the picker's
-	// model when it names one, else the conversation's: the next message is what hits the limit. On an
-	// upgraded chat, its session's own reading wins while it is for that model.
+	// model (the next message is what hits the limit); with no picker to read (null), the
+	// conversation's own. An unreadable picker (MODEL_UNKNOWN) means a model we can't name was
+	// selected, so it gets no window rather than the previous model's. On an upgraded chat, its
+	// session's own reading wins while it is for that model.
 	getContextWindow(modelVersionOverride) {
-		const modelVersion = modelVersionOverride && modelVersionOverride !== MODEL_UNKNOWN
-			? modelVersionOverride
-			: this.modelVersion;
+		if (modelVersionOverride === MODEL_UNKNOWN) return null;
+		const modelVersion = modelVersionOverride || this.modelVersion;
 		if (!modelVersion) return null;
 		const session = this.sessionContext;
 		if (this.workspaceUpgraded && session?.window && undated(session.model) === undated(modelVersion)) {
