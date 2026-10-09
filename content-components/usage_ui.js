@@ -276,7 +276,6 @@ class UsageUI {
 		this.uiReady = false;
 		this.pendingUpdate = null;
 
-		this.lastUpdateTime = 0;
 		this.updateInterval = 1000;
 		this.wasPeakHours = isPeakHours();
 
@@ -892,20 +891,15 @@ class UsageUI {
 	// ========== UPDATE LOOP ==========
 
 	startUpdateLoop() {
-		const update = async (timestamp) => {
-			if (timestamp - this.lastUpdateTime >= this.updateInterval) {
-				this.lastUpdateTime = timestamp;
-				this.renderResetTimes();
-				this.checkExpiredLimits();
-				this.checkModelChange();
-				this.checkPeakHoursChange();
-				this.checkQoLInstalled();
-				this.mountSidebar();
-				this.mountChatArea();
-			}
-			requestAnimationFrame(update);
-		};
-		requestAnimationFrame(update);
+		startFrameLoop('UsageUI', this.updateInterval, [
+			['renderResetTimes', () => this.renderResetTimes()],
+			['checkExpiredLimits', () => this.checkExpiredLimits()],
+			['checkModelChange', () => this.checkModelChange()],
+			['checkPeakHoursChange', () => this.checkPeakHoursChange()],
+			['checkQoLInstalled', () => this.checkQoLInstalled()],
+			['mountSidebar', () => this.mountSidebar()],
+			['mountChatArea', () => this.mountChatArea()],
+		]);
 	}
 }
 
