@@ -949,7 +949,8 @@ class ConversationAPI {
 				settings: conversationData.settings,
 				lastMessageTimestamp: null,
 				lengthIsEstimate: false,
-				orgId: this.api.orgId
+				orgId: this.api.orgId,
+				workspaceUpgraded: !!conversationData.workspace_upgraded
 			});
 		}
 
@@ -1223,7 +1224,12 @@ class ConversationAPI {
 			settings: effectiveSettings,
 			lastMessageTimestamp: lastMessageTimestamp,
 			lengthIsEstimate: lengthIsEstimate && !lengthIsExact,
-			orgId: this.api.orgId
+			orgId: this.api.orgId,
+			workspaceUpgraded: !!conversationData.workspace_upgraded,
+			// The session's own context window, which beats CONFIG.CONTEXT_WINDOWS (see getContextWindow).
+			sessionContext: lengthIsExact && Number.isFinite(real.maxTokens)
+				? { model: real.model, window: real.maxTokens, compactAt: real.autoCompactThreshold ?? null }
+				: null
 		});
 	}
 }

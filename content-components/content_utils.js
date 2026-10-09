@@ -47,6 +47,13 @@ function bytesToBase64(buffer) {
 	return btoa(binary);
 }
 
+// A token count in the UI language's compact form (1M, 500K; "1 Mio." in German), for context
+// windows. The full-digit form is common's fmtNum.
+let compactNumberFormat = null;
+function fmtCompactNum(n) {
+	return (compactNumberFormat ??= new Intl.NumberFormat(currentLocale(), { notation: 'compact' })).format(Number(n));
+}
+
 // Brave hides containers from extension APIs, so the background can't read this container's cookies.
 // Tell it whether we're on Brave; if so, it proxies claude.ai fetches back through this tab.
 async function reportBraveStatus() {

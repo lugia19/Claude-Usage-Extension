@@ -87,8 +87,32 @@ const CONFIG = {
 	"PEAK_SESSION_MULTIPLIER": 1.5,
 	"WARNING": {
 		"PERCENT_THRESHOLD": 0.9,
-		"LENGTH": 500000, // total context, system prompt included (see SYSTEM_PROMPT_TOKENS)
+		"LENGTH": 500000, // total context, system prompt included (see SYSTEM_PROMPT_TOKENS); only for a model with no CONTEXT_WINDOWS entry
 		"COST": 1000000
+	},
+	// Each model's context window, keyed like MODEL_WEIGHTS (API ID without its date suffix), as
+	// { chat, workspace: [window, compactAt] }. `chat` is a plain chat, from the help article's "Chat
+	// with Claude" table (support.claude.com 8606394, read 2026-10-09; 200K is its default for an
+	// unlisted model): it can't be measured. `workspace` is a workspace-upgraded chat, which runs on a
+	// Claude Code session: its get_context_usage maxTokens and autoCompactThreshold after the picker's
+	// set_model, measured 2026-10-09 (they don't match the article's Cowork column for Sonnet 5.5). The
+	// picker sends plain IDs, never a [1m] variant, so the 4.6 models get 200K there. A reading from the
+	// chat's own session beats this table (ConversationData.getContextWindow).
+	"CONTEXT_WINDOWS": {
+		"claude-fable-5-1": { chat: 1000000, workspace: [1000000, 967000] },
+		"claude-fable-5": { chat: 500000, workspace: [1000000, 967000] },
+		"claude-opus-5-5": { chat: 1000000, workspace: [1000000, 967000] },
+		"claude-opus-5": { chat: 1000000, workspace: [1000000, 967000] },
+		"claude-opus-4-8": { chat: 500000, workspace: [1000000, 967000] },
+		"claude-opus-4-7": { chat: 500000, workspace: [1000000, 967000] },
+		"claude-opus-4-6": { chat: 500000, workspace: [200000, 167000] },
+		"claude-opus-4-5": { chat: 200000, workspace: [200000, 167000] },
+		"claude-3-opus": { chat: 200000, workspace: [200000, 182904] },
+		"claude-sonnet-5-5": { chat: 1000000, workspace: [500000, 467000] },
+		"claude-sonnet-5": { chat: 1000000, workspace: [500000, 467000] },
+		"claude-sonnet-4-6": { chat: 500000, workspace: [200000, 167000] },
+		"claude-haiku-5-5": { chat: 1000000, workspace: [500000, 467000] },
+		"claude-haiku-4-5": { chat: 200000, workspace: [200000, 167000] },
 	},
 	// The fixed system prompt every conversation carries, in Claude's current (Opus 4.7+) tokenizer,
 	// measured on the merged-experience prompt 2026-10-08 (claude-ext-common scripts/bard/README.md,

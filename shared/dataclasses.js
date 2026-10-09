@@ -38,11 +38,17 @@ export function modelFamilyFromVersion(modelVersion) {
 // `conversationTokens` picks the tier of a length-tiered entry (see MODEL_WEIGHTS).
 export function modelWeight(modelVersion, family, conversationTokens) {
 	const slug = modelVersion && modelVersion !== MODEL_UNKNOWN ? modelVersion.toLowerCase() : '';
-	const entry = CONFIG.MODEL_WEIGHTS[slug] ?? CONFIG.MODEL_WEIGHTS[slug.replace(/-\d{8}$/, '')];
+	const entry = CONFIG.MODEL_WEIGHTS[slug] ?? CONFIG.MODEL_WEIGHTS[undated(slug)];
 	if (typeof entry === 'object') return conversationTokens > entry.longAbove ? entry.longWeight : entry.weight;
 	return entry
 		?? CONFIG.FAMILY_MODEL_WEIGHTS[family ?? modelFamilyFromVersion(slug)]
 		?? CONFIG.FALLBACK_MODEL_WEIGHT;
+}
+
+// A model ID without its date suffix (claude-opus-4-5-20251101 -> claude-opus-4-5), the form the
+// per-model tables are keyed by.
+function undated(modelVersion) {
+	return (modelVersion || '').toLowerCase().replace(/-\d{8}$/, '');
 }
 
 // The model claude.ai's picker defaults to for this plan. Pass a null/unknown tier to get
@@ -398,6 +404,13 @@ export class ConversationData {
 		this.lastMessageTimestamp = data.lastMessageTimestamp || null; // Timestamp of the last message in the conversation
 		this.lengthIsEstimate = data.lengthIsEstimate || false; // True if length may be inaccurate due to features
 		this.orgId = data.orgId || null;
+
+		// Runs on a Claude Code session (workspace-upgraded), whose context window differs from a plain
+		// chat's: see getContextWindow.
+		this.workspaceUpgraded = data.workspaceUpgraded || false;
+		// That session's own reading, taken with its context size on a settled turn:
+		// { model, window, compactAt }. Null when there is none.
+		this.sessionContext = data.sessionContext ?? null;
 	}
 
 	// Whether the NEXT message on `currentModelVersion` will hit this conversation's cache.
@@ -474,9 +487,33 @@ export class ConversationData {
 		return this.cost >= CONFIG.WARNING.COST;
 	}
 
-	// Check if conversation is long
-	isLong() {
-		return this.length >= CONFIG.WARNING.LENGTH;
+	// The context window the next message gets, as { window, compactAt } (compactAt: where it gets
+	// compacted, null if unknown), or null for a model with no CONTEXT_WINDOWS entry. For the picker's
+	// model when it names one, else the conversation's: the next message is what hits the limit. On an
+	// upgraded chat, its session's own reading wins while it is for that model.
+	getContextWindow(modelVersionOverride) {
+		const modelVersion = modelVersionOverride && modelVersionOverride !== MODEL_UNKNOWN
+			? modelVersionOverride
+			: this.modelVersion;
+		if (!modelVersion) return null;
+		const session = this.sessionContext;
+		if (this.workspaceUpgraded && session?.window && undated(session.model) === undated(modelVersion)) {
+			return { window: session.window, compactAt: session.compactAt ?? null };
+		}
+		const entry = CONFIG.CONTEXT_WINDOWS?.[undated(modelVersion)];
+		if (!entry) return null;
+		return this.workspaceUpgraded
+			? { window: entry.workspace[0], compactAt: entry.workspace[1] }
+			: { window: entry.chat, compactAt: null };
+	}
+
+	// Check if conversation is long: near the next message's context window, or past a flat length
+	// for a model with none on record.
+	isLong(modelVersionOverride) {
+		const window = this.getContextWindow(modelVersionOverride)?.window;
+		return window
+			? this.length >= window * CONFIG.WARNING_THRESHOLD
+			: this.length >= CONFIG.WARNING.LENGTH;
 	}
 
 	toJSON() {
@@ -499,7 +536,9 @@ export class ConversationData {
 			settings: this.settings,
 			lastMessageTimestamp: this.lastMessageTimestamp,
 			lengthIsEstimate: this.lengthIsEstimate,
-			orgId: this.orgId
+			orgId: this.orgId,
+			workspaceUpgraded: this.workspaceUpgraded,
+			sessionContext: this.sessionContext
 		};
 	}
 
