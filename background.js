@@ -1118,9 +1118,10 @@ const authoritativeInFlight = new Set();
 const PENDING_REQUEST_TTL = 10 * 60 * 1000;
 
 // Set up repeating alarm for reset notification polling (every 3 minutes)
+const HEARTBEAT_ALARM = { periodInMinutes: 3 };
 getAlarm('checkResetNotifications').then(existing => {
 	if (!existing) {
-		scheduleAlarm('checkResetNotifications', { periodInMinutes: 3 });
+		scheduleAlarm('checkResetNotifications', HEARTBEAT_ALARM);
 		Log("Created repeating checkResetNotifications alarm");
 	}
 });
@@ -1135,6 +1136,13 @@ Log("Done initializing.")
 if (isElectron) {
 	// The launcher dispatches this when the window gains focus: the likeliest moment for usage spent
 	// elsewhere (the desktop app's Code tab runs the CLI, which the page never sees) to be looked at.
-	messageRegistry.register('electronTabActivated', () => { refreshAllTabsUsage(); return true; });
+	// It also re-sends the heartbeat alarm. The create sent at app launch can reach the page before the
+	// launcher hooks its console, and is then lost for good: nothing else wakes the worker to send it
+	// again. This event comes from that hook, so it can't be early, and the launcher ignores a repeat.
+	messageRegistry.register('electronTabActivated', () => {
+		scheduleAlarm('checkResetNotifications', HEARTBEAT_ALARM);
+		refreshAllTabsUsage();
+		return true;
+	});
 }
 //#endregion
