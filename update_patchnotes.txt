@@ -1,2 +1,3 @@
+The usage bars are back on claude.ai/code (sidebar and composer), where the page itself only shows the context window
 The usage bar in the desktop app refreshes on its own again, so usage from the Code tab and other devices shows up without sending a chat message
 Messages sent from claude.ai/code refresh the usage bar again
