@@ -1,3 +1,2 @@
-Chats that Claude moved into a workspace (to run code or work with files) now show their exact length, read from the chat's own session
-New "Max" readout (desktop): the selected model's context window, plus where workspace chats get compacted
-The length warning now kicks in at 75% of the context window, instead of a flat 500K
+The usage bar in the desktop app refreshes on its own again, so usage from the Code tab and other devices shows up without sending a chat message
+Messages sent from claude.ai/code refresh the usage bar again
