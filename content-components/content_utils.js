@@ -423,7 +423,8 @@ function getChatAreaRegularAnchor() {
 	// closest() from the picker walks past the box and false-matches the whole page column,
 	// stranding the stat line at the bottom of the page. Resolve from the input instead and sit
 	// after the flow child, which stacks the line inside the box beneath the input in both views.
-	const chatInput = document.querySelector('[data-testid="chat-input"]');
+	// claude.ai/code's composer is the same box around its own input.
+	const chatInput = document.querySelector('[data-testid="chat-input"], [data-testid="code-prompt-input"]');
 	const composerFlowChild = chatInput?.closest('.bg-surface-3 > .relative.w-full.min-w-0');
 	if (composerFlowChild) {
 		return {
@@ -751,6 +752,9 @@ const pageLayouts = {
 		match() { return isCodePage(); },
 		anchors: {
 			sidebar() {
+				// The current /code page runs in the same dframe shell as the chat UI.
+				if (document.querySelector('aside.dframe-sidebar')) return getSidebarDesktopAnchor();
+
 				const sidebarNav = document.querySelector('nav.flex');
 
 				if (sidebarNav) {
@@ -781,6 +785,9 @@ const pageLayouts = {
 				};
 			},
 			chatArea() {
+				const current = getChatAreaRegularAnchor();
+				if (current) return current;
+
 				const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
 				if (!modelSelector) return null;
 
