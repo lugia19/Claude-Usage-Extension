@@ -35,12 +35,13 @@
 		/\/api\/account_profile$/,
 		/\/api\/account\/settings/,
 	];
-	// What onCompletedHandler looks at: the conversation tree GET, a branch switch, and Claude Code
-	// session events. (Not /v1/code/sessions/: getInfo's context-usage calls aren't reported.)
+	// What onCompletedHandler looks at: the conversation tree GET, a branch switch, and a claude.ai/code
+	// session's events (a POST is a message sent to it; the page also GETs the log). getInfo's own
+	// context-usage calls to the same URL go through the content script's fetch, so they never get here.
 	const COMPLETED = [
 		/\/api\/organizations\/[^/]+\/chat_conversations\/[^/]+$/,
 		/\/api\/organizations\/[^/]+\/chat_conversations\/[^/]+\/current_leaf_message_uuid$/,
-		/\/v1\/sessions\/[^/]+\/events$/,
+		/\/v1\/code\/sessions\/[^/]+\/events$/,
 	];
 
 	function post(type, details) {

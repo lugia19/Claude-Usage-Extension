@@ -19,7 +19,7 @@ const pendingTasks = [];
 const LOCK_TIMEOUT = 30000;  // 30 seconds - if a task takes longer, something's wrong
 let pendingRequests;
 let scheduledNotifications;
-let electronPollInFlight = false;
+let usageRefreshInFlight = false;
 
 let isInitialized = false;
 let functionsPendingUntilInitialization = [];
@@ -104,15 +104,11 @@ async function handleAlarm(alarmName) {
 	if (alarmName === 'checkResetNotifications') {
 		// Heartbeat: the only other things that refresh a tab's usage are sending a message and
 		// loading a conversation, so a tab left sitting on an expired limit has no way back on its
-		// own if its refresh request failed. Push fresh data every tick regardless of whether reset
-		// notifications are enabled. Electron already polls on its own interval.
-		if (!isElectron) {
-			try {
-				await updateAllTabsWithUsage();
-			} catch (error) {
-				await Log("warn", "Usage heartbeat failed:", error);
-			}
-		}
+		// own if its refresh request failed, and usage spent elsewhere (Claude Code, another device)
+		// never shows up. Push fresh data every tick regardless of whether reset notifications are
+		// enabled. On Electron too: this alarm is the one timer there that outlives the service
+		// worker (the launcher holds it in Node), a setInterval doesn't.
+		await refreshAllTabsUsage();
 		await checkResetNotifications();
 	}
 }
@@ -1038,8 +1034,10 @@ async function onCompletedHandler(details) {
 		}, 5000));
 	}
 
-	// Claude Code session events — refresh usage
-	if (details.url.includes("/v1/sessions/") && details.url.includes("/events")) {
+	// A message sent to a claude.ai/code session (the page's GETs of the event log don't count) —
+	// refresh usage. Only the send is visible: the session runs remotely, so what it spends shows up
+	// on the next refresh (this, a later send, or the heartbeat).
+	if (details.method === "POST" && /\/v1\/code\/sessions\/[^/]+\/events$/.test(details.url.split('?', 1)[0])) {
 		pendingTasks.push(async () => {
 			const orgId = await requestActiveOrgId(details.tabId);
 			if (!orgId) return;
@@ -1085,16 +1083,17 @@ async function processNextTask() {
 }
 //#endregion
 
-async function electronUsagePoll() {
-	if (electronPollInFlight) return;
-	electronPollInFlight = true;
+// Fresh usage for every tab, for the triggers that aren't a request: the heartbeat, and the Electron
+// window regaining focus. One at a time; a trigger arriving while one runs is dropped.
+async function refreshAllTabsUsage() {
+	if (usageRefreshInFlight) return;
+	usageRefreshInFlight = true;
 	try {
-		await Log("Electron usage poll - fetching fresh usage data");
 		await updateAllTabsWithUsage();
 	} catch (error) {
-		await Log("warn", "Electron usage poll failed:", error);
+		await Log("warn", "Usage refresh failed:", error);
 	} finally {
-		electronPollInFlight = false;
+		usageRefreshInFlight = false;
 	}
 }
 
@@ -1134,8 +1133,8 @@ functionsPendingUntilInitialization = [];
 Log("Done initializing.")
 
 if (isElectron) {
-	const ELECTRON_POLL_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
-	setInterval(electronUsagePoll, ELECTRON_POLL_INTERVAL_MS);
-	Log("Electron usage polling started with interval:", ELECTRON_POLL_INTERVAL_MS, "ms");
+	// The launcher dispatches this when the window gains focus: the likeliest moment for usage spent
+	// elsewhere (the desktop app's Code tab runs the CLI, which the page never sees) to be looked at.
+	messageRegistry.register('electronTabActivated', () => { refreshAllTabsUsage(); return true; });
 }
 //#endregion
