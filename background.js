@@ -7,26 +7,8 @@ import { modelFamilyFromVersion, defaultModelForTier, defaultModelVersionForTier
 // UI strings: the common and tracker tables, then i18n-core.js, which publishes translate() on
 // globalThis. The popup and this worker can't see claude.ai's localStorage, so they translate with
 // the lastLang the content script stores.
-import './common/i18n/en.js';
-import './common/i18n/fr.js';
-import './common/i18n/de.js';
-import './common/i18n/hi.js';
-import './common/i18n/id.js';
-import './common/i18n/it.js';
-import './common/i18n/ja.js';
-import './common/i18n/ko.js';
-import './common/i18n/pt-BR.js';
-import './common/i18n/es.js';
-import './i18n/en.js';
-import './i18n/fr.js';
-import './i18n/de.js';
-import './i18n/hi.js';
-import './i18n/id.js';
-import './i18n/it.js';
-import './i18n/ja.js';
-import './i18n/ko.js';
-import './i18n/pt-BR.js';
-import './i18n/es.js';
+import './common/i18n/all.js';
+import './i18n/all.js';
 import './common/i18n/i18n-core.js';
 import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
 import { invalidateAccountSettings, invalidateProfileTokens, storeSseUsage, effectiveLeaf } from './bg-components/claude-api.js';
