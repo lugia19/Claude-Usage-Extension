@@ -191,7 +191,7 @@ async function getCurrentModel(maxWait = 3000) {
 // A missing key means visible, so an empty object is the default "show everything".
 const SIDEBAR_DISPLAY_KEY = 'sidebarDisplay';
 // The non-limit keys, so the bar logic and the settings card can tell the two apart.
-const SIDEBAR_LINK_KEYS = ['desktopLink', 'qolLink', 'bugLink'];
+const SIDEBAR_LINK_KEYS = ['desktopLink', 'qolLink', 'bugLink', 'donateLink'];
 
 // Whether the LengthUI stats (length / cost / cached / messages left) are shown at all. Content-side
 // only, like usageSectionCollapsed: LengthUI reads it once at boot and never mounts when it's set.

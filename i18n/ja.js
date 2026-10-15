@@ -84,6 +84,7 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['ja'] ??= {}, {
 	"card.sidebar_desktop_link": "デスクトップ版リンク",
 	"card.sidebar_qol_link": "Claude QoL リンク",
 	"card.sidebar_bug_link": "バグ報告リンク",
+	"card.sidebar_donate_link": "寄付リンク",
 	"card.section_extra_usage": "追加利用",
 	"card.extra_usage_against_limit": "月間支出上限を基準にする",
 	"card.section_length_display": "会話の統計",

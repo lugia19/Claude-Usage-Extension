@@ -84,6 +84,7 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['hi'] ??= {}, {
 	"card.sidebar_desktop_link": "डेस्कटॉप संस्करण लिंक",
 	"card.sidebar_qol_link": "Claude QoL लिंक",
 	"card.sidebar_bug_link": "बग रिपोर्ट लिंक",
+	"card.sidebar_donate_link": "दान लिंक",
 	"card.section_extra_usage": "अतिरिक्त उपयोग",
 	"card.extra_usage_against_limit": "मासिक खर्च सीमा के सापेक्ष मापें",
 	"card.section_length_display": "बातचीत के आँकड़े",

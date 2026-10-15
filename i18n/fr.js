@@ -84,6 +84,7 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['fr'] ??= {}, {
 	"card.sidebar_desktop_link": "Lien vers la version desktop",
 	"card.sidebar_qol_link": "Lien vers Claude QoL",
 	"card.sidebar_bug_link": "Lien « Signaler un bug »",
+	"card.sidebar_donate_link": "Lien de don",
 	"card.section_extra_usage": "Utilisation supplémentaire",
 	"card.extra_usage_against_limit": "Mesurer par rapport à la limite de dépenses mensuelle",
 	"card.section_length_display": "Statistiques de la conversation",

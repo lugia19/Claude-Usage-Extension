@@ -84,6 +84,7 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['id'] ??= {}, {
 	"card.sidebar_desktop_link": "Tautan versi desktop",
 	"card.sidebar_qol_link": "Tautan Claude QoL",
 	"card.sidebar_bug_link": "Tautan laporkan bug",
+	"card.sidebar_donate_link": "Tautan donasi",
 	"card.section_extra_usage": "Penggunaan ekstra",
 	"card.extra_usage_against_limit": "Ukur terhadap batas pengeluaran bulanan",
 	"card.section_length_display": "Statistik percakapan",

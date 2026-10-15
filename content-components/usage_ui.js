@@ -390,7 +390,7 @@ class UsageUI {
 		container.appendChild(header);
 		container.appendChild(content);
 
-		const elements = { container, content, toggle, desktopFooter, qolFooter, bugFooter };
+		const elements = { container, content, toggle, desktopFooter, qolFooter, bugFooter, donateFooter };
 		toggle.addEventListener('click', () => this.setCollapsed(!this.state.collapsed));
 
 		return elements;
@@ -468,6 +468,11 @@ class UsageUI {
 		const bugFooter = this.elements.sidebar?.bugFooter;
 		if (bugFooter) {
 			bugFooter.style.display = isSidebarItemVisible(prefs, 'bugLink') ? '' : 'none';
+		}
+
+		const donateFooter = this.elements.sidebar?.donateFooter;
+		if (donateFooter) {
+			donateFooter.style.display = isSidebarItemVisible(prefs, 'donateLink') ? '' : 'none';
 		}
 
 		if (this.state.usageData) this.renderAll();

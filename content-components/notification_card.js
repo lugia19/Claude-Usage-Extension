@@ -206,6 +206,7 @@ async function showSettingsModal() {
 		}
 	}
 	linkToggles.push(['bugLink', 'card.sidebar_bug_link']);
+	linkToggles.push(['donateLink', 'card.sidebar_donate_link']);
 	linkToggles.forEach(([key, labelKey], i) => {
 		const input = settingsToggle(sidebarSection, localize(labelKey), isSidebarItemVisible(sidebarPrefs, key));
 		// Set the links apart from the bars above them.
