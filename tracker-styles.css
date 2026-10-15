@@ -195,3 +195,7 @@
     text-align: left;
     /*padding: 0 0.5rem 0.5rem 0.5rem;*/
 }
+
+.ut-usage-sidebar.ut-no-footers .ut-bars-container > .ut-limit-row:last-child {
+    margin-bottom: 0;
+}

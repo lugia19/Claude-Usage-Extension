@@ -475,6 +475,16 @@ class UsageUI {
 			donateFooter.style.display = isSidebarItemVisible(prefs, 'donateLink') ? '' : 'none';
 		}
 
+		const container = this.elements.sidebar?.container;
+		if (container) {
+			const sb = this.elements.sidebar;
+			const anyFooterVisible = [sb.desktopFooter, sb.qolFooter, sb.bugFooter, sb.donateFooter]
+				.some(f => f && f.isConnected && f.style.display !== 'none');
+			container.classList.toggle('mb-6', anyFooterVisible);
+			container.classList.toggle('pt-1.5', !anyFooterVisible);
+			container.classList.toggle('ut-no-footers', !anyFooterVisible);
+		}
+
 		if (this.state.usageData) this.renderAll();
 	}
 
