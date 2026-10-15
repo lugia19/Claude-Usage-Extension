@@ -1,5 +1,7 @@
 @echo off
 
+REM NOTE: Keep this list in sync with the equivalent list in build.sh.
+REM When you add or remove an entry here, update build.sh as well.
 REM Not part of the extension: the debug mirrors, dev scripts, the common submodule's tooling and docs,
 REM and the Photoshop sources of the icons and store images.
 set IGNORE="debug/**" "scripts/**" ".github/**" "common/scripts/**" "common/README.md" "**/*.psd" "eslint.config.js" "package.json" "package-lock.json" "common/eslint.*" "common/package.json" "common/package-lock.json"
