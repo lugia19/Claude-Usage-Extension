@@ -49,4 +49,4 @@ Most elements in the chat UI (Namely the length, cost, estimate, caching status)
 
 ## Building from source
 
-Shared code lives in the [claude-ext-common](https://github.com/lugia19/claude-ext-common) submodule, so clone with `git clone --recurse-submodules` (or run `git submodule update --init` in an existing clone). Then run `build.bat`, which produces the Chrome, Firefox and Electron zips in `web-ext-artifacts/`.
+Shared code lives in the [claude-ext-common](https://github.com/lugia19/claude-ext-common) submodule, so clone with `git clone --recurse-submodules` (or run `git submodule update --init` in an existing clone). Then run build.bat on Windows or ./build.sh on Linux/macOS, which produce Chrome, Firefox and Electron zips in `web-ext-artifacts/`. Both scripts require node and web-ext to be installed.
