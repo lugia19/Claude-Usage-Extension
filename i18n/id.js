@@ -32,6 +32,8 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['id'] ??= {}, {
 	"usage.tooltip_dollars": "${used} / ${total} terpakai",
 	"usage.tooltip_usage": "Berapa banyak kuota 5 jam Anda yang telah terpakai",
 	"usage.tooltip_timer": "Kapan penggunaan 5 jam Anda akan diatur ulang",
+	"usage.tooltip_usage_weekly": "Berapa banyak kuota mingguan Anda yang telah terpakai",
+	"usage.tooltip_timer_weekly": "Kapan penggunaan mingguan Anda akan diatur ulang",
 	"usage.tooltip_peak": "Batas sesi dikurangi saat jam sibuk:\n{start} - {end}, hari kerja",
 	"usage.bar_credits": "{used} / {total} kredit ({pct}%)",
 	"usage.marker_all": "Semua Model (Mingguan)",

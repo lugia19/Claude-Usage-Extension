@@ -32,6 +32,8 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['hi'] ??= {}, {
 	"usage.tooltip_dollars": "${used} / ${total} उपयोग",
 	"usage.tooltip_usage": "आपने अपने 5 घंटे के कोटे का कितना उपयोग किया है",
 	"usage.tooltip_timer": "आपका 5 घंटे का उपयोग कब रीसेट होगा",
+	"usage.tooltip_usage_weekly": "आपने अपने साप्ताहिक कोटे का कितना उपयोग किया है",
+	"usage.tooltip_timer_weekly": "आपका साप्ताहिक उपयोग कब रीसेट होगा",
 	"usage.tooltip_peak": "व्यस्त समय में सत्र सीमा घटाई जाती है:\n{start} - {end}, कार्यदिवस",
 	"usage.bar_credits": "{used} / {total} क्रेडिट ({pct}%)",
 	"usage.marker_all": "सभी मॉडल (साप्ताहिक)",

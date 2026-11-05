@@ -32,6 +32,8 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['it'] ??= {}, {
 	"usage.tooltip_dollars": "${used} / ${total} utilizzati",
 	"usage.tooltip_usage": "Quanto hai usato della tua quota di 5 ore",
 	"usage.tooltip_timer": "Quando si reimposterà il tuo utilizzo di 5 ore",
+	"usage.tooltip_usage_weekly": "Quanto hai usato della tua quota settimanale",
+	"usage.tooltip_timer_weekly": "Quando si reimposterà il tuo utilizzo settimanale",
 	"usage.tooltip_peak": "Limite di sessione ridotto nelle ore di punta:\n{start} - {end}, nei giorni feriali",
 	"usage.bar_credits": "{used} / {total} crediti ({pct}%)",
 	"usage.marker_all": "Tutti i modelli (settimanale)",
