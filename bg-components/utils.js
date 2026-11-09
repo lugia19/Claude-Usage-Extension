@@ -19,6 +19,7 @@ const CONFIG = {
 	// A model priced by prompt length takes the tiered form { weight, longWeight, longAbove }: past
 	// longAbove tokens of conversation, the message is priced at longWeight.
 	"MODEL_WEIGHTS": {
+		"claude-fable-5-2": 8,
 		"claude-fable-5-1": 10,
 		"claude-fable-5": 10,
 		"claude-opus-5-5": 4,
@@ -47,8 +48,10 @@ const CONFIG = {
 	"FALLBACK_MODEL_WEIGHT": 5,
 	"MODEL_VERSION_MAP": {
 		// DOM labels (lowercased) → API model IDs.
-		// Matched with startsWith() in insertion order, so a longer label must come above
-		// any shorter label that prefixes it ("opus 5.1" above "opus 5").
+		// A key matches only a whole version ("fable 5" doesn't match "fable 5.2"), so order doesn't matter.
+		// A label missing here is derived ("fable 5.2" -> claude-fable-5-2, see getCurrentModelVersion),
+		// so only irregular IDs strictly need an entry; regular ones are listed for clarity.
+		"fable 5.2": "claude-fable-5-2",
 		"fable 5.1": "claude-fable-5-1",
 		"fable 5": "claude-fable-5",
 		"opus 5.5": "claude-opus-5-5",
@@ -100,6 +103,7 @@ const CONFIG = {
 	// picker sends plain IDs, never a [1m] variant, so the 4.6 models get 200K there. A reading from the
 	// chat's own session beats this table (ConversationData.getContextWindow).
 	"CONTEXT_WINDOWS": {
+		"claude-fable-5-2": { chat: 1000000, workspace: [1000000, 967000] },
 		"claude-fable-5-1": { chat: 1000000, workspace: [1000000, 967000] },
 		"claude-fable-5": { chat: 500000, workspace: [1000000, 967000] },
 		"claude-opus-5-5": { chat: 1000000, workspace: [1000000, 967000] },

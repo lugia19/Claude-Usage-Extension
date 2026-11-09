@@ -98,7 +98,7 @@ function warnUnreadablePickerOnce(label) {
 }
 
 // The API model id the NEXT message will use, read out of the picker. Three answers:
-//   a model id    - the picker is there and names a model we know
+//   a model id    - the picker is there and names a model (mapped, or derived from its label)
 //   MODEL_UNKNOWN - the picker is there but we can't make sense of it (see below)
 //   null          - there is no picker to read
 async function getCurrentModelVersion(maxWait = 3000) {
@@ -122,15 +122,23 @@ async function getCurrentModelVersion(maxWait = 3000) {
 	const label = (modelSelector.getAttribute('aria-label') || modelSelector.textContent || '')
 		.trim().toLowerCase();
 
-	// Longest key first so "opus 4.5" wins over "opus 4" without depending on the insertion order of
-	// MODEL_VERSION_MAP. `includes` rather than `startsWith` because the label carries decoration on
-	// both sides: "Model: " in front, the effort level ("High", "Medium") behind.
-	const matchedModel = Object.keys(CONFIG.MODEL_VERSION_MAP)
-		.sort((a, b) => b.length - a.length)
-		.find(key => label.includes(key));
+	// Searched anywhere in the label rather than at its start, because the label carries decoration on
+	// both sides: "Model: " in front, the effort level ("High", "Medium") behind. A key must not be
+	// followed by more of a version number, or "fable 5" would claim "fable 5.2" whenever 5.2 has no
+	// entry of its own: a confident wrong model (price, window, cache claim) instead of the derived one.
+	const matchedModel = Object.keys(CONFIG.MODEL_VERSION_MAP).find(key =>
+		new RegExp(`${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?!\\.?\\d)`).test(label));
 	if (matchedModel) return CONFIG.MODEL_VERSION_MAP[matchedModel];
 
-	// Picker is there but unreadable - restyled again, or a model we don't ship a label for yet.
+	// A model we don't ship a label for yet: build its ID from the label, so a new release keeps
+	// cache tracking without a map entry. Every current model follows "Fable 5.2" -> claude-fable-5-2;
+	// the map covers the ones that don't (dated snapshots, claude-3-opus). If the guess is ever wrong,
+	// it reads as a model change (cache claim withheld), the same outcome as MODEL_UNKNOWN below.
+	const families = CONFIG.MODELS.map(f => f.toLowerCase()).join('|');
+	const derived = label.match(new RegExp(`\\b(${families})\\s+(\\d+(?:\\.\\d+)?)\\b`));
+	if (derived) return `claude-${derived[1]}-${derived[2].replace('.', '-')}`;
+
+	// Picker is there but unreadable - restyled again, or a model we can't name at all.
 	// MODEL_UNKNOWN, not the tier default and not a bare null: it says "we looked and could not
 	// tell", which isCurrentlyCached treats as a reason to withhold the cache claim rather than as
 	// permission to skip the check. A confident wrong guess instead disables cache tracking with no
