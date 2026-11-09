@@ -678,12 +678,11 @@ class UsageUI {
 		usageDisplay.style.display = display;
 		if (progressBar) progressBar.container.style.display = display;
 
-		// The countdown is session-specific, so it tracks the session limit rather than the row as a
-		// whole. The credits branch renders with no session at all on a credit-funded model, and
-		// would otherwise print "Reset in: Not set" beside a perfectly good Extra usage bar. Same
+		// The countdown belongs to the primary limit, so it tracks that rather than the row as a
+		// whole. The credits branch can render with no plan limit at all on a credit-funded model,
+		// and would otherwise print "Reset in: Not set" beside a perfectly good Extra usage bar. Same
 		// condition renderResetTimes() uses, so the two can't disagree about it.
-		const session = this.state.usageData?.limits.session;
-		resetDisplay.style.display = visible && session ? '' : 'none';
+		resetDisplay.style.display = visible && this.chatPrimaryKey ? '' : 'none';
 
 		// Owned by the render branches below while visible; forced off here so it can't outlive them.
 		if (!visible) peakIndicator.style.display = 'none';
@@ -700,14 +699,23 @@ class UsageUI {
 		const modelSelector = document.querySelector(SELECTORS.MODEL_SELECTOR);
 		const modelName = modelSelector?.textContent?.trim() || null;
 
+		// The session limit, or on a plan without one (Ultra) the binding weekly limit. Read by
+		// setChatUsageVisible() and renderResetTimes() as well, so all three agree on it.
+		const primary = usageData.getPrimaryLimit(modelName);
+		this.chatPrimaryKey = primary?.key ?? null;
+
 		// Nothing to price this against (the free plan, where /usage reports no limits at all).
 		// Returning here without touching the DOM would leave whatever was last written on screen:
 		// that is how a free account ended up showing a stale "Session: 2%" - set by an SSE partial
 		// a moment earlier - next to "Reset in: Not set". Hide the usage half outright instead.
-		const session = usageData.limits.session;
-		const hasUsage = !!session || usageData.isSpendingCredits(modelName);
+		const hasUsage = !!primary || usageData.isSpendingCredits(modelName);
 		this.setChatUsageVisible(hasUsage);
 		if (!hasUsage) return;
+
+		const isSession = primary?.key === 'session';
+		const { tooltips } = this.elements;
+		tooltips.usage.updateText(localize(isSession ? 'usage.tooltip_usage' : 'usage.tooltip_usage_weekly'));
+		tooltips.timer.updateText(localize(isSession ? 'usage.tooltip_timer' : 'usage.tooltip_timer_weekly'));
 
 		// Show extra usage instead of the session bar whenever credits are what's being spent —
 		// either the plan limits are maxed, or the selected model is credit-funded (e.g. Fable
@@ -730,33 +738,38 @@ class UsageUI {
 				progressBar.clearMarker();
 			}
 
-			// Show session reset time (still relevant — when session resets, user goes back to included usage)
-			const resetInfo = usageData.getSessionResetInfo();
-			resetDisplay.innerHTML = getResetTimeHTML(resetInfo);
+			// Show the primary limit's reset time (still relevant — when it resets, the user goes back
+			// to included usage)
+			resetDisplay.innerHTML = getResetTimeHTML(usageData.getResetInfo(this.chatPrimaryKey));
 			return;
 		}
 
-		// Normal session display
-		const color = session.percentage >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
-		usageDisplay.innerHTML = `${localize('usage.session_inline')} <span class="ut-statline-pct" style="color: ${color}">${session.percentage.toFixed(0)}%</span>`;
-		peakIndicator.style.display = isPeakHours() ? '' : 'none';
+		// Normal display: the session, or the binding weekly limit on a plan without one
+		const pct = primary.percentage;
+		const label = isSession ? localize('usage.session_inline') : this.usageSection.getLimitLabel(primary.key);
+		const color = pct >= CONFIG.WARNING_THRESHOLD * 100 ? RED_WARNING : BLUE_HIGHLIGHT;
+		usageDisplay.innerHTML = `${label} <span class="ut-statline-pct" style="color: ${color}">${pct.toFixed(0)}%</span>`;
+		// Peak hours shrink the session cap only, so the indicator means nothing beside a weekly bar.
+		const peak = isSession && isPeakHours();
+		peakIndicator.style.display = peak ? '' : 'none';
 
 		// Progress bar (desktop only)
 		if (!isMobileLayout() && progressBar) {
-			progressBar.updateProgress(session.percentage, 100);
+			progressBar.updateProgress(pct, 100);
 
 			// Override tooltip with estimated token values
-			let cap = CONFIG.ESTIMATED_CAPS?.[usageData.subscriptionTier]?.session;
-			if (isPeakHours()) cap = cap / CONFIG.PEAK_SESSION_MULTIPLIER;
+			let cap = CONFIG.ESTIMATED_CAPS?.[usageData.subscriptionTier]?.[primary.key];
+			if (peak) cap = cap / CONFIG.PEAK_SESSION_MULTIPLIER;
 			if (cap) {
-				const used = Math.round((session.percentage / 100) * cap);
-				progressBar.tooltip.updateText(localize('usage.tooltip_tokens', { used: fmtNum(used), cap: fmtNum(cap), pct: session.percentage.toFixed(0) }));
+				const used = Math.round((pct / 100) * cap);
+				progressBar.tooltip.updateText(localize('usage.tooltip_tokens', { used: fmtNum(used), cap: fmtNum(cap), pct: pct.toFixed(0) }));
 			} else {
-				progressBar.tooltip.updateText(localize('usage.tooltip_pct_used', { pct: session.percentage.toFixed(0) }));
+				progressBar.tooltip.updateText(localize('usage.tooltip_pct_used', { pct: pct.toFixed(0) }));
 			}
 
-			// Add weekly marker (filter by current model)
-			const weeklyLimit = usageData.getBindingWeeklyLimit(modelName);
+			// Weekly marker (filter by current model). Only on a session bar: when the bar already
+			// is the binding weekly limit, the marker would sit exactly on its own fill.
+			const weeklyLimit = isSession ? usageData.getBindingWeeklyLimit(modelName) : null;
 			if (weeklyLimit) {
 				const markerKeys = { weekly: 'usage.marker_all', sonnetWeekly: 'usage.marker_sonnet', opusWeekly: 'usage.marker_opus', fableWeekly: 'usage.marker_fable' };
 				const markerName = markerKeys[weeklyLimit.key] ? localize(markerKeys[weeklyLimit.key]) : localize('usage.marker_fallback');
@@ -767,9 +780,8 @@ class UsageUI {
 			}
 		}
 
-		// Reset time (session)
-		const resetInfo = usageData.getSessionResetInfo();
-		resetDisplay.innerHTML = getResetTimeHTML(resetInfo);
+		// Reset time (primary limit)
+		resetDisplay.innerHTML = getResetTimeHTML(usageData.getResetInfo(this.chatPrimaryKey));
 	}
 
 	renderResetTimes() {
@@ -779,11 +791,10 @@ class UsageUI {
 		// Sidebar
 		this.usageSection.renderResetTimes(usageData);
 
-		// Chat area. Skipped with no session limit: this runs every second and would otherwise keep
+		// Chat area. Skipped with no primary limit: this runs every second and would otherwise keep
 		// writing "Reset in: Not set" into the display renderChatArea() hid.
-		if (!usageData.limits.session) return;
-		const resetInfo = usageData.getSessionResetInfo();
-		this.elements.chat.resetDisplay.innerHTML = getResetTimeHTML(resetInfo);
+		if (!this.chatPrimaryKey) return;
+		this.elements.chat.resetDisplay.innerHTML = getResetTimeHTML(usageData.getResetInfo(this.chatPrimaryKey));
 	}
 
 	// ========== MESSAGE HANDLERS ==========

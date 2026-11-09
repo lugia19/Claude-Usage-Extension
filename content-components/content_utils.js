@@ -265,7 +265,11 @@ function getResetTimeHTML(timeInfo) {
 	const hours = Math.floor(totalMinutes / 60);
 	const minutes = totalMinutes % 60;
 
-	const timeString = hours > 0 ? localize('time.hm', { h: hours, m: minutes }) : localize('time.m', { m: totalMinutes });
+	// Days only matter for a weekly countdown (the stat line on a plan with no session limit).
+	let timeString;
+	if (hours >= 24) timeString = localize('time.dh', { d: Math.floor(hours / 24), h: hours % 24 });
+	else if (hours > 0) timeString = localize('time.hm', { h: hours, m: minutes });
+	else timeString = localize('time.m', { m: totalMinutes });
 
 	return `${prefix} <span style="color: ${BLUE_HIGHLIGHT}">${timeString}</span>`;
 }

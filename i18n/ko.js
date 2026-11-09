@@ -32,6 +32,8 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['ko'] ??= {}, {
 	"usage.tooltip_dollars": "${used} / ${total} 사용",
 	"usage.tooltip_usage": "5시간 할당량 중 사용한 비율",
 	"usage.tooltip_timer": "5시간 사용량이 재설정되는 시점",
+	"usage.tooltip_usage_weekly": "주간 할당량 중 사용한 비율",
+	"usage.tooltip_timer_weekly": "주간 사용량이 재설정되는 시점",
 	"usage.tooltip_peak": "피크 시간대에는 세션 한도가 줄어듭니다:\n{start} - {end}, 평일",
 	"usage.bar_credits": "{used} / {total} 크레딧 ({pct}%)",
 	"usage.marker_all": "모든 모델(주간)",

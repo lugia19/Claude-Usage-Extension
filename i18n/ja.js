@@ -32,6 +32,8 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['ja'] ??= {}, {
 	"usage.tooltip_dollars": "${used} / ${total} 使用",
 	"usage.tooltip_usage": "5時間のクォータをどれだけ使用したか",
 	"usage.tooltip_timer": "5時間の利用がいつリセットされるか",
+	"usage.tooltip_usage_weekly": "週間クォータをどれだけ使用したか",
+	"usage.tooltip_timer_weekly": "週間の利用がいつリセットされるか",
 	"usage.tooltip_peak": "ピーク時はセッション上限が引き下げられます:\n{start} - {end}（平日）",
 	"usage.bar_credits": "{used} / {total} クレジット（{pct}%）",
 	"usage.marker_all": "全モデル（週間）",

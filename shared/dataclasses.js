@@ -270,13 +270,24 @@ export class UsageData {
 		return candidates.reduce((a, b) => a.percentage > b.percentage ? a : b);
 	}
 
-	// Session reset info for countdown display
-	getSessionResetInfo() {
+	// The limit the chat stat line is about: the 5-hour session where the plan has one, otherwise the
+	// binding weekly limit for the model. Ultra (formerly Max 20x) has had no session limit since
+	// 2026-11: /usage reports five_hour null and no `session` entry, only the weekly ones.
+	// Decided by what /usage reports, never by tier, so a plan that gains or loses the session limit
+	// just works.
+	getPrimaryLimit(model) {
 		const session = this.limits.session;
-		if (!session) return null;
+		if (session) return { key: 'session', ...session };
+		return this.getBindingWeeklyLimit(model);
+	}
+
+	// Countdown info for a limit key (the stat line's primary limit).
+	getResetInfo(limitKey) {
+		const limit = this.limits[limitKey];
+		if (!limit) return null;
 		return {
-			timestamp: session.resetsAt,
-			expired: session.resetsAt <= Date.now()
+			timestamp: limit.resetsAt,
+			expired: limit.resetsAt <= Date.now()
 		};
 	}
 

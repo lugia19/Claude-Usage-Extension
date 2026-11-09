@@ -32,6 +32,8 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['de'] ??= {}, {
 	"usage.tooltip_dollars": "{used} $ / {total} $ genutzt",
 	"usage.tooltip_usage": "Wie viel deines 5-Stunden-Kontingents du genutzt hast",
 	"usage.tooltip_timer": "Wann deine 5-Stunden-Nutzung zurückgesetzt wird",
+	"usage.tooltip_usage_weekly": "Wie viel deines Wochenkontingents du genutzt hast",
+	"usage.tooltip_timer_weekly": "Wann deine wöchentliche Nutzung zurückgesetzt wird",
 	"usage.tooltip_peak": "Sitzungslimit während Spitzenzeiten reduziert:\n{start} – {end}, werktags",
 	"usage.bar_credits": "{used} / {total} Credits ({pct} %)",
 	"usage.marker_all": "Alle Modelle (wöchentlich)",
