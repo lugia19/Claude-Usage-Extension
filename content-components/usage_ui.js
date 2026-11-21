@@ -624,14 +624,17 @@ class UsageUI {
 	}
 
 	createTooltips() {
-		// Convert peak hours (1pm-7pm GMT) to user's local timezone
+		// Convert peak hours (weekdays 5-11 AM Pacific) to user's local timezone.
+		// Derived from America/Los_Angeles so the window follows DST (#174),
+		// instead of the fixed 12/18 UTC offsets that go stale after DST ends.
 		const formatLocal = (utcHour) => {
 			const d = new Date();
 			d.setUTCHours(utcHour, 0, 0, 0);
 			return d.toLocaleTimeString(currentLocale(), { hour: 'numeric', minute: '2-digit' });
 		};
-		const peakStart = formatLocal(12);
-		const peakEnd = formatLocal(18);
+		const [peakStartUTC, peakEndUTC] = peakWindowUTC();
+		const peakStart = formatLocal(peakStartUTC);
+		const peakEnd = formatLocal(peakEndUTC);
 
 		const { chat } = this.elements;
 		for (const el of [chat.usageDisplay, chat.resetDisplay, chat.peakIndicator]) el.style.cursor = 'help';

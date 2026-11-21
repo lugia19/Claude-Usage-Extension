@@ -3,13 +3,47 @@
 
 import { CONFIG } from '../bg-components/utils.js';
 
-// Check if current time is during Anthropic's peak hours (weekdays 1pm-7pm GMT)
+// Anthropic's peak window is weekdays 5-11 AM Pacific. Deriving it from the
+// America/Los_Angeles timezone instead of a fixed UTC offset keeps the window
+// correct across DST transitions (#174: the old hardcoded 12-18 UTC window was
+// the daylight-time offset, one hour off once standard time resumes).
+const PEAK_TIMEZONE = 'America/Los_Angeles';
+const PEAK_START_HOUR = 5; // inclusive
+const PEAK_END_HOUR = 11;  // exclusive
+
+function peakTimezoneOffsetMinutes(date) {
+	const dtf = new Intl.DateTimeFormat('en-US', {
+		timeZone: PEAK_TIMEZONE,
+		hourCycle: 'h23',
+		year: 'numeric', month: '2-digit', day: '2-digit',
+		hour: '2-digit', minute: '2-digit', second: '2-digit',
+	});
+	const parts = {};
+	for (const part of dtf.formatToParts(date)) parts[part.type] = part.value;
+	const asUTC = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+	return (asUTC - date.getTime()) / 60000;
+}
+
+/** Current [startUtcHour, endUtcHour) of the peak window, expressed in UTC hours. */
+export function peakWindowUTC(date = new Date()) {
+	const offsetMinutes = peakTimezoneOffsetMinutes(date);
+	return [(PEAK_START_HOUR * 60 - offsetMinutes) / 60, (PEAK_END_HOUR * 60 - offsetMinutes) / 60];
+}
+
+// Check if current time is during Anthropic's peak hours (weekdays 5-11 AM Pacific)
 export function isPeakHours() {
 	const now = new Date();
-	const day = now.getUTCDay(); // 0=Sun, 6=Sat
-	const hour = now.getUTCHours();
-	if (day === 0 || day === 6) return false;
-	return hour >= 12 && hour < 18;
+	const dtf = new Intl.DateTimeFormat('en-US', {
+		timeZone: PEAK_TIMEZONE,
+		weekday: 'short',
+		hour: 'numeric',
+		hourCycle: 'h23',
+	});
+	const parts = {};
+	for (const part of dtf.formatToParts(now)) parts[part.type] = part.value;
+	if (parts.weekday === 'Sat' || parts.weekday === 'Sun') return false;
+	const hour = parseInt(parts.hour, 10);
+	return hour >= PEAK_START_HOUR && hour < PEAK_END_HOUR;
 }
 
 // "We looked, and we could not tell which model this is" - distinct from "the caller expressed no
