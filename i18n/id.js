@@ -61,6 +61,8 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['id'] ??= {}, {
 	"length.tooltip_max_chat": "Jendela konteks model yang dipilih di chat biasa: {tokens} token.\nSetelah Claude memindahkan chat ke ruang kerja (untuk menjalankan kode atau bekerja dengan file), jendelanya bisa berbeda.",
 	"length.tooltip_max_workspace": "Jendela konteks model yang dipilih di chat ini: {tokens} token.\nChat ini berjalan di ruang kerja (Claude memindahkannya ke sana untuk menjalankan kode atau bekerja dengan file), tempat jendelanya bisa berbeda dari chat biasa.",
 	"length.tooltip_compaction": "Claude memadatkan percakapan di sekitar {tokens}.",
+	"length.compactions": "Pemadatan",
+	"length.tooltip_compactions": "Berapa kali Claude memadatkan cabang percakapan ini. Semua hingga pemadatan terakhir diganti dengan ringkasan, jadi panjangnya dihitung dari sana.",
 	"length.tooltip_cost": "Perkiraan biaya untuk mengirim pesan lain\nTermasuk item sementara seperti proses berpikir.\nBiaya = panjang × pengali model / faktor caching",
 	"length.tooltip_cached": "Pesan lanjutan dalam percakapan ini akan memiliki biaya lebih rendah",
 	"length.tooltip_estimate": "Jumlah pesan tersisa berdasarkan biaya saat ini",

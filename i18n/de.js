@@ -61,6 +61,8 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['de'] ??= {}, {
 	"length.tooltip_max_chat": "Kontextfenster des ausgewählten Modells in einem normalen Chat: {tokens} Token.\nSobald Claude einen Chat in einen Arbeitsbereich verlegt (um Code auszuführen oder mit Dateien zu arbeiten), kann das Fenster anders sein.",
 	"length.tooltip_max_workspace": "Kontextfenster des ausgewählten Modells in diesem Chat: {tokens} Token.\nDieser Chat läuft in einem Arbeitsbereich (Claude hat ihn dorthin verlegt, um Code auszuführen oder mit Dateien zu arbeiten), wo das Fenster von dem eines normalen Chats abweichen kann.",
 	"length.tooltip_compaction": "Claude komprimiert die Unterhaltung bei etwa {tokens}.",
+	"length.compactions": "Komprimierungen",
+	"length.tooltip_compactions": "Wie oft Claude diesen Zweig der Unterhaltung komprimiert hat. Alles bis zur letzten Komprimierung wurde durch eine Zusammenfassung ersetzt, daher zählt die Länge ab dort.",
 	"length.tooltip_cost": "Geschätzte Kosten für das Senden einer weiteren Nachricht\nEnthält flüchtige Elemente wie das Nachdenken.\nKosten = Länge × Modellfaktor / Caching-Faktor",
 	"length.tooltip_cached": "Folgenachrichten in dieser Unterhaltung haben reduzierte Kosten",
 	"length.tooltip_estimate": "Anzahl der verbleibenden Nachrichten basierend auf den aktuellen Kosten",

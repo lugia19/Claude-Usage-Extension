@@ -113,6 +113,7 @@ class LengthUI {
 
 		const length = document.createElement('span');
 		const max = document.createElement('span');
+		const compactions = document.createElement('span');
 		const cost = document.createElement('span');
 		const cached = document.createElement('span');
 
@@ -139,7 +140,7 @@ class LengthUI {
 			pointerEvents: 'none',
 		});
 
-		return { container, length, max, cost, cached, claim };
+		return { container, length, compactions, max, cost, cached, claim };
 	}
 
 	createStatLineElements() {
@@ -153,9 +154,10 @@ class LengthUI {
 
 	createTooltips() {
 		const { titleArea, statLine } = this.elements;
-		for (const el of [titleArea.length, titleArea.max, titleArea.cost, titleArea.cached, statLine.estimate]) el.style.cursor = 'help';
+		for (const el of [titleArea.length, titleArea.compactions, titleArea.max, titleArea.cost, titleArea.cached, statLine.estimate]) el.style.cursor = 'help';
 		return {
 			length: createClaudeTooltip(titleArea.length, localize('length.tooltip_length')),
+			compactions: createClaudeTooltip(titleArea.compactions, localize('length.tooltip_compactions')),
 			max: createClaudeTooltip(titleArea.max, ''), // its text depends on the chat: see renderCostAndLength
 			cost: createClaudeTooltip(titleArea.cost, localize('length.tooltip_cost')),
 			cached: createClaudeTooltip(titleArea.cached, localize('length.tooltip_cached')),
@@ -266,10 +268,11 @@ class LengthUI {
 	renderCostAndLength() {
 		const { conversationData, currentModelVersion, currentEffortLabel } = this.state;
 		const currentModel = this.effectiveModel();
-		const { length, max, cost, cached } = this.elements.titleArea;
+		const { length, compactions, max, cost, cached } = this.elements.titleArea;
 
 		if (!conversationData) {
 			length.innerHTML = `${localize('length.label')}: <span>${localize('common.na')}</span> ${localize('common.unit_tokens')}`;
+			compactions.innerHTML = '';
 			max.innerHTML = '';
 			cost.innerHTML = '';
 			cached.innerHTML = '';
@@ -281,6 +284,12 @@ class LengthUI {
 		const lengthColor = conversationData.isLong(currentModelVersion) ? RED_WARNING : BLUE_HIGHLIGHT;
 		const lengthLabel = conversationData.lengthIsEstimate ? localize('length.label_estimate') : localize('length.label');
 		length.innerHTML = `${lengthLabel}: <span style="color: ${lengthColor}">${fmtNum(conversationData.length)}</span> ${localize('common.unit_tokens')}`;
+
+		// Compactions on the current branch, shown only when there are any: the length restarted at the
+		// latest one's summary.
+		compactions.innerHTML = conversationData.compactions > 0
+			? `${localize('length.compactions')}: <span style="color: ${BLUE_HIGHLIGHT}">${conversationData.compactions}</span>`
+			: '';
 
 		// Update length tooltip based on estimate status
 		let baseTooltip = localize('length.tooltip_length');
@@ -354,14 +363,15 @@ class LengthUI {
 	}
 
 	renderTitleContainer() {
-		const { length, max, cost, cached, container } = this.elements.titleArea;
+		const { length, compactions, max, cost, cached, container } = this.elements.titleArea;
 		container.innerHTML = '';
 
 		let elements;
 		if (isMobileLayout()) {
+			// No room for compactions, max or cost on a phone: the line already fills it.
 			elements = [length, cached].filter(el => el.innerHTML);
 		} else {
-			elements = [length, max, cost, cached].filter(el => el.innerHTML);
+			elements = [length, compactions, max, cost, cached].filter(el => el.innerHTML);
 		}
 
 		const separator = ' | ';

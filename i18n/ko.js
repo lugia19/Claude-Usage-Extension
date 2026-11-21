@@ -61,6 +61,8 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['ko'] ??= {}, {
 	"length.tooltip_max_chat": "일반 채팅에서 선택한 모델의 컨텍스트 창: {tokens} 토큰.\nClaude가 채팅을 작업 공간으로 옮기면(코드를 실행하거나 파일을 다루기 위해) 창 크기가 달라질 수 있습니다.",
 	"length.tooltip_max_workspace": "이 채팅에서 선택한 모델의 컨텍스트 창: {tokens} 토큰.\n이 채팅은 작업 공간에서 실행됩니다(Claude가 코드를 실행하거나 파일을 다루기 위해 옮겼습니다). 이곳에서는 창 크기가 일반 채팅과 다를 수 있습니다.",
 	"length.tooltip_compaction": "Claude는 약 {tokens}에서 대화를 압축합니다.",
+	"length.compactions": "압축",
+	"length.tooltip_compactions": "Claude가 이 대화 브랜치를 압축한 횟수입니다. 마지막 압축까지의 내용이 요약으로 대체되었으므로 길이는 그 지점부터 계산됩니다.",
 	"length.tooltip_cost": "다음 메시지를 보내는 예상 비용\n사고 과정과 같은 임시 항목을 포함합니다.\n비용 = 길이 × 모델 배수 / 캐싱 계수",
 	"length.tooltip_cached": "이 대화의 후속 메시지는 비용이 절감됩니다",
 	"length.tooltip_estimate": "현재 비용을 기준으로 한 남은 메시지 수",

@@ -61,6 +61,8 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['it'] ??= {}, {
 	"length.tooltip_max_chat": "Finestra di contesto del modello selezionato in una chat normale: {tokens} token.\nQuando Claude sposta una chat in un ambiente di lavoro (per eseguire codice o lavorare con i file), la finestra può essere diversa.",
 	"length.tooltip_max_workspace": "Finestra di contesto del modello selezionato in questa chat: {tokens} token.\nQuesta chat gira in un ambiente di lavoro (Claude l'ha spostata lì per eseguire codice o lavorare con i file), dove la finestra può essere diversa da quella di una chat normale.",
 	"length.tooltip_compaction": "Claude compatta la conversazione a circa {tokens}.",
+	"length.compactions": "Compattazioni",
+	"length.tooltip_compactions": "Quante volte Claude ha compattato questo ramo della conversazione. Tutto fino all'ultima compattazione è stato sostituito da un riassunto, quindi la lunghezza si conta da lì.",
 	"length.tooltip_cost": "Costo stimato per inviare un altro messaggio\nInclude elementi effimeri come il ragionamento.\nCosto = lunghezza × molt. modello / fattore di cache",
 	"length.tooltip_cached": "I messaggi successivi in questa conversazione avranno un costo ridotto",
 	"length.tooltip_estimate": "Numero di messaggi rimanenti in base al costo attuale",

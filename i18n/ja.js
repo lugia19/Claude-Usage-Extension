@@ -61,6 +61,8 @@ Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['ja'] ??= {}, {
 	"length.tooltip_max_chat": "通常のチャットでの選択中モデルのコンテキストウィンドウ: {tokens} トークン。\nClaude がチャットをワークスペースに移すと（コードの実行やファイル操作のため）、ウィンドウが変わることがあります。",
 	"length.tooltip_max_workspace": "このチャットでの選択中モデルのコンテキストウィンドウ: {tokens} トークン。\nこのチャットはワークスペースで動いています（コードの実行やファイル操作のために Claude が移しました）。そこでは通常のチャットとウィンドウが異なることがあります。",
 	"length.tooltip_compaction": "Claude は約 {tokens} で会話を圧縮します。",
+	"length.compactions": "圧縮",
+	"length.tooltip_compactions": "Claude がこの会話のブランチを圧縮した回数です。最後の圧縮までの内容は要約に置き換えられたため、長さはそこから数えています。",
 	"length.tooltip_cost": "次のメッセージ送信の推定コスト\n思考などの一時的な項目を含みます。\nコスト = 長さ × モデル係数 / キャッシュ係数",
 	"length.tooltip_cached": "この会話の以降のメッセージはコストが軽減されます",
 	"length.tooltip_estimate": "現在のコストに基づく残りメッセージ数",
