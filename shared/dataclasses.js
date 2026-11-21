@@ -3,47 +3,38 @@
 
 import { CONFIG } from '../bg-components/utils.js';
 
-// Anthropic's peak window is weekdays 5-11 AM Pacific. Deriving it from the
-// America/Los_Angeles timezone instead of a fixed UTC offset keeps the window
-// correct across DST transitions (#174: the old hardcoded 12-18 UTC window was
-// the daylight-time offset, one hour off once standard time resumes).
-const PEAK_TIMEZONE = 'America/Los_Angeles';
+// Anthropic's peak window is weekdays 5-11 AM Pacific. It is defined in Pacific time, so it is
+// derived from America/Los_Angeles rather than a fixed UTC window, which goes an hour off at every
+// US DST change.
 const PEAK_START_HOUR = 5; // inclusive
 const PEAK_END_HOUR = 11;  // exclusive
+const PACIFIC_FORMAT = new Intl.DateTimeFormat('en-US', {
+	timeZone: 'America/Los_Angeles',
+	hourCycle: 'h23',
+	weekday: 'short',
+	year: 'numeric', month: 'numeric', day: 'numeric',
+	hour: 'numeric', minute: 'numeric', second: 'numeric',
+});
 
-function peakTimezoneOffsetMinutes(date) {
-	const dtf = new Intl.DateTimeFormat('en-US', {
-		timeZone: PEAK_TIMEZONE,
-		hourCycle: 'h23',
-		year: 'numeric', month: '2-digit', day: '2-digit',
-		hour: '2-digit', minute: '2-digit', second: '2-digit',
-	});
+// The wall-clock fields of `date` in Pacific time, as strings keyed by part type.
+function pacificParts(date) {
 	const parts = {};
-	for (const part of dtf.formatToParts(date)) parts[part.type] = part.value;
-	const asUTC = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
-	return (asUTC - date.getTime()) / 60000;
+	for (const part of PACIFIC_FORMAT.formatToParts(date)) parts[part.type] = part.value;
+	return parts;
 }
 
-/** Current [startUtcHour, endUtcHour) of the peak window, expressed in UTC hours. */
+// [start, end) of the peak window in UTC hours, for the Pacific offset in effect at `date`.
 export function peakWindowUTC(date = new Date()) {
-	const offsetMinutes = peakTimezoneOffsetMinutes(date);
-	return [(PEAK_START_HOUR * 60 - offsetMinutes) / 60, (PEAK_END_HOUR * 60 - offsetMinutes) / 60];
+	const p = pacificParts(date);
+	const pacificAsUTC = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+	const offsetHours = Math.round((pacificAsUTC - date.getTime()) / 60000) / 60;
+	return [PEAK_START_HOUR - offsetHours, PEAK_END_HOUR - offsetHours];
 }
 
-// Check if current time is during Anthropic's peak hours (weekdays 5-11 AM Pacific)
-export function isPeakHours() {
-	const now = new Date();
-	const dtf = new Intl.DateTimeFormat('en-US', {
-		timeZone: PEAK_TIMEZONE,
-		weekday: 'short',
-		hour: 'numeric',
-		hourCycle: 'h23',
-	});
-	const parts = {};
-	for (const part of dtf.formatToParts(now)) parts[part.type] = part.value;
-	if (parts.weekday === 'Sat' || parts.weekday === 'Sun') return false;
-	const hour = parseInt(parts.hour, 10);
-	return hour >= PEAK_START_HOUR && hour < PEAK_END_HOUR;
+export function isPeakHours(date = new Date()) {
+	const { weekday, hour } = pacificParts(date);
+	if (weekday === 'Sat' || weekday === 'Sun') return false;
+	return Number(hour) >= PEAK_START_HOUR && Number(hour) < PEAK_END_HOUR;
 }
 
 // "We looked, and we could not tell which model this is" - distinct from "the caller expressed no
