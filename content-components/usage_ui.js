@@ -624,9 +624,7 @@ class UsageUI {
 	}
 
 	createTooltips() {
-		// Convert peak hours (weekdays 5-11 AM Pacific) to user's local timezone.
-		// Derived from America/Los_Angeles so the window follows DST (#174),
-		// instead of the fixed 12/18 UTC offsets that go stale after DST ends.
+		// Peak hours (weekdays 5-11 AM Pacific) in the user's local timezone
 		const formatLocal = (utcHour) => {
 			const d = new Date();
 			d.setUTCHours(utcHour, 0, 0, 0);
