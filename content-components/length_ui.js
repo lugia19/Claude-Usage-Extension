@@ -280,13 +280,20 @@ class LengthUI {
 		// Length: red when near the context window the next message gets (isLong).
 		const lengthColor = conversationData.isLong(currentModelVersion) ? RED_WARNING : BLUE_HIGHLIGHT;
 		const lengthLabel = conversationData.lengthIsEstimate ? localize('length.label_estimate') : localize('length.label');
-		length.innerHTML = `${lengthLabel}: <span style="color: ${lengthColor}">${fmtNum(conversationData.length)}</span> ${localize('common.unit_tokens')}`;
+		// A compacted conversation gets a marker with the count: its length restarted at the summary.
+		const compacted = conversationData.compactions > 0
+			? ` <span class="ut-compacted">⟲${conversationData.compactions}</span>`
+			: '';
+		length.innerHTML = `${lengthLabel}: <span style="color: ${lengthColor}">${fmtNum(conversationData.length)}</span> ${localize('common.unit_tokens')}${compacted}`;
 
 		// Update length tooltip based on estimate status
 		let baseTooltip = localize('length.tooltip_length');
 		if (conversationData.systemPromptTokens) {
 			const tokens = fmtNum(Math.round(conversationData.systemPromptTokens / 1000) * 1000);
 			baseTooltip += '\n' + localize('length.tooltip_system_prompt', { tokens });
+		}
+		if (conversationData.compactions > 0) {
+			baseTooltip += '\n\n' + localize('length.tooltip_compacted', { count: conversationData.compactions });
 		}
 		this.elements.tooltips.length.updateText(conversationData.lengthIsEstimate
 			? baseTooltip + '\n\n' + localize('length.tooltip_length_note')

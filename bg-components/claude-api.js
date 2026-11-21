@@ -956,6 +956,9 @@ class ConversationAPI {
 
 		const { currentTrunk, compactionIdx, turnIdx, outputIdx, now, next } = cachingInfo;
 		const conversationIsCached = now.conversationIsCached;
+		// How many times the current branch was compacted, for the length's indicator. Only the
+		// latest boundary matters for pricing (compactionIdx); the earlier ones are inside its summary.
+		const compactions = currentTrunk.filter((m, i) => m.compaction_summary?.length || isCompactionDivider(m, currentTrunk[i - 1])).length;
 
 		// Initialize token counting. Two cache flags walk the trunk in parallel: `now` prices this
 		// message, `next` prices the one after it. They differ only in where the boundary sits.
@@ -1224,6 +1227,7 @@ class ConversationAPI {
 			settings: effectiveSettings,
 			lastMessageTimestamp: lastMessageTimestamp,
 			lengthIsEstimate: lengthIsEstimate && !lengthIsExact,
+			compactions,
 			orgId: this.api.orgId,
 			workspaceUpgraded: !!conversationData.workspace_upgraded,
 			// The session's own context window, which beats CONFIG.CONTEXT_WINDOWS (see getContextWindow).

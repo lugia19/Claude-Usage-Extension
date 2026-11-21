@@ -439,6 +439,7 @@ export class ConversationData {
 		this.settings = data.settings || {};
 		this.lastMessageTimestamp = data.lastMessageTimestamp || null; // Timestamp of the last message in the conversation
 		this.lengthIsEstimate = data.lengthIsEstimate || false; // True if length may be inaccurate due to features
+		this.compactions = data.compactions || 0; // Compactions on the current branch; length counts from the latest
 		this.orgId = data.orgId || null;
 
 		// Runs on a Claude Code session (workspace-upgraded), whose context window differs from a plain
@@ -573,6 +574,7 @@ export class ConversationData {
 			settings: this.settings,
 			lastMessageTimestamp: this.lastMessageTimestamp,
 			lengthIsEstimate: this.lengthIsEstimate,
+			compactions: this.compactions,
 			orgId: this.orgId,
 			workspaceUpgraded: this.workspaceUpgraded,
 			sessionContext: this.sessionContext
