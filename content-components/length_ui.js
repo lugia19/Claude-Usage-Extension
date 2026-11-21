@@ -368,7 +368,8 @@ class LengthUI {
 
 		let elements;
 		if (isMobileLayout()) {
-			elements = [length, compactions, cached].filter(el => el.innerHTML);
+			// No room for compactions, max or cost on a phone: the line already fills it.
+			elements = [length, cached].filter(el => el.innerHTML);
 		} else {
 			elements = [length, compactions, max, cost, cached].filter(el => el.innerHTML);
 		}
