@@ -282,7 +282,7 @@ class LengthUI {
 		const lengthLabel = conversationData.lengthIsEstimate ? localize('length.label_estimate') : localize('length.label');
 		// A compacted conversation gets a marker with the count: its length restarted at the summary.
 		const compacted = conversationData.compactions > 0
-			? ` <span class="ut-compacted"><span style="color: ${RED_WARNING}; margin-right: 2px">⟲</span>${conversationData.compactions}</span>`
+			? ` <span class="ut-compacted"><span style="margin-right: 2px">⟲</span><span style="color: ${RED_WARNING}">${conversationData.compactions}</span></span>`
 			: '';
 		length.innerHTML = `${lengthLabel}: <span style="color: ${lengthColor}">${fmtNum(conversationData.length)}</span> ${localize('common.unit_tokens')}${compacted}`;
 
