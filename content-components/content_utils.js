@@ -287,7 +287,7 @@ class ProgressBar {
 		if (width !== '100%') this.container.style.width = width;
 
 		this.track = document.createElement('div');
-		this.track.className = 'bg-bg-500 ut-progress-track';
+		this.track.className = 'ut-progress-track';
 		if (height !== '6px') this.track.style.height = height;
 
 		this.bar = document.createElement('div');
