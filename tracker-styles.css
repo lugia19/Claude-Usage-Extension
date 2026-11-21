@@ -50,6 +50,14 @@
 	width: 100%;
 }
 
+/* Track colour: our own rule, not a claude.ai utility class (bg-bg-500 vanished when claude.ai
+   moved to its --cds-* tokens, leaving the sidebar tracks transparent). --cds-alpha-2 is the
+   palette's contrast end at 10%, so it shows on any surface in either theme; the fallback covers
+   pages without those tokens. :where() leaves the popup's own rule free to override it. */
+:where(.ut-progress-track) {
+	background-color: var(--cds-alpha-2, color-mix(in srgb, currentColor 15%, transparent));
+}
+
 .ut-progress-bar {
 	width: 0%;
 	height: 100%;

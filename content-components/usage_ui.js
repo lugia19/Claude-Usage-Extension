@@ -588,8 +588,6 @@ class UsageUI {
 		let progressBar = null;
 		if (!isMobileLayout()) {
 			progressBar = new ProgressBar({ width: '100%' });
-			progressBar.track.classList.remove('bg-bg-500');
-			progressBar.track.classList.add('bg-bg-200');
 			leftContainer.appendChild(progressBar.container);
 		}
 
