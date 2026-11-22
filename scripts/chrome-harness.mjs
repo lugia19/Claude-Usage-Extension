@@ -76,8 +76,16 @@ class Cdp {
 			this.ws.onopen = resolve;
 			this.ws.onerror = () => reject(new Error(`CDP connection to ${wsUrl} failed`));
 		});
+		// A crashed Chrome or a dropped connection must fail every outstanding command, or callers
+		// (waitFor's polling, close()'s kill fallback) wait on them forever.
+		this.ws.onclose = () => {
+			const err = new Error('CDP connection closed');
+			for (const { reject } of this.pending.values()) reject(err);
+			this.pending.clear();
+		};
 	}
 	send(method, params = {}, sessionId) {
+		if (this.ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error('CDP connection closed'));
 		const id = ++this.nextId;
 		this.ws.send(JSON.stringify({ id, method, params, ...(sessionId && { sessionId }) }));
 		return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
@@ -97,9 +105,11 @@ class Page {
 	send(method, params) { return this.cdp.send(method, params, this.sessionId); }
 
 	async navigate(url, { timeoutMs = 30000 } = {}) {
+		// Both awaited together, so the load timeout is handled even while Page.navigate is still
+		// pending (awaiting the command first left the timeout's rejection unhandled, killing the
+		// process before cleanup). The timeout bounds the whole navigation, command included.
 		const loaded = this.cdp.waitFor(m => m.sessionId === this.sessionId && m.method === 'Page.loadEventFired', timeoutMs);
-		await this.send('Page.navigate', { url });
-		await loaded;
+		await Promise.all([this.send('Page.navigate', { url }), loaded]);
 	}
 
 	// Evaluates an expression (or a function, called with `arg`) in the page's MAIN world.
