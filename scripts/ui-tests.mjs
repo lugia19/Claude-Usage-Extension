@@ -160,15 +160,24 @@ async function runAll(shotDir) {
 			if (!sanity) {
 				const title = await page.evaluate('document.title').catch(() => '?');
 				await saveShot(page, shotDir, pageResult);
-				throw new SetupError(`${def.name}: the page never showed a composer (title "${title}"). A Cloudflare challenge, or claude.ai is down.`);
+				pageResult.error = `the page never showed a composer (title "${title}")`;
+				throw new SetupError(`${def.name}: the page never showed a composer (title "${title}"). A Cloudflare challenge, claude.ai is down, or the page's input changed.`);
 			}
-			if (sanity.state === 'login') throw new SetupError(`Not logged in (${sanity.url}). Run: node scripts/chrome-harness.mjs login`);
+			if (sanity.state === 'login') {
+				pageResult.error = 'redirected to login';
+				throw new SetupError(`Not logged in (${sanity.url}). Run: node scripts/chrome-harness.mjs login`);
+			}
 
 			for (const name of def.checks) {
 				pageResult.results.push({ name, ...await runCheck(page, checks[name]) });
 			}
 			if (pageResult.results.some(r => !r.pass)) await saveShot(page, shotDir, pageResult);
 		}
+	} catch (e) {
+		// Keep what the earlier pages found (and this page's screenshot) for the report: a later
+		// page failing its sanity check is as likely a changed page as a setup problem.
+		if (e instanceof SetupError) e.results = results;
+		throw e;
 	} finally {
 		await chrome.close();
 	}
@@ -230,6 +239,16 @@ function openInVsCode(file) {
 	spawn('cmd.exe', ['/d', '/c', code, file], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
 }
 
+// Brings debug\chrome in line with the checked-out tree before a scheduled run.
+function syncDebug() {
+	try {
+		execFileSync(process.execPath, ['common/scripts/mirror-debug.js'], { cwd: REPO, encoding: 'utf8', stdio: 'pipe' });
+	} catch (e) {
+		const output = `${e.stderr || ''}${e.stdout || ''}`.trim();
+		throw new SetupError(`Syncing debug\\ failed (common/scripts/mirror-debug.js): ${output || e.message}`);
+	}
+}
+
 // ---- Main ----
 
 const localDate = () => new Date().toLocaleDateString('sv'); // YYYY-MM-DD
@@ -242,13 +261,15 @@ async function main() {
 	if (scheduled) {
 		const last = fs.existsSync(STAMP_FILE) ? fs.readFileSync(STAMP_FILE, 'utf8').trim() : '';
 		if (last === localDate()) return 0;
-		execFileSync(process.execPath, ['common/scripts/mirror-debug.js'], { cwd: REPO, stdio: 'ignore' });
 	}
 
 	const stamp = fileStamp();
 	const shotDir = path.join(REPORTS_DIR, stamp);
 	let outcome;
 	try {
+		// Inside the try, so a failed sync is reported like any other setup error rather than
+		// silently failing every hourly retry.
+		if (scheduled) syncDebug();
 		const results = await runAll(shotDir);
 		const failed = results.some(p => p.error || p.results.some(r => !r.pass));
 		for (const p of results) {
@@ -262,7 +283,7 @@ async function main() {
 		}
 		const setup = e instanceof SetupError || e instanceof HarnessError;
 		console.error(setup ? `Setup error: ${e.message}` : e.stack);
-		outcome = { code: setup ? 2 : 1, report: setup ? { setupError: e.message } : { crash: e.stack } };
+		outcome = { code: setup ? 2 : 1, report: setup ? { setupError: e.message, results: e.results } : { crash: e.stack } };
 	}
 
 	if (scheduled) {
