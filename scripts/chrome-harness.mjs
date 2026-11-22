@@ -21,8 +21,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const PROFILE_DIR = process.env.UT_CHROME_PROFILE
-	|| path.join(process.env.LOCALAPPDATA || os.homedir(), 'ChromeDebug', 'profile');
+// Holds the profile, plus the UI checks' config, reports and run stamp (scripts/ui-tests.mjs).
+export const HARNESS_DIR = process.env.UT_HARNESS_DIR
+	|| path.join(process.env.LOCALAPPDATA || os.homedir(), 'ChromeDebug');
+export const PROFILE_DIR = process.env.UT_CHROME_PROFILE || path.join(HARNESS_DIR, 'profile');
 export const CHROME_EXE = process.env.UT_CHROME_EXE
 	|| 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
