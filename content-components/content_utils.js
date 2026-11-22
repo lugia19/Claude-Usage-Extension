@@ -436,8 +436,11 @@ function getChatAreaRegularAnchor() {
 	// stranding the stat line at the bottom of the page. Resolve from the input instead and sit
 	// after the flow child, which stacks the line inside the box beneath the input in both views.
 	// claude.ai/code's composer is the same box around its own input.
+	// The box is matched by its `rounded-composer` shape, not its colour: the background token
+	// changed from bg-surface-3 to bg-surface-popover (2026-11) and hid the line. bg-surface-3 is
+	// kept for clients still on the older build.
 	const chatInput = document.querySelector('[data-testid="chat-input"], [data-testid="code-prompt-input"]');
-	const composerFlowChild = chatInput?.closest('.bg-surface-3 > .relative.w-full.min-w-0');
+	const composerFlowChild = chatInput?.closest('.rounded-composer > .relative.w-full.min-w-0, .bg-surface-3 > .relative.w-full.min-w-0');
 	if (composerFlowChild) {
 		return {
 			insertAfter: composerFlowChild,
