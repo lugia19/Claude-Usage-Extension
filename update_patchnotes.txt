@@ -1,3 +1,1 @@
-The title line shows how many times the conversation has been compacted, when it has (desktop)
-Peak hours follow US daylight saving time, so the tooltip's hours and the PEAK badge are right again outside summer
-The usage bars in the sidebar have a visible background again
+The usage line in the message bar shows up again after a claude.ai update hid it
