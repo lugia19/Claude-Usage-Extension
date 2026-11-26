@@ -90,6 +90,5 @@
 		"popup.donate": "Donate",
 		"bg.reset_title": "Claude Usage Reset",
 		"bg.reset_message": "Your Claude usage limit has been reset!"
-	},
-	"stale": {}
+	}
 }
