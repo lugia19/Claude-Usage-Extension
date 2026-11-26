@@ -1,7 +1,8 @@
 // Daily UI checks against the live claude.ai: does the tracker still mount where it should, showing
-// real values? claude.ai's DOM changes break the anchors silently (2026-11: the composer box's colour
-// class changed and the message-bar stat line vanished), so this runs headless every day and opens a
-// report in VS Code when something broke. Nothing is sent: every check only reads the page.
+// real values, in the right language? claude.ai's DOM changes break the anchors silently (2026-11:
+// the composer box's colour class changed and the message-bar stat line vanished), so this runs
+// headless every day and opens a report in VS Code when something broke. Nothing is sent: every
+// check only reads the page.
 //
 //   node scripts/ui-tests.mjs               run now; on failure write a report and print its path
 //   node scripts/ui-tests.mjs --open        same, and open the report in VS Code
@@ -19,6 +20,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 import { HARNESS_DIR, HarnessError, launchChrome } from './chrome-harness.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -58,7 +60,45 @@ const sanityCheck = `(() => {
 	return null;
 })()`;
 
+// The extension's real string tables and normalizeLocale(), loaded here so the language check
+// predicts the UI language exactly as the content script resolves it.
+function loadI18n() {
+	const ctx = vm.createContext({});
+	for (const file of ['common/i18n/all.js', 'i18n/all.js', 'common/i18n/i18n-core.js']) {
+		vm.runInContext(fs.readFileSync(path.join(REPO, file), 'utf8'), ctx, { filename: file });
+	}
+	return ctx;
+}
+const i18n = loadI18n();
+
 const checks = {
+	// The tracker's language follows claude.ai's: the language override if one is set, else the
+	// page's own language (<html lang>, which the account locale cache should agree with). A
+	// language with no table falls back to English, on purpose; the note says so.
+	language: `(() => { ${PAGE_HELPERS}
+		const I18N_LOCALES = ${JSON.stringify(i18n.I18N_LOCALES)};
+		const normalizeLocale = ${i18n.normalizeLocale.toString()};
+		const HEADERS = ${JSON.stringify(Object.fromEntries(i18n.I18N_LOCALES.map(l => [l, i18n.translate(l, 'usage.header')])))};
+		const el = document.querySelector('.ut-usage-sidebar .ut-usage-toggle h3');
+		if (!el) return fail('sidebar header not mounted', document.querySelector('.ut-usage-sidebar'));
+		const pageLang = document.documentElement.lang;
+		if (!pageLang) return fail('claude.ai set no <html lang>', null);
+		const override = localStorage.getItem('claude_ext_language');
+		const expected = normalizeLocale(override || pageLang);
+		const actual = el.textContent.trim();
+		const shown = Object.keys(HEADERS).filter(l => HEADERS[l] === actual);
+		if (actual !== HEADERS[expected]) {
+			let cache = null;
+			try { cache = JSON.parse(localStorage.getItem('claude_ext_locale_cache'))?.locale; } catch (e) { /* bad JSON */ }
+			return fail('expected ' + expected + ' (' + JSON.stringify(HEADERS[expected]) + ') for page lang ' + pageLang
+				+ (override ? ', override ' + override : '') + ', got ' + JSON.stringify(actual)
+				+ (shown.length ? ' (' + shown.join('/') + ')' : '') + '; account locale cache: ' + cache, el);
+		}
+		const supported = normalizeLocale(pageLang) !== 'en' || pageLang.toLowerCase().split('-')[0] === 'en';
+		if (!override && !supported) return { pass: true, note: 'claude.ai is in ' + pageLang + ', which has no table: the tracker falls back to English' };
+		return { pass: true, note: 'tracker in ' + expected + (override ? ' (override)' : '') };
+	})()`,
+
 	sidebar: `(() => { ${PAGE_HELPERS}
 		const sidebar = document.querySelector('aside.dframe-sidebar') || document.querySelector('nav');
 		const el = document.querySelector('.ut-usage-sidebar');
@@ -99,7 +139,7 @@ const checks = {
 };
 
 const PAGES = conversationId => [
-	{ name: 'home', url: 'https://claude.ai/new', checks: ['sidebar', 'statLine'] },
+	{ name: 'home', url: 'https://claude.ai/new', checks: ['sidebar', 'statLine', 'language'] },
 	{ name: 'conversation', url: `https://claude.ai/chat/${conversationId}`, checks: ['sidebar', 'statLine', 'titleLine'] },
 	{ name: 'code', url: 'https://claude.ai/code', checks: ['sidebar', 'statLine'] },
 	// Incognito is a full-screen page with no sidebar (2026-11). Its title line needs a sent message.
@@ -273,7 +313,7 @@ async function main() {
 		const results = await runAll(shotDir);
 		const failed = results.some(p => p.error || p.results.some(r => !r.pass));
 		for (const p of results) {
-			console.log(`${p.name}: ${p.error || p.results.map(r => `${r.pass ? 'ok' : 'FAIL'} ${r.name}${r.pass ? '' : ` (${r.reason})`}`).join(', ')}`);
+			console.log(`${p.name}: ${p.error || p.results.map(r => `${r.pass ? 'ok' : 'FAIL'} ${r.name}${r.pass ? (r.note ? ` (${r.note})` : '') : ` (${r.reason})`}`).join(', ')}`);
 		}
 		outcome = failed ? { code: 1, report: { results } } : { code: 0 };
 	} catch (e) {
