@@ -77,6 +77,7 @@ const checks = {
 	// language with no table falls back to English, on purpose; the note says so.
 	language: `(() => { ${PAGE_HELPERS}
 		const I18N_LOCALES = ${JSON.stringify(i18n.I18N_LOCALES)};
+		const LOCALE_ALIASES = ${JSON.stringify(vm.runInContext('LOCALE_ALIASES', i18n))};
 		const normalizeLocale = ${i18n.normalizeLocale.toString()};
 		const HEADERS = ${JSON.stringify(Object.fromEntries(i18n.I18N_LOCALES.map(l => [l, i18n.translate(l, 'usage.header')])))};
 		const el = document.querySelector('.ut-usage-sidebar .ut-usage-toggle h3');
