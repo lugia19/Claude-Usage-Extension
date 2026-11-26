@@ -1,1 +1,2 @@
-The usage line in the message bar shows up again after a claude.ai update hid it
+The tracker now comes in all 48 languages claude.ai offers: 38 new ones, including Chinese (Simplified and Traditional), Russian, Polish, Dutch, Turkish, Ukrainian, Vietnamese, Thai, Arabic and Hebrew. It follows your claude.ai language automatically, or pick one in the settings.
+The new translations are machine-made: if something reads wrong in your language, please open an issue on GitHub.
