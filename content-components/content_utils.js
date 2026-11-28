@@ -829,7 +829,7 @@ const pageLayouts = {
 				// bar uses text-body-medium. The old class stays for clients still on it.
 				const label = document.querySelector('.fixed.draggable > .text-body-medium.select-none')
 					|| document.querySelector('.fixed.draggable > .text-sm.select-none');
- 				if (!label) return null;
+				if (!label) return null;
 
 				return {
 					insertAfter: label,
