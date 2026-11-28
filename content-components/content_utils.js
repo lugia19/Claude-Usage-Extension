@@ -823,11 +823,12 @@ const pageLayouts = {
 			sidebar: getSidebarRegularAnchor,
 			chatArea: getChatAreaRegularAnchor,
 			titleArea() {
-				// The label used to live under .z-header, which no longer exists - it now sits
-				// in a fixed title bar. Matched structurally rather than by its text: the layout
-				// is already gated on isIncognito(), so testing for "Incognito chat"
-				// bought nothing and broke in every locale but English.
-				const label = document.querySelector('.fixed.draggable > .text-sm.select-none');
+				// The label sits in the fixed title bar. Matched structurally rather than by
+				// its text: the layout is already gated on isIncognito(), and the English
+				// label breaks every other locale. The type class was text-sm; the current
+				// bar uses text-body-medium. The old class stays for clients still on it.
+				const label = document.querySelector('.fixed.draggable > .text-body-medium.select-none')
+					|| document.querySelector('.fixed.draggable > .text-sm.select-none');
 				if (!label) return null;
 
 				return {
