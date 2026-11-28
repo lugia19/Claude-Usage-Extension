@@ -103,7 +103,18 @@ class Cdp {
 }
 
 class Page {
-	constructor(cdp, targetId, sessionId) { Object.assign(this, { cdp, targetId, sessionId }); }
+	constructor(cdp, targetId, sessionId) {
+		Object.assign(this, { cdp, targetId, sessionId });
+		// Execution contexts by id, kept from Runtime.enable's events so evaluate can pick an
+		// extension's isolated world (a content script's own globals) by name.
+		this.contexts = new Map();
+		cdp.listeners.add(msg => {
+			if (msg.sessionId !== sessionId) return;
+			if (msg.method === 'Runtime.executionContextCreated') this.contexts.set(msg.params.context.id, msg.params.context);
+			else if (msg.method === 'Runtime.executionContextDestroyed') this.contexts.delete(msg.params.executionContextId);
+			else if (msg.method === 'Runtime.executionContextsCleared') this.contexts.clear();
+		});
+	}
 	send(method, params) { return this.cdp.send(method, params, this.sessionId); }
 
 	async navigate(url, { timeoutMs = 30000 } = {}) {
@@ -114,19 +125,28 @@ class Page {
 		await Promise.all([this.send('Page.navigate', { url }), loaded]);
 	}
 
-	// Evaluates an expression (or a function, called with `arg`) in the page's MAIN world.
-	async evaluate(fnOrExpr, arg) {
+	// Evaluates an expression (or a function, called with `arg`) in the top frame: the page's MAIN
+	// world, or with `world` the isolated world of the extension by that name (its content scripts'
+	// globals, top-level const/let included).
+	async evaluate(fnOrExpr, arg, { world } = {}) {
 		const expression = typeof fnOrExpr === 'function' ? `(${fnOrExpr})(${JSON.stringify(arg)})` : fnOrExpr;
-		const r = await this.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+		let contextId;
+		if (world) {
+			const ctx = [...this.contexts.values()].find(c => c.name === world
+				&& c.auxData?.type === 'isolated' && c.auxData?.frameId === this.targetId);
+			if (!ctx) throw new Error(`no "${world}" content script in this page`);
+			contextId = ctx.id;
+		}
+		const r = await this.send('Runtime.evaluate', { expression, contextId, awaitPromise: true, returnByValue: true });
 		if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
 		return r.result.value;
 	}
 
 	// Polls fnOrExpr until it returns something truthy; returns that, or null on timeout.
-	async waitFor(fnOrExpr, { timeoutMs = 15000, intervalMs = 250, arg } = {}) {
+	async waitFor(fnOrExpr, { timeoutMs = 15000, intervalMs = 250, arg, world } = {}) {
 		const end = Date.now() + timeoutMs;
 		while (Date.now() < end) {
-			const v = await this.evaluate(fnOrExpr, arg).catch(() => null);
+			const v = await this.evaluate(fnOrExpr, arg, { world }).catch(() => null);
 			if (v) return v;
 			await sleep(intervalMs);
 		}
