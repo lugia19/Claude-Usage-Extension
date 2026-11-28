@@ -34,7 +34,9 @@ const PAGE_TIMEOUT_MS = 30000;
 const INPUT_SELECTOR = '[data-testid="chat-input"], [data-testid="code-prompt-input"]';
 
 // ---- Page-side checks ----
-// Each runs in the page (MAIN world: it only reads the DOM) and returns { pass, reason, context }.
+// Each runs in the page and returns { pass, reason, context }. Most only read the DOM, in the MAIN
+// world; the ones in ISOLATED_CHECKS run in the tracker's content-script world instead, to call its
+// own code.
 // `context` is an ancestor chain from the nearest page landmark, for fixing a broken anchor.
 
 const PAGE_HELPERS = `
@@ -137,14 +139,31 @@ const checks = {
 		if (numbers.length < 2) return fail('no length and cost figures: ' + JSON.stringify(el.innerText), el);
 		return PASS;
 	})()`,
+
+	// The layout's titleArea anchor resolves: the element our title line attaches to is on the page.
+	// For pages where the line itself only appears after a sent message (incognito), so a changed
+	// anchor still fails here without sending anything. Asks the tracker's own LayoutManager, so the
+	// selectors aren't duplicated here.
+	titleAnchor: `(() => { ${PAGE_HELPERS}
+		const near = document.querySelector('.fixed.draggable') || document.querySelector('header');
+		const layout = LayoutManager.detectLayout();
+		if (!layout) return fail('no layout matched ' + location.href, near);
+		if (!layout.anchors.titleArea) return fail('layout ' + layout.name + ' has no titleArea anchor', near);
+		if (!layout.anchors.titleArea()) return fail('layout ' + layout.name + ': titleArea anchor not found', near);
+		return PASS;
+	})()`,
 };
+
+const ISOLATED_CHECKS = new Set(['titleAnchor']);
+const TRACKER_WORLD = 'Claude Usage Tracker';
 
 const PAGES = conversationId => [
 	{ name: 'home', url: 'https://claude.ai/new', checks: ['sidebar', 'statLine', 'language'] },
 	{ name: 'conversation', url: `https://claude.ai/chat/${conversationId}`, checks: ['sidebar', 'statLine', 'titleLine'] },
 	{ name: 'code', url: 'https://claude.ai/code', checks: ['sidebar', 'statLine'] },
-	// Incognito is a full-screen page with no sidebar (2026-11). Its title line needs a sent message.
-	{ name: 'incognito', url: 'https://claude.ai/new?incognito', checks: ['statLine'] },
+	// Incognito is a full-screen page with no sidebar (2026-11). Its title line needs a sent message,
+	// so only its anchor is checked (#185: a renamed class on the title bar's label went unnoticed).
+	{ name: 'incognito', url: 'https://claude.ai/new?incognito', checks: ['statLine', 'titleAnchor'] },
 ];
 
 // ---- Running ----
@@ -154,12 +173,13 @@ class SetupError extends Error {}
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Polls a check until it passes; on timeout returns its last failure.
-async function runCheck(page, expr) {
+async function runCheck(page, name) {
+	const world = ISOLATED_CHECKS.has(name) ? TRACKER_WORLD : undefined;
 	const end = Date.now() + CHECK_TIMEOUT_MS;
 	let last = { pass: false, reason: 'never evaluated' };
 	while (Date.now() < end) {
 		try {
-			last = await page.evaluate(expr);
+			last = await page.evaluate(checks[name], undefined, { world });
 		} catch (e) {
 			last = { pass: false, reason: `evaluation threw: ${e.message}` };
 		}
@@ -210,7 +230,7 @@ async function runAll(shotDir) {
 			}
 
 			for (const name of def.checks) {
-				pageResult.results.push({ name, ...await runCheck(page, checks[name]) });
+				pageResult.results.push({ name, ...await runCheck(page, name) });
 			}
 			if (pageResult.results.some(r => !r.pass)) await saveShot(page, shotDir, pageResult);
 		}
